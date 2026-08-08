@@ -20,6 +20,9 @@ select = [
     "NPY", # numpy-specific
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
 [tool.ruff.format]
 quote-style = "double"
 

@@ -109,7 +109,9 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 - [x] **Task 0 — 스캐폴드**: 디렉토리(README §4), `.gitignore`(data/, runs/, .venv 등),
   `requirements.txt`(torch, numpy, pandas, pyarrow, matplotlib, scikit-learn, pytest, ruff, pyyaml, tqdm),
   ruff 설정, seed 유틸. DoD: `pytest -q` 통과(수집 0 허용), `ruff check .` 클린.
-- [ ] **Task 1 — TMM 모듈**: `src/physics/tmm.py` + 위 단위 테스트 6종. DoD: 전부 green.
+- [x] **Task 1 — TMM 모듈**: `src/physics/tmm.py` + 위 단위 테스트 6종. DoD: 전부 green.
+  (7종 통과. 명세 6종은 층 적층 순서를 고정하지 못해 — 순서를 뒤집어도 전부 통과 —
+  비대칭 2층을 재귀 프레넬 공식과 대조하는 7번 테스트를 보강했다.)
 - [ ] **Task 2 — 데이터 검증·로더**: `scripts/verify_data.py`(가설 체크 출력),
   `src/data/dataset.py`(parquet 캐시 권장). DoD: 검증 결과를 본 파일 체크박스와 README §2에 반영.
 - [ ] **Task 3 — EDA**: (a) 한 층만 변화시킨 스펙트럼 오버레이(두께↑ → fringe 조밀 확인),
