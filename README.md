@@ -83,7 +83,28 @@ inductive bias로 결합한 딥러닝으로 푼다.
    *완벽한* forward 모델이라도 관측값 대비 재구성 RMSE는 σ 아래로 내려갈 수 없다.
    원래 기준 5×10⁻³은 원리적으로 통과 불가이며, 그대로 두면 옳은 TMM을 기각하게 된다.
 2. **노이즈 강건성 실험(§3.5-4)의 주입 노이즈는 "추가분"이다.** 이미 있는 노이즈 위에 더하는
-   양이므로 그렇게 표기한다.
+   양이므로 그렇게 표기한다. 또한 EDA(§2.3)에서 이 노이즈가 가우시안보다 **균등분포**에
+   가깝다는 것이 확인되었으므로, 주입 노이즈도 균등 ±0.015를 기본으로 쓴다.
+
+### 2.3 EDA — 두께는 스펙트럼에 어떻게 실려 있는가
+
+`python scripts/eda.py` → 그림 3종(`reports/figures/`), 측정값 표(`reports/eda_metrics.md`),
+해석 메모(`reports/eda_notes.md`). 아래는 설계 결정에 직접 쓰인 결과만 요약한다.
+
+| 관찰 | 수치 | 설계에 미치는 영향 |
+|---|---|---|
+| 두께↑ → fringe 조밀 | SiN은 300 nm에서 4 cycles/대역, SiO₂는 2 | 굴절률 비(문헌 1.37)와 방향 일치 → Stage A 캘리브레이션 sanity check |
+| 층별 민감도 (+10 nm) | SNR 10.3(layer_2) ~ 15.3(layer_3) | 최소 10.3 → **원리적 사각지대 없음.** 층별 MAE 격차는 모델 문제로 해석 |
+| fringe 주기 분포 | p5 28 / 중앙 57 / p95 **226** 채널 | 1D CNN 수용영역이 **대역 전체**에 도달해야 함 → 다중 스케일의 정량 요건 |
+| 채널별 정보량 | 대역 오른쪽 끝이 왼쪽의 **약 3배** | 채널 자르기 주의, 물리 손실 채널 가중은 ablation 후보 |
+| 노이즈 성격 | 초과 첨도 −0.479 (균등 −0.6 / 가우시안 0) | 강건성 실험 노이즈 모델을 균등분포로 |
+
+정량 법칙에 대한 유보: "무늬 개수 ∝ 두께"를 R²로 못박으려 지표 3종(FFT argmax /
+파워 무게중심 / 극값 개수)을 시도했으나 신뢰할 수준이 나오지 않았다. 파장축이
+비식별화되어 채널 간격의 균일성을 알 수 없고, 대역에 무늬가 1~8개만 들어가며,
+네 층의 beat와 노이즈가 섞이기 때문이다. 특히 네 층이 모두 10 nm면 스펙트럼 진폭이
+노이즈 수준으로 내려가 극값 세기 지표가 **부호가 반대로** 나왔다. 따라서 정성 확인과
+두 끝값만 보고하고 기울기·R²는 리포트에서 제외했다.
 
 **다운로드:** 대회 페이지에서 규정 동의 후 내려받아 `data/raw/`에 배치한다.
 대회 규정상 데이터는 이 저장소에 포함하지 않는다(`.gitignore` 처리).
@@ -191,7 +212,10 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 ├── data/cache/             # parquet 캐시 (자동 생성, git 미포함)
 ├── notebooks/              # EDA (탐색용; 재사용 로직은 src/로 승격)
 ├── reports/figures/        # 산출 그림
+├── reports/eda_metrics.md  # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
+├── reports/eda_notes.md    # EDA 관찰·해석 메모
 ├── scripts/verify_data.py  # 데이터 계약 검증 (통과 여부를 종료 코드로 반환)
+├── scripts/eda.py          # EDA 그림 3종 + 측정값 생성
 ├── src/
 │   ├── physics/tmm.py      # 미분가능 TMM — 프로젝트의 물리 코어
 │   ├── data/dataset.py     # CSV → parquet 캐시 → numpy/torch
@@ -212,6 +236,7 @@ pip install -r requirements.txt
 
 pytest -q                          # 물리 단위 테스트 + 로더 테스트
 python scripts/verify_data.py      # 데이터 계약 검증 (통과 시 종료 코드 0)
+python scripts/eda.py              # EDA 그림 3종 + 측정값 표
 python -m src.train --config configs/baseline.yaml  # (미구현)
 ```
 
@@ -222,7 +247,7 @@ python -m src.train --config configs/baseline.yaml  # (미구현)
 
 ## 6. 로드맵 (3주)
 
-- **Week 1** — [x] 스캐폴드 · [x] TMM 모듈+테스트 통과 · [x] 데이터 검증 · [ ] EDA · [ ] baseline 학습
+- **Week 1** — [x] 스캐폴드 · [x] TMM 모듈+테스트 통과 · [x] 데이터 검증 · [x] EDA · [ ] baseline 학습
 - **Week 2** — [ ] 구조 ablation(MLP/CNN, 다중 스케일) · [ ] Stage A 캘리브레이션 + 게이트 판정 · [ ] Stage B 물리 손실 학습
 - **Week 3** — [ ] 신뢰도 지표 분석 · [ ] 결과·그림 정리 · [ ] 문서화 마감
 
