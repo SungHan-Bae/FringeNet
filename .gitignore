@@ -1,0 +1,19 @@
+# --- 대회 데이터 / 실험 산출물 (재배포 금지) ---
+data/
+runs/
+
+# --- 파이썬 환경 ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- 캐시된 데이터셋 ---
+*.parquet
+
+# --- OS ---
+.DS_Store
