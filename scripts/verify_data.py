@@ -149,18 +149,31 @@ def _reference_stats(spectra: np.ndarray) -> None:
     print(f"  행별 스펙트럼 범위 중앙값: {np.median(spectra.max(1) - spectra.min(1)):.6f}")
 
     # 2차 차분 노이즈 추정: y=s+e 이고 s가 국소 선형이면 Var(y[i-1]-2y[i]+y[i+1]) ~ 6*sigma^2.
-    # fringe 곡률이 섞여 들어가므로 상한 성격의 추정이다.
-    sample = spectra[:20_000]
+    # 스펙트럼 곡률이 그대로 섞여 들어가므로 **상한**이다 — 무늬가 조밀할수록 부풀려진다.
+    #
+    # 표본을 무작위로 뽑아야 한다. 행이 (layer_1..layer_4) 사전식으로 정렬되어 있어
+    # spectra[:N] 같은 앞머리 자르기는 layer_1 = 10 nm 인 구석만 보게 된다(평평한 스펙트럼
+    # 쪽으로 치우쳐 추정치가 낮게 나온다).
+    rng = np.random.default_rng(0)
+    sample = spectra[rng.choice(len(spectra), size=20_000, replace=False)].astype(np.float64)
     second_diff = sample[:, :-2] - 2 * sample[:, 1:-1] + sample[:, 2:]
-    sigma_hat = float(second_diff.std() / np.sqrt(6.0))
+    sigma_upper = float(second_diff.std() / np.sqrt(6.0))
+
+    # 곡률 오염이 가장 적은 행(스펙트럼 진폭 하위 10%)만 보면 상한이 참값에 가까워진다.
+    spread = sample.max(axis=1) - sample.min(axis=1)
+    flat = sample[spread <= np.percentile(spread, 10)]
+    flat_diff = flat[:, :-2] - 2 * flat[:, 1:-1] + flat[:, 2:]
+    sigma_flat = float(flat_diff.std() / np.sqrt(6.0))
+
+    print(f"  노이즈 sigma 상한   = {sigma_upper:.6f}  (2차 차분, 무작위 20,000행)")
+    print(f"  노이즈 sigma (평평)  = {sigma_flat:.6f}  (같은 식, 진폭 하위 10% 행만)")
     negatives = spectra[spectra < 0.0]
-    print(f"  노이즈 sigma 추정(상한) = {sigma_hat:.6f}  (2차 차분, 앞 20,000행)")
     if negatives.size:
         print(
             f"  음수 반사율 하한 = {negatives.min():.6f}  "
             f"→ 균등 노이즈 ±a 라면 sigma = a/sqrt(3) = {abs(negatives.min()) / np.sqrt(3):.6f}"
         )
-    print("  ↑ 두 추정이 맞으면 노이즈는 대략 균등분포. 자세한 해석은 Task 3 EDA에서.")
+    print("  ↑ 앞 둘은 같은 추정식(상한), 마지막이 독립 추정. 해석은 Task 3 EDA에서.")
 
 
 def verify_test_and_submission(log: CheckLog) -> None:

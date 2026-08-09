@@ -440,13 +440,32 @@ def figure_reflectance_distribution(x: np.ndarray) -> dict[str, float]:
     # (c) 고주파 잔차 — 노이즈가 균등인지 가우시안인지
     # r_i = y_i - (y_{i-1} + y_{i+1})/2. 참 스펙트럼이 국소 선형이면 잔차는 노이즈만 남고,
     # 분산은 1.5*sigma^2. 균등 노이즈면 초과 첨도 -0.6, 가우시안이면 0 이어야 한다.
-    sample = x[:100_000]
+    #
+    # 주의 — 이 잔차는 2차 차분의 -1/2 배다(r = -d2/2). 따라서 여기서 나오는 sigma 추정은
+    # verify_data.py 의 2차 차분 추정과 **같은 추정량**이지 독립적인 확인이 아니다.
+    # 독립적인 교차검증은 음수 하한 기반 a/sqrt(3) 쪽이다. 여기서 새로 얻는 정보는
+    # 크기(sigma)가 아니라 **분포 모양(첨도)** 이다.
+    #
+    # 표본은 무작위로 뽑는다. 행이 (layer_1..layer_4) 사전식 정렬이라 x[:N] 은
+    # layer_1 = 10 nm 구석만 보게 된다.
+    rng = np.random.default_rng(SEED)
+    sample = x[rng.choice(len(x), size=100_000, replace=False)]
     residual = sample[:, 1:-1] - 0.5 * (sample[:, :-2] + sample[:, 2:])
+    # 곡률이 가장 적은 행(진폭 하위 10%)에서 따로 재면 노이즈 고유의 값에 가장 가깝다.
+    # 곡률 오염은 sigma 를 위로, 첨도를 0(가우시안) 쪽으로 밀기 때문에, 두 값을 나란히
+    # 보고하면 참값이 어느 쪽에 있는지 방향까지 읽을 수 있다.
+    spread = sample.max(axis=1) - sample.min(axis=1)
+    flat_residual = residual[spread <= np.percentile(spread, 10)].astype(np.float64).ravel()
     residual = residual.astype(np.float64).ravel()
-    sigma_hat = float(residual.std() / np.sqrt(1.5))
-    excess_kurtosis = float(((residual - residual.mean()) ** 4).mean() / residual.var() ** 2 - 3.0)
-    metrics["sigma_from_residual"] = sigma_hat
+
+    def _excess_kurtosis(v: np.ndarray) -> float:
+        return float(((v - v.mean()) ** 4).mean() / v.var() ** 2 - 3.0)
+
+    metrics["sigma_from_residual"] = float(residual.std() / np.sqrt(1.5))
+    metrics["sigma_from_residual_flat"] = float(flat_residual.std() / np.sqrt(1.5))
+    excess_kurtosis = _excess_kurtosis(residual)
     metrics["residual_excess_kurtosis"] = excess_kurtosis
+    metrics["residual_excess_kurtosis_flat"] = _excess_kurtosis(flat_residual)
 
     counts_r, edges_r = np.histogram(residual, bins=200, density=True)
     centers_r = 0.5 * (edges_r[:-1] + edges_r[1:])
@@ -459,7 +478,9 @@ def figure_reflectance_distribution(x: np.ndarray) -> dict[str, float]:
     _title(
         ax_c,
         "High-frequency residual",
-        f"excess kurtosis {excess_kurtosis:+.3f}   (uniform noise → −0.6, Gaussian → 0)",
+        f"excess kurtosis {excess_kurtosis:+.3f} all rows, "
+        f"{metrics['residual_excess_kurtosis_flat']:+.3f} flattest 10%   "
+        "(uniform noise → −0.6, Gaussian → 0)",
     )
     ax_c.set_xlabel("residual  y[i] − (y[i−1]+y[i+1])/2", fontsize=9, color=INK_SECONDARY)
     ax_c.set_ylabel("density", fontsize=9, color=INK_SECONDARY)
@@ -551,8 +572,14 @@ def write_metrics(metrics: dict[str, float]) -> None:
         "",
         "| 항목 | 값 | 비고 |",
         "|---|---|---|",
-        f"| 잔차 기반 σ 추정 | {metrics['sigma_from_residual']:.6f} | Task 2 추정 0.0087과 대조 |",
-        f"| 초과 첨도 | {metrics['residual_excess_kurtosis']:+.3f} | 균등 −0.6 / 가우시안 0 |",
+        f"| σ — 전체 표본 (상한) | {metrics['sigma_from_residual']:.6f} "
+        "| 2차 차분과 **같은 추정량** (r = −d2/2), 독립 확인이 아니다 |",
+        f"| σ — 평평한 행 10% | {metrics['sigma_from_residual_flat']:.6f} "
+        "| 곡률 오염이 가장 적어 참값에 가깝다 |",
+        f"| 초과 첨도 — 전체 | {metrics['residual_excess_kurtosis']:+.3f} "
+        "| 균등 −0.6 / 가우시안 0 |",
+        f"| 초과 첨도 — 평평한 행 | {metrics['residual_excess_kurtosis_flat']:+.3f} "
+        "| 곡률이 첨도를 0쪽으로 밀므로 이쪽이 노이즈 고유값에 가깝다 |",
         "",
     ]
     METRICS_PATH.write_text("\n".join(lines), encoding="utf-8")
@@ -589,8 +616,12 @@ def main() -> int:
             f"   SNR = {metrics[f'layer_{layer}_snr']:5.2f}"
         )
     print(
-        f"\n잔차 기반 σ = {metrics['sigma_from_residual']:.6f}, "
-        f"초과 첨도 = {metrics['residual_excess_kurtosis']:+.3f}"
+        f"\n노이즈 σ: 전체 {metrics['sigma_from_residual']:.6f} (상한) / "
+        f"평평한 행 {metrics['sigma_from_residual_flat']:.6f}"
+    )
+    print(
+        f"초과 첨도: 전체 {metrics['residual_excess_kurtosis']:+.3f} / "
+        f"평평한 행 {metrics['residual_excess_kurtosis_flat']:+.3f}  (균등 −0.6 / 가우시안 0)"
     )
     print(
         f"fringe 주기 p5/중앙/p95 = {metrics['fringe_period_p5']:.1f} / "
