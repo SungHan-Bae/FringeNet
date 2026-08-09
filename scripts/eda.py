@@ -130,8 +130,8 @@ def figure_layer_sweep(x: np.ndarray, index: GridIndex) -> dict[str, float]:
     스펙트럼 모양 자체를 읽을 수 있게 한다.
 
     나머지 세 층은 **최소값 10 nm**에 고정한다. 150 nm에 두면 고정 층들이 만드는 fringe가
-    스펙트럼을 지배해서 쓸린 층의 기여가 묻히고, 지배 주파수 지표가 두께에 반응하지 않는다.
-    최소값으로 눌러야 "이 층 하나가 무늬를 얼마나 조밀하게 만드는가"가 분리되어 보인다.
+    스펙트럼을 지배해서 쓸린 층의 기여가 묻힌다. 최소값으로 눌러야 "이 층 하나가 무늬를
+    얼마나 조밀하게 만드는가"가 분리되어 보인다.
     """
     base = 0  # 격자 인덱스 0 = 10 nm (나머지 층을 최소로 눌러 쓸린 층을 분리)
     cmap = plt.get_cmap("Blues")  # 단일 색상 계열, 밝음->어두움 (순차 = 크기)
@@ -147,20 +147,6 @@ def figure_layer_sweep(x: np.ndarray, index: GridIndex) -> dict[str, float]:
         idx = np.full((N_GRID, 4), base, dtype=np.int64)
         idx[:, layer] = np.arange(N_GRID)
         spectra = x[index.rows(idx)]
-
-        # fringe 조밀도: 채널축 FFT의 지배 주파수 (DC 제외).
-        #
-        # 주의 — "두께에 선형" 같은 정량 법칙은 이 데이터에서 깨끗하게 안 나온다.
-        # 파장축이 비식별화되어 있어 채널 간격이 균일한지 알 수 없고, 대역이 좁아
-        # 무늬가 겨우 2~7개만 들어가며(FFT bin 해상도가 그만큼 거칠다), 네 층이 겹쳐
-        # 만든 beat까지 섞인다. 게다가 모든 층이 10 nm면 스펙트럼 진폭이 노이즈 수준으로
-        # 내려가 극값·무게중심 지표가 노이즈를 센다. 그래서 여기서는 thin/thick 두 끝의
-        # 지배 주파수만 사실로 보고하고, 기울기·R² 같은 법칙 주장은 하지 않는다.
-        centered = spectra - spectra.mean(axis=1, keepdims=True)
-        power = np.abs(np.fft.rfft(centered, axis=1)) ** 2
-        dominant = np.argmax(power[:, 1:], axis=1) + 1
-        metrics[f"layer_{layer + 1}_freq_thin"] = float(dominant[0])
-        metrics[f"layer_{layer + 1}_freq_thick"] = float(dominant[-1])
 
         ax_top = axes[0, layer]
         images.append(
@@ -180,8 +166,7 @@ def figure_layer_sweep(x: np.ndarray, index: GridIndex) -> dict[str, float]:
         _title(
             ax_top,
             LAYER_LABELS[layer],
-            f"dominant fringe: {dominant[0]:.0f} → {dominant[-1]:.0f} cycles/band "
-            f"as this layer goes 10 → 300 nm",
+            "stripes tilt and tighten as this layer goes 10 → 300 nm",
         )
         ax_top.set_ylabel("swept thickness (nm)", fontsize=9, color=INK_SECONDARY)
 
@@ -328,29 +313,6 @@ def figure_layer_sensitivity(
     )
     plt.close(fig)
     return metrics
-
-
-def measure_fringe_periods(x: np.ndarray, n_sample: int = 20_000) -> dict[str, float]:
-    """실제 데이터 분포에서 지배 fringe 주기(채널 단위)의 분포를 잰다.
-
-    이 값이 Level 1의 1D conv 수용영역을 규정한다 — 커널이 커버해야 하는 주기 대역이
-    곧 여기서 나오는 p5..p95 구간이다. fig1처럼 한 층만 쓴 인공 조합이 아니라
-    학습셋에서 무작위 표집해 실제 분포를 본다.
-    """
-    rng = np.random.default_rng(SEED)
-    sample = x[rng.choice(len(x), size=n_sample, replace=False)]
-    centered = sample - sample.mean(axis=1, keepdims=True)
-    power = np.abs(np.fft.rfft(centered, axis=1)) ** 2
-    dominant = np.argmax(power[:, 1:], axis=1) + 1  # cycles across the 226-channel band
-    periods = N_CHANNELS / dominant  # 채널 단위 주기
-    p5, p50, p95 = np.percentile(periods, [5, 50, 95])
-    return {
-        "fringe_cycles_p5": float(np.percentile(dominant, 5)),
-        "fringe_cycles_p95": float(np.percentile(dominant, 95)),
-        "fringe_period_p5": float(p5),
-        "fringe_period_p50": float(p50),
-        "fringe_period_p95": float(p95),
-    }
 
 
 def _noise_line(ax: plt.Axes) -> None:
@@ -523,41 +485,6 @@ def write_metrics(metrics: dict[str, float]) -> None:
 
     lines += [
         "",
-        "## fringe 조밀도 — 한 층만 쓸었을 때 (나머지 세 층은 10 nm)",
-        "",
-        "채널축 FFT의 지배 주파수. **정량 법칙(기울기·R²)은 주장하지 않는다** — 파장축이",
-        "비식별화되어 채널 간격의 균일성을 알 수 없고, 대역에 무늬가 2~7개만 들어가",
-        "FFT bin 해상도가 거칠며, 네 층의 beat가 섞이기 때문이다. 아래는 두 끝값 사실만.",
-        "",
-        "| 층 | 10 nm | 300 nm |",
-        "|---|---|---|",
-    ]
-    for layer in range(1, 5):
-        lines.append(
-            f"| {LAYER_LABELS[layer - 1]} "
-            f"| {metrics[f'layer_{layer}_freq_thin']:.0f} cycles "
-            f"| {metrics[f'layer_{layer}_freq_thick']:.0f} cycles |"
-        )
-
-    lines += [
-        "",
-        "## fringe 주기 분포 (학습셋 20,000행 무작위 표집) — 1D conv 수용영역 요건",
-        "",
-        "| 항목 | 값 |",
-        "|---|---|",
-        f"| 지배 주파수 p5 → p95 | {metrics['fringe_cycles_p5']:.0f} → "
-        f"{metrics['fringe_cycles_p95']:.0f} cycles / 226채널 |",
-        f"| 지배 주기 p5 | {metrics['fringe_period_p5']:.1f} 채널 |",
-        f"| 지배 주기 중앙값 | {metrics['fringe_period_p50']:.1f} 채널 |",
-        f"| 지배 주기 p95 | {metrics['fringe_period_p95']:.1f} 채널 |",
-        "",
-        "→ 커널·dilation 조합이 대략 "
-        f"{metrics['fringe_period_p5']:.0f}~{metrics['fringe_period_p95']:.0f} 채널 "
-        "주기를 모두 커버해야 한다.",
-    ]
-
-    lines += [
-        "",
         "## 반사율 분포",
         "",
         "| 항목 | 값 |",
@@ -602,8 +529,6 @@ def main() -> int:
     metrics |= figure_layer_sensitivity(x, index)
     print("fig3 — 반사율 분포...")
     metrics |= figure_reflectance_distribution(x)
-    print("fringe 주기 분포 측정...")
-    metrics |= measure_fringe_periods(x)
 
     write_metrics(metrics)
 
@@ -622,10 +547,6 @@ def main() -> int:
     print(
         f"초과 첨도: 전체 {metrics['residual_excess_kurtosis']:+.3f} / "
         f"평평한 행 {metrics['residual_excess_kurtosis_flat']:+.3f}  (균등 −0.6 / 가우시안 0)"
-    )
-    print(
-        f"fringe 주기 p5/중앙/p95 = {metrics['fringe_period_p5']:.1f} / "
-        f"{metrics['fringe_period_p50']:.1f} / {metrics['fringe_period_p95']:.1f} 채널"
     )
     return 0
 
