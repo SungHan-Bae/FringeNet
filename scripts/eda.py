@@ -238,6 +238,11 @@ def figure_layer_sensitivity(
         rms = float(np.sqrt((delta**2).mean()))
         metrics[f"layer_{layer + 1}_rms_delta"] = rms
         metrics[f"layer_{layer + 1}_snr"] = rms / NOISE_SIGMA
+        # ΔR은 노이즈가 있는 두 행의 차이므로 sqrt(2)*sigma ≈ 0.0123 의 바닥을 포함한다.
+        # 신호만의 크기는 분산에서 노이즈 몫 2*sigma^2 을 빼서 얻는다.
+        metrics[f"layer_{layer + 1}_rms_signal"] = float(
+            np.sqrt(max(rms**2 - 2.0 * NOISE_SIGMA**2, 0.0))
+        )
         # 대역 양 끝의 민감도 비 — 어느 채널이 두께 정보를 더 많이 싣는가
         band_edges = per_channel[-1]
         metrics[f"layer_{layer + 1}_sens_low_channel"] = float(band_edges[:10].mean())
@@ -249,6 +254,10 @@ def figure_layer_sensitivity(
             dtype=np.float64,
         )
         by_thickness.append(curve)
+        # 구간 최소 — 이 층이 가장 안 보이는 두께 대역 (Task 4 구간별 오차 분석과 대조할 값)
+        g_min = int(curve.argmin())
+        metrics[f"layer_{layer + 1}_rms_min"] = float(curve[g_min])
+        metrics[f"layer_{layer + 1}_rms_min_at_nm"] = float(10 + GRID_STEP_NM * g_min)
 
     fig, (ax_a, ax_b) = plt.subplots(
         1, 2, figsize=(13.5, 5.2), facecolor=SURFACE, layout="constrained"
@@ -398,6 +407,8 @@ def figure_reflectance_distribution(x: np.ndarray) -> dict[str, float]:
     ax_b.legend(frameon=False, fontsize=8.5, labelcolor=INK_SECONDARY, loc="lower right")
     metrics["channel_std_min"] = float(ch_std.min())
     metrics["channel_std_max"] = float(ch_std.max())
+    metrics["channel_mean_first"] = float(ch_mean[0])
+    metrics["channel_mean_last"] = float(ch_mean[-1])
 
     # (c) 고주파 잔차 — 노이즈가 균등인지 가우시안인지
     # r_i = y_i - (y_{i-1} + y_{i+1})/2. 참 스펙트럼이 국소 선형이면 잔차는 노이즈만 남고,
@@ -417,8 +428,19 @@ def figure_reflectance_distribution(x: np.ndarray) -> dict[str, float]:
     # 곡률 오염은 sigma 를 위로, 첨도를 0(가우시안) 쪽으로 밀기 때문에, 두 값을 나란히
     # 보고하면 참값이 어느 쪽에 있는지 방향까지 읽을 수 있다.
     spread = sample.max(axis=1) - sample.min(axis=1)
-    flat_residual = residual[spread <= np.percentile(spread, 10)].astype(np.float64).ravel()
+    flat_mask = spread <= np.percentile(spread, 10)
+    flat_residual = residual[flat_mask].astype(np.float64).ravel()
     residual = residual.astype(np.float64).ravel()
+
+    # 노이즈의 채널 균일성 — 2차 차분 계열의 채널 프로파일은 대역 오른쪽의 무늬 곡률이
+    # 섞여 우측 sigma가 부풀어 보인다(평평한 행 10% 기준 약 +8%). 2차 다항까지 소거하는
+    # 3차 차분(계수 1,-3,3,-1, Var = 20*sigma^2)으로 재면 곡률 오염 없이 비교할 수 있다.
+    flat_rows = sample[flat_mask].astype(np.float64)
+    d3 = flat_rows[:, :-3] - 3 * flat_rows[:, 1:-2] + 3 * flat_rows[:, 2:-1] - flat_rows[:, 3:]
+    sigma_ch = d3.std(axis=0) / np.sqrt(20.0)
+    metrics["noise_ch_first10"] = float(sigma_ch[:10].mean())
+    metrics["noise_ch_last10"] = float(sigma_ch[-10:].mean())
+    metrics["noise_ch_ratio"] = float(sigma_ch[-10:].mean() / sigma_ch[:10].mean())
 
     def _excess_kurtosis(v: np.ndarray) -> float:
         return float(((v - v.mean()) ** 4).mean() / v.var() ** 2 - 3.0)
@@ -470,8 +492,9 @@ def write_metrics(metrics: dict[str, float]) -> None:
         "",
         f"노이즈 바닥 σ = {NOISE_SIGMA} (Task 2 검증값) 기준.",
         "",
-        "| 층 | RMS ΔR | SNR = RMS ΔR / σ | mean \\|ΔR\\| 채널 0~9 | 채널 216~225 | 비 |",
-        "|---|---|---|---|---|---|",
+        "| 층 | RMS ΔR | 신호 RMS* | SNR = RMS ΔR / σ | mean \\|ΔR\\| 채널 0~9 "
+        "| 채널 216~225 | 비 | 구간 최소 |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for layer in range(1, 5):
         low = metrics[f"layer_{layer}_sens_low_channel"]
@@ -479,9 +502,17 @@ def write_metrics(metrics: dict[str, float]) -> None:
         lines.append(
             f"| {LAYER_LABELS[layer - 1]} "
             f"| {metrics[f'layer_{layer}_rms_delta']:.5f} "
+            f"| {metrics[f'layer_{layer}_rms_signal']:.5f} "
             f"| {metrics[f'layer_{layer}_snr']:.2f} "
-            f"| {low:.4f} | {high:.4f} | {high / low:.2f}× |"
+            f"| {low:.4f} | {high:.4f} | {high / low:.2f}× "
+            f"| {metrics[f'layer_{layer}_rms_min']:.4f} @ "
+            f"{metrics[f'layer_{layer}_rms_min_at_nm']:.0f} nm |"
         )
+    lines += [
+        "",
+        "\\* 신호 RMS = √(RMS² − 2σ²). ΔR은 노이즈가 있는 두 행의 차이라 √2·σ ≈ 0.0123의",
+        "바닥을 포함하므로 그 몫을 뺀 값. 구간 최소는 해당 층 두께(쌍의 아래값) 기준.",
+    ]
 
     lines += [
         "",
@@ -494,6 +525,20 @@ def write_metrics(metrics: dict[str, float]) -> None:
         f"| R < 0 비율 | {100 * metrics['neg_fraction']:.4f}% |",
         f"| 채널별 표준편차 범위 | [{metrics['channel_std_min']:.4f}, "
         f"{metrics['channel_std_max']:.4f}] |",
+        f"| 채널 평균 (채널 0 → 225) | {metrics['channel_mean_first']:.3f} → "
+        f"{metrics['channel_mean_last']:.3f} |",
+        "",
+        "## 노이즈의 채널 균일성 (3차 차분, 평평한 행 10%)",
+        "",
+        "| 항목 | 값 |",
+        "|---|---|",
+        f"| σ — 대역 왼쪽 끝 10창 | {metrics['noise_ch_first10']:.6f} |",
+        f"| σ — 대역 오른쪽 끝 10창 | {metrics['noise_ch_last10']:.6f} |",
+        f"| 비 (오른쪽/왼쪽) | {metrics['noise_ch_ratio']:.3f} |",
+        "",
+        "3차 차분(Var = 20σ²)은 2차 다항 곡률까지 소거하므로 채널 간 비교에서 곡률 오염이",
+        "빠진다. 채널별 반사율 표준편차(위 표)는 **신호** 분산이라 노이즈 균일성의 근거가",
+        "아니다 — 죽은 채널 없음의 근거로만 쓴다.",
         "",
         "## 노이즈 성격 (고주파 잔차)",
         "",
@@ -547,6 +592,10 @@ def main() -> int:
     print(
         f"초과 첨도: 전체 {metrics['residual_excess_kurtosis']:+.3f} / "
         f"평평한 행 {metrics['residual_excess_kurtosis_flat']:+.3f}  (균등 −0.6 / 가우시안 0)"
+    )
+    print(
+        f"채널 균일성(3차 차분): 왼끝 {metrics['noise_ch_first10']:.6f} / "
+        f"오른끝 {metrics['noise_ch_last10']:.6f}  (비 {metrics['noise_ch_ratio']:.3f})"
     )
     return 0
 

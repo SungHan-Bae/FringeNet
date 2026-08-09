@@ -98,7 +98,7 @@ inductive bias로 결합한 딥러닝으로 푼다.
 | 두께↑ → fringe 조밀 | 정성 확인 (fig1 히트맵). SiN이 SiO₂보다 촘촘 | 굴절률 비(문헌 2.0 vs 1.46)와 방향 일치 → Stage A 캘리브레이션 방향성 확인 |
 | 층별 민감도 (+10 nm) | SNR 10.3(layer_2) ~ 15.3(layer_3) | 최소 10.3 → **원리적 사각지대 없음.** 층별 MAE 격차는 모델 문제로 해석 |
 | 채널별 정보량 | 대역 오른쪽 끝이 왼쪽의 **약 3배** | 채널 자르기 주의, 물리 손실 채널 가중은 ablation 후보 |
-| 노이즈 성격 | 초과 첨도 −0.328 (전체) → **−0.519** (곡률 적은 행) / 균등 −0.6, 가우시안 0 | 강건성 실험 노이즈 모델을 균등분포로 |
+| 노이즈 성격 | 초과 첨도 −0.328 (전체) → **−0.519** (곡률 적은 행) / 균등 −0.6, 가우시안 0 (잔차 통계 기준) | 강건성 실험 노이즈 모델을 균등분포로 |
 
 정량 법칙에 대한 유보: 무늬 개수를 세어 "두께에 비례한다"는 식의 정량 법칙은
 주장하지 않는다. 파장축이 비식별화되어 채널 간격이 파장에서 균일한지 알 수 없고,
@@ -207,7 +207,7 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 ├── README.md               # 본 문서
 ├── CLAUDE.md               # Claude Code 작업 메모리 (계약·테스트 스펙·백로그)
 ├── requirements.txt
-├── configs/                # 실험 설정 (yaml)
+├── configs/                # 실험 설정 (yaml, Task 4부터 생성)
 ├── data/raw/               # 데이콘 원본 (git 미포함)
 ├── data/cache/             # parquet 캐시 (자동 생성, git 미포함)
 ├── notebooks/              # EDA (탐색용; 재사용 로직은 src/로 승격)
@@ -219,10 +219,10 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 ├── src/
 │   ├── physics/tmm.py      # 미분가능 TMM — 프로젝트의 물리 코어
 │   ├── data/dataset.py     # CSV → parquet 캐시 → numpy/torch
-│   ├── models/cnn1d.py
-│   ├── calibrate.py        # Stage A
-│   ├── train.py            # Stage B 포함
-│   └── evaluate.py
+│   ├── models/cnn1d.py     # (Task 5 예정)
+│   ├── calibrate.py        # Stage A (Task 6 예정)
+│   ├── train.py            # Stage B 포함 (Task 4 예정)
+│   └── evaluate.py         # (Task 4 예정)
 └── tests/
     ├── test_tmm.py         # §3.3 물리 단위 테스트
     └── test_dataset.py     # 로더·split (데이터 없으면 해당 테스트만 skip)

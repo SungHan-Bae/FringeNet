@@ -34,9 +34,10 @@ EXPECTED_THICKNESS_VALUES = np.arange(10, 301, 10, dtype=np.int64)  # 10..300, 1
 
 # 반사율 범위 — 최초 가설 "R ⊂ [0, 1]" 은 검증 결과 **거짓**이었다.
 # train 최소 -0.015117 / test 최소 -0.014998 로 음의 반사율이 나온다. 물리적으로
-# 불가능하므로 참 스펙트럼에 가산 노이즈가 얹혀 있다는 뜻이다. 음수값이 -0.0151에서
-# 잘리고(1퍼센타일 -0.0135) 2차 차분 기반 sigma 추정 0.0087 이 균등분포 ±0.015의
-# sigma(0.015/sqrt(3)=0.00866)와 일치하는 것으로 보아 유계 노이즈에 가깝다.
+# 불가능하므로 참 스펙트럼에 가산 노이즈가 얹혀 있다는 뜻이다. 크기는 두 추정이
+# 함께 가리킨다: 2차 차분 상한 0.0088~0.0091(스펙트럼 곡률이 섞여 위로 치우침)과,
+# 음수가 -0.0151에서 잘리는 것(1퍼센타일 -0.0135)을 균등 노이즈 ±a로 본
+# a/sqrt(3) = 0.008728(독립). 종합 sigma ≈ 0.0087~0.0088, 유계(균등) 노이즈에 가깝다.
 # 따라서 검증하는 대상을 "확인된 사실"로 바꾼다: 위로는 1을 넘지 않고,
 # 아래로는 노이즈 수준(-0.02) 이상이어야 한다.
 R_UPPER_BOUND = 1.0
@@ -169,8 +170,9 @@ def _reference_stats(spectra: np.ndarray) -> None:
     print(f"  노이즈 sigma (평평)  = {sigma_flat:.6f}  (같은 식, 진폭 하위 10% 행만)")
     negatives = spectra[spectra < 0.0]
     if negatives.size:
+        neg_p1 = float(np.percentile(negatives.astype(np.float64), 1))
         print(
-            f"  음수 반사율 하한 = {negatives.min():.6f}  "
+            f"  음수 반사율 하한 = {negatives.min():.6f} (1퍼센타일 {neg_p1:.6f})  "
             f"→ 균등 노이즈 ±a 라면 sigma = a/sqrt(3) = {abs(negatives.min()) / np.sqrt(3):.6f}"
         )
     print("  ↑ 앞 둘은 같은 추정식(상한), 마지막이 독립 추정. 해석은 Task 3 EDA에서.")

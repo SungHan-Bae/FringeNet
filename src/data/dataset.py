@@ -76,6 +76,8 @@ def load_frame(split: str, *, use_cache: bool = True) -> pd.DataFrame:
     Args:
         split: "train" 또는 "test".
         use_cache: True면 parquet 캐시를 쓰고, 없으면 만든다.
+            주의 — 캐시는 존재 여부만 보고 원본 CSV의 변경을 감지하지 않는다.
+            `data/raw/`의 파일을 교체했다면 `data/cache/`를 지워야 반영된다.
 
     Returns:
         DataFrame — train은 layer_1..4 + "0".."225", test는 id + "0".."225".
