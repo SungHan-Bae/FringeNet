@@ -50,8 +50,10 @@ class ConvBlock(nn.Module):
     kernel_sizes가 하나면 평범한 단일 conv와 같다. 여러 개면 c_out을 커널 수로 균등
     분할해 분기별로 계산한 뒤 채널축으로 concat한다 — fringe 주기가 두께에 따라
     변하므로 여러 수용영역을 섞는 다중 스케일 장치 (CLAUDE.md 모델 스펙).
-    모든 커널은 홀수여야 한다: padding=k//2일 때만 분기 간 출력 길이가 정확히 같다
-    (홀수 k에서 출력 길이 = ceil(W/stride), 커널과 무관).
+    dilation은 커널 파라미터 수를 바꾸지 않고 수용영역만 d배 넓힌다 — 다중 스케일의
+    또 다른 축 (kernel 혼합과 독립적으로 조합 가능).
+    모든 커널은 홀수여야 한다: 유효 span = d*(k-1)+1 이 항상 홀수가 되어
+    padding = d*(k//2)로 분기 간 출력 길이가 정확히 같다 (= ceil(W/stride), 커널 무관).
 
     Shapes:
         forward: x (B, C_in, W) float -> (B, C_out, ceil(W/stride)) float
@@ -66,6 +68,7 @@ class ConvBlock(nn.Module):
         activation: str,
         norm: str,
         dropout: float,
+        dilation: int = 1,
     ) -> None:
         super().__init__()
         n_branch = len(kernel_sizes)
@@ -76,7 +79,10 @@ class ConvBlock(nn.Module):
             )
         c_branch = c_out // n_branch
         self.branches = nn.ModuleList(
-            nn.Conv1d(c_in, c_branch, k, stride=stride, padding=k // 2) for k in kernel_sizes
+            nn.Conv1d(
+                c_in, c_branch, k, stride=stride, padding=dilation * (k // 2), dilation=dilation
+            )
+            for k in kernel_sizes
         )
 
         tail: list[nn.Module] = []
@@ -96,21 +102,32 @@ class ConvBlock(nn.Module):
 class CNN1D(nn.Module):
     """반사율 스펙트럼 -> 4층 두께 회귀. 채널 순서를 쓰는 Level 1 모델.
 
-    구조: (B, 226) -> (B, 1, 226) -> ConvBlock 스택 -> GAP(파장축 평균) -> Linear -> (B, 4).
-    GAP 전까지 파장축을 살려 두는 것이 구조 bias의 핵심이다 — conv 필터가 fringe라는
-    국소 패턴을 파장축 위치와 무관하게 감지한다.
+    구조: (B, 226) -> (B, 1, 226) -> ConvBlock 스택 -> head(gap|flatten) -> Linear -> (B, 4).
+
+    head 선택이 이 모델의 핵심 ablation 축이다 (level1_cnn 첫 결과의 교훈):
+    - "gap": 파장축을 평균으로 붕괴 — 위치 불변 특징만 남는다. 첫 실험에서 MLP 대비
+      4배 나쁜 18.16 nm, 심지어 채널 셔플 대조군(12.23 nm)보다도 나빴다.
+      이 태스크의 정보가 fringe의 파장축 절대 위치·위상에 실려 있기 때문으로 해석.
+    - "flatten": (C, W_last)를 펴서 위치 정보를 보존한 채 회귀 — 국소성(conv)은
+      유지하고 위치 불변성만 제거하는 가설 검증용.
 
     Args:
         n_channels: 입력 스펙트럼 채널 수.
         n_outputs: 출력 두께 개수 (= 층 수).
-        channels: 블록별 출력 채널 수. 기본값 (32, 64, 128, 200, 280)은 파라미터 수
-            646,340으로 baseline MLP 512x3(647,172)과 -0.13% 차이 — 용량 통제용.
+        channels: 블록별 출력 채널 수. 기본값 (32, 64, 128, 200, 280)은 gap 헤드 기준
+            파라미터 수 646,340으로 baseline MLP 512x3(646,660)과 -0.05% 차이 — 용량
+            통제용. flatten 헤드는 662,020(+2.4%)으로 여전히 ±10% 안이다.
         strides: 블록별 stride (channels와 길이가 같아야 한다). 기본 (1, 2, 2, 2, 2):
             첫 블록은 전체 226 해상도에서 보고, 이후 절반씩 다운샘플 (226->113->57->29->15).
         kernel_sizes: conv 커널 크기 (전 블록 공유, 전부 홀수). 하나면 단일 스케일,
             여러 개면 병렬 분기 concat 다중 스케일 (ConvBlock 참조).
+        dilations: 블록별 dilation (None이면 전부 1). 파라미터·연산량을 바꾸지 않고
+            수용영역만 넓힌다 — 예: 기본 stride에서 (1,1,1,1,1) -> RF 97채널,
+            (1,2,4,4,2) -> RF 259채널(전 대역). 블록 입력 길이보다 유효 span이
+            커지지 않게 고를 것 (padding이 지배하면 낭비).
         activation / norm / dropout: 블록 구성 — MLP 블록과 같은 의미·같은 선택지.
             dropout은 채널 단위 Dropout1d.
+        head: "gap"(파장축 평균) | "flatten"(파장축 보존). 위 설명 참조.
         output_bound: True면 sigmoid bound로 출력을 [d_min, d_max] nm에 가둔다.
             False면 선형 출력 그대로 두되 head bias를 범위 중앙으로 초기화한다
             (MLP와 같은 규약 — 학습 시작점을 "범위 중앙 예측"으로 통일해야 공정).
@@ -130,9 +147,11 @@ class CNN1D(nn.Module):
         channels: Sequence[int] = (32, 64, 128, 200, 280),
         strides: Sequence[int] = (1, 2, 2, 2, 2),
         kernel_sizes: Sequence[int] = (7,),
+        dilations: Sequence[int] | None = None,
         activation: str = "gelu",
         norm: str = "batchnorm",
         dropout: float = 0.0,
+        head: str = "gap",
         output_bound: bool = True,
         d_min: float = 10.0,
         d_max: float = 300.0,
@@ -161,6 +180,16 @@ class CNN1D(nn.Module):
             raise ValueError(
                 f"kernel_sizes는 전부 홀수 양수여야 한다 (받은 값: {list(kernel_sizes)})"
             )
+        if dilations is None:
+            dilations = (1,) * len(channels)
+        if len(dilations) != len(channels):
+            raise ValueError(
+                f"dilations 길이({len(dilations)})는 channels 길이({len(channels)})와 같아야 한다"
+            )
+        if any(d < 1 for d in dilations):
+            raise ValueError(f"dilations는 전부 1 이상이어야 한다 (받은 값: {list(dilations)})")
+        if head not in ("gap", "flatten"):
+            raise ValueError(f'head는 "gap" | "flatten" 이어야 한다 (받은 값: {head!r})')
         if not d_min < d_max:
             raise ValueError(f"d_min < d_max 여야 한다 (받은 값: {d_min}, {d_max})")
 
@@ -178,14 +207,28 @@ class CNN1D(nn.Module):
 
         blocks: list[nn.Module] = []
         c_in = 1
-        for c_out, stride in zip(channels, strides, strict=True):
+        for c_out, stride, dilation in zip(channels, strides, dilations, strict=True):
             blocks.append(
-                ConvBlock(c_in, int(c_out), kernel_sizes, int(stride), activation, norm, dropout)
+                ConvBlock(
+                    c_in,
+                    int(c_out),
+                    kernel_sizes,
+                    int(stride),
+                    activation,
+                    norm,
+                    dropout,
+                    dilation=int(dilation),
+                )
             )
             c_in = int(c_out)
         self.blocks = nn.Sequential(*blocks)
 
-        self.head = nn.Linear(c_in, int(n_outputs))
+        self.head_mode = head
+        w_last = self.n_channels  # 홀수 유효 span + padding = d*(k//2) 이므로 ceil(W/s)만 남는다
+        for s in strides:
+            w_last = -(-w_last // int(s))
+        head_in = c_in if head == "gap" else c_in * w_last
+        self.head = nn.Linear(head_in, int(n_outputs))
         self.bound: ThicknessBound | None = None
         if output_bound:
             self.bound = ThicknessBound(d_min, d_max)
@@ -200,7 +243,9 @@ class CNN1D(nn.Module):
         if self.channel_perm is not None:
             x = x[:, self.channel_perm]
         feat = self.blocks(x.unsqueeze(1))  # (B, 1, 226) -> (B, C_last, W_last)
-        out = self.head(feat.mean(dim=-1))  # GAP: 파장축 평균 -> (B, C_last)
+        # gap: 파장축 평균 (위치 정보 소실) / flatten: 파장축 보존
+        pooled = feat.mean(dim=-1) if self.head_mode == "gap" else feat.flatten(1)
+        out = self.head(pooled)
         if self.bound is not None:
             out = self.bound(out)
         return out

@@ -1,0 +1,34 @@
+# level1_cnn — flatten + dilated 조합: flatten 기준 대비 조작 변인은 dilations 하나.
+#
+# flatten(위치 보존)과 dilated(수용영역 확장)는 서로 직교하는 축이다.
+# flatten이 가설대로 크게 개선되면, 이 변형과 flatten의 차이가 "위치 보존 하에서
+# 넓은 수용영역의 추가 기여"를 측정한다. 파라미터 662,020 (+2.4% vs MLP).
+seed: 42
+experiment: level1_cnn
+run_name: flatten-dilated
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: false
+  channel_shuffle_seed: null
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000
+  num_folds: 0

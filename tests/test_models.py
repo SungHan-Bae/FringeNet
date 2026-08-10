@@ -230,6 +230,49 @@ def test_cnn_no_shuffle_by_default() -> None:
     assert CNN1D(**_SMALL_CNN).channel_perm is None
 
 
+def test_cnn_flatten_head_preserves_position_dimension() -> None:
+    # gap: 헤드 입력 = C_last. flatten: C_last * W_last (226 -> stride 2 한 번 -> 113)
+    gap = CNN1D(channels=(8, 16), strides=(1, 2), head="gap")
+    flat = CNN1D(channels=(8, 16), strides=(1, 2), head="flatten")
+    assert gap.head.in_features == 16
+    assert flat.head.in_features == 16 * 113
+    assert flat(_batch()).shape == (B, 4)
+
+
+def test_cnn_flatten_head_bias_also_initializes_at_range_center() -> None:
+    model = CNN1D(**_SMALL_CNN, head="flatten", output_bound=False)
+    assert torch.allclose(model.head.bias, torch.full((4,), 155.0))
+
+
+def test_cnn_dilation_widens_receptive_field_without_changing_params_or_length() -> None:
+    base = CNN1D(channels=(8, 16), strides=(1, 1), head="flatten")
+    dilated = CNN1D(channels=(8, 16), strides=(1, 1), dilations=(1, 4), head="flatten")
+    # dilation은 파라미터 수를 바꾸지 않는다 (수용영역만) — 통제 변인 유지의 근거
+    n_params = lambda m: sum(p.numel() for p in m.parameters())  # noqa: E731
+    assert n_params(base) == n_params(dilated)
+    # 출력 길이도 보존 (padding = d * (k // 2)) -> flatten 헤드 크기 동일
+    assert dilated.head.in_features == base.head.in_features == 16 * 226
+    out = dilated(_batch())
+    assert out.shape == (B, 4)
+    # dilation이 실제로 적용됐는지
+    assert dilated.blocks[1].branches[0].dilation == (4,)
+
+
+def test_cnn_dilated_gradients_flow() -> None:
+    set_seed(0)
+    model = CNN1D(channels=(8, 16), strides=(1, 2), dilations=(1, 2), kernel_sizes=(3, 7))
+    loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
+    loss.backward()
+    assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters())
+
+
+def test_cnn_flatten_default_still_matches_mlp_parameter_count() -> None:
+    # flatten 헤드(662,020)도 baseline MLP(646,660) 대비 ±10% 안이어야 비교가 성립한다
+    mlp_params = sum(p.numel() for p in MLP(hidden_dims=(512, 512, 512), dropout=0.0).parameters())
+    cnn_params = sum(p.numel() for p in CNN1D(head="flatten").parameters())
+    assert abs(cnn_params - mlp_params) / mlp_params < 0.10, (cnn_params, mlp_params)
+
+
 def test_cnn_gradients_flow_to_every_parameter() -> None:
     set_seed(0)
     model = CNN1D(channels=(8, 16), strides=(1, 2), kernel_sizes=(3, 7))
@@ -259,6 +302,9 @@ def test_cnn_default_matches_mlp_baseline_parameter_count() -> None:
         {"channels": ()},
         {"channels": (8, -1), "strides": (1, 1)},
         {"strides": (0, 1), "channels": (8, 8)},
+        {"channels": (8, 8), "strides": (1, 1), "dilations": (1,)},  # 길이 불일치
+        {"channels": (8, 8), "strides": (1, 1), "dilations": (1, 0)},
+        {"head": "maxpool"},
         {"activation": "tanh"},
         {"norm": "instancenorm"},
         {"dropout": 1.0},
