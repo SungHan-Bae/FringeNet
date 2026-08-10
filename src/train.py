@@ -48,6 +48,16 @@ from src.utils.seed import set_seed
 RUNS_DIR = REPO_ROOT / "runs"
 
 
+def log_line(run_dir: Path, message: str) -> None:
+    """콘솔에 출력하고 같은 내용을 run_dir/train.log에도 append한다.
+
+    학습이 중간에 죽어도 진행 기록이 run 디렉토리에 남도록 에폭마다 즉시 쓴다.
+    """
+    print(message, flush=True)
+    with (run_dir / "train.log").open("a", encoding="utf-8") as f:
+        f.write(message + "\n")
+
+
 def build_lr_scheduler(
     optimizer: torch.optim.Optimizer,
     schedule: str,
@@ -102,7 +112,8 @@ def train_one_model(
             k-fold 모드에서는 해당 fold의 OOF 조각.
         cfg: 전체 config (model/train 섹션 사용).
         seed: 이 모델의 시드 (fold마다 다르게 주면 앙상블 다양성이 생긴다).
-        run_dir: 체크포인트({tag}.pt)·history(history_{tag}.csv) 저장 위치.
+        run_dir: 체크포인트({tag}.pt)·history(history_{tag}.csv)·train.log 저장 위치.
+            history와 로그는 에폭마다 즉시 기록된다 (중단 시에도 남는다).
         tag: 파일명 태그 ("model" 또는 "fold0" 등).
 
     Returns:
@@ -167,6 +178,8 @@ def train_one_model(
             "sec": time.perf_counter() - t_epoch,
         }
         history.append(row)
+        # 중간에 죽어도 기록이 남도록 history를 에폭마다 덮어쓴다.
+        pd.DataFrame(history).to_csv(run_dir / f"history_{tag}.csv", index=False)
         marker = ""
         if val_metrics["overall"] < best_mae:
             best_mae = val_metrics["overall"]
@@ -175,10 +188,10 @@ def train_one_model(
             best_metrics = val_metrics
             best_pred = val_pred
             marker = " *"
-        print(
+        log_line(
+            run_dir,
             f"[{tag}] epoch {epoch:3d}/{epochs}  train_l1 {row['train_l1']:.4f}  "
             f"val_mae {row['val_mae']:.4f}  lr {row['lr']:.2e}  {row['sec']:.1f}s{marker}",
-            flush=True,
         )
 
     if best_state is None or best_pred is None:  # epochs >= 1 이므로 도달 불가
@@ -196,7 +209,6 @@ def train_one_model(
         },
         ckpt_path,
     )
-    pd.DataFrame(history).to_csv(run_dir / f"history_{tag}.csv", index=False)
     return {
         "tag": tag,
         "seed": seed,
@@ -267,11 +279,11 @@ def main(argv: list[str] | None = None) -> None:
     x_hold, y_hold = x[holdout_idx], y[holdout_idx]
     n_folds = int(cfg["train"].get("num_folds", 0))
     mode = "kfold" if n_folds >= 2 else "holdout"
-    print(
+    log_line(
+        run_dir,
         f"run {cfg['run_name']}: 행 {len(x):,} = 학습 {len(train_idx):,}"
         f" + holdout {len(holdout_idx):,} / mode={mode}"
         + (f" (k={n_folds})" if mode == "kfold" else ""),
-        flush=True,
     )
 
     metrics: dict[str, Any] = {
@@ -288,9 +300,10 @@ def main(argv: list[str] | None = None) -> None:
         )
         result.pop("val_pred")
         metrics["model"] = result  # 이 모드에서 val == holdout
-        print(
+        log_line(
+            run_dir,
             f"\n[model] holdout {format_mae(result['val_mae_per_layer'])}"
-            f" (best epoch {result['best_epoch']})"
+            f" (best epoch {result['best_epoch']})",
         )
     else:
         oof_pred = np.full((len(x), 4), np.nan, dtype=np.float32)
@@ -313,10 +326,10 @@ def main(argv: list[str] | None = None) -> None:
             holdout_preds.append(hold_pred)
             result["holdout_mae"] = mae_per_layer(hold_pred, y_hold)
             fold_rows.append(result)
-            print(
+            log_line(
+                run_dir,
                 f"[fold{i}] oof {format_mae(result['val_mae_per_layer'])}"
                 f" / holdout {format_mae(result['holdout_mae'])}",
-                flush=True,
             )
 
         ensemble_pred = np.mean(holdout_preds, axis=0)
@@ -325,13 +338,15 @@ def main(argv: list[str] | None = None) -> None:
         metrics["singles_holdout_overall"] = [r["holdout_mae"]["overall"] for r in fold_rows]
         metrics["ensemble_holdout_mae"] = mae_per_layer(ensemble_pred, y_hold)
         singles_mean = float(np.mean(metrics["singles_holdout_overall"]))
-        print(f"\nOOF(단일 모델, 90% 전체) {format_mae(metrics['oof_mae'])}")
-        print(f"단일 모델 holdout 평균 MAE {singles_mean:.4f} nm")
-        print(f"앙상블(k={n_folds}) holdout {format_mae(metrics['ensemble_holdout_mae'])}")
-        print(f"제출 파일 생성: python -m src.evaluate --run {run_dir} --submission")
+        log_line(run_dir, f"\nOOF(단일 모델, 90% 전체) {format_mae(metrics['oof_mae'])}")
+        log_line(run_dir, f"단일 모델 holdout 평균 MAE {singles_mean:.4f} nm")
+        log_line(
+            run_dir, f"앙상블(k={n_folds}) holdout {format_mae(metrics['ensemble_holdout_mae'])}"
+        )
+        log_line(run_dir, f"제출 파일 생성: python -m src.evaluate --run {run_dir} --submission")
 
     (run_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
-    print(f"\n산출물: {run_dir}/ (metrics.json, history_*.csv, *.pt)", flush=True)
+    log_line(run_dir, f"\n산출물: {run_dir}/ (metrics.json, history_*.csv, train.log, *.pt)")
 
 
 if __name__ == "__main__":

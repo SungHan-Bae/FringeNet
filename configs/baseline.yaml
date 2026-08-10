@@ -10,7 +10,7 @@ data:
 
 model:
   name: mlp
-  hidden_dims: [256, 256, 256]   # --hidden-dims "256,256"처럼 CLI로도 조절 가능
+  hidden_dims: [512, 512, 512]   # --hidden-dims "256,256"처럼 CLI로도 조절 가능
   activation: gelu     # relu | gelu | silu
   norm: batchnorm      # batchnorm | layernorm | none
   dropout: 0.1
