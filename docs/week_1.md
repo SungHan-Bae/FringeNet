@@ -110,9 +110,18 @@
   stride 2 4회. stride-2 stem은 에폭당 4분으로 빨라지지만 해상도 손실 위험이 있어 기각.
   CPU 벤치마크: CNN 에폭 ~7.1분 (MLP 26초의 ~16배, 가중치 공유로 파라미터당 연산이
   많은 conv의 본질적 비용).
-- full run 2종(single-scale, single-scale-shuffled) 순차 실행 시작 — 총 ~7시간 예상.
+- ~~full run 2종 순차 실행 시작 — 총 ~7시간 예상~~ → **CPU 학습 취소, GPU(Colab)로 전환**.
+  로컬이 CPU 전용(torch 2.13.0+cpu)이라 CNN부터는 비용이 안 맞는다 (에폭 ~7분).
+- **GPU 학습 경로 구축** (`8e72b43`): `src/train_gpu.py` — baseline을 만든 CPU 경로
+  (`src/train.py`)는 수정하지 않는 디커플 원칙. 산출물 계약 동일, 데이터 GPU 상주,
+  체크포인트는 CPU 텐서로 저장(로컬 evaluate.py 호환). holdout 전용.
+  CPU 스모크(subset 2만, 2ep)에서 train.py와 **MAE 완전 일치(71.5161)** 확인 —
+  같은 시드·같은 CPU 연산이면 두 경로가 같은 결과를 낸다.
+  Colab 드라이버 `notebooks/colab_train.ipynb` (VM/로컬 커널 자동 분기, SMOKE 플래그,
+  PAT push 셀). 워크플로: Colab에서 학습·push → 로컬 pull·분석·리포트.
 - 열린 확인 사항: lr 1e-3은 MLP 기준으로 고른 값이라 CNN에 불리할 수 있음 —
   결과가 이상하면 subset lr 스윕(3e-4/1e-3/3e-3)으로 공정성 확인 예정.
+  GPU에서는 스윕 비용이 싸졌으므로 본 학습 전에 돌려봐도 좋다.
 
 ---
 
