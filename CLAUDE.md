@@ -113,7 +113,7 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 - dtype: 검증·캘리브레이션은 complex128, 학습은 complex64. d는 real 유지(autograd가 d로 흐르게).
 - 포맷/린트 ruff, 테스트 pytest, 시드 고정 유틸(`src/utils/seed.py`),
   설정은 `configs/<실험>/<변형>.yaml` (평가 규약의 실험 관리 구조 참조).
-- 커밋 메시지: `feat|fix|test|docs|exp: ...`
+- 커밋 메시지: `feat|fix|refactor|test|docs|exp: ...`
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
 

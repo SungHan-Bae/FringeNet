@@ -41,7 +41,7 @@
   "model": {
     "tag": "model",
     "seed": 42,
-    "ckpt_path": "/home/bshzz1006/workspace/FringeNet/runs/mlp_baseline/model.pt",
+    "ckpt_path": "runs/mlp_baseline/dropout0.1/model.pt",
     "best_epoch": 27,
     "val_mae": 6.645268440246582,
     "val_mae_per_layer": {

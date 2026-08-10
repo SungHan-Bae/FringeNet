@@ -232,13 +232,18 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 ├── src/
 │   ├── physics/tmm.py          # 미분가능 TMM — 프로젝트의 물리 코어
 │   ├── data/dataset.py         # CSV → parquet 캐시 → numpy/torch
-│   ├── models/cnn1d.py         # (Task 5 예정)
+│   ├── models/                 # 모델 레지스트리·팩토리 (__init__.py의 build_model)
+│   │   ├── mlp.py              #   baseline MLP — 구조 bias 없는 대조군 (Task 4 확정)
+│   │   ├── heads.py            #   공용 출력단 (ThicknessBound 등)
+│   │   └── cnn1d.py            #   (Task 5 예정)
 │   ├── calibrate.py            # Stage A (Task 6 예정)
 │   ├── train.py                # baseline/k-fold 학습 (Stage B 물리 손실은 Task 7 예정)
 │   └── evaluate.py             # holdout 재평가·제출 파일 생성
 └── tests/
     ├── test_tmm.py             # §3.3 물리 단위 테스트
-    └── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
+    ├── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
+    ├── test_models.py          # 모델 계약(shape)·bound·미분·재현성·팩토리
+    └── test_train.py           # 지표·제출 파일 정렬·LR 스케줄·학습 스모크
 ```
 
 ## 5. 시작하기

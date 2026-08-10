@@ -6,13 +6,16 @@
 
 ## 공통 설정
 
-- 모델: MLP 512×3 (약 0.66M 파라미터), 블록 = Linear → BatchNorm1d → GELU
+- 모델: MLP 512×3 (0.65M 파라미터 = 646,660), 블록 = Linear → BatchNorm1d → GELU
   (residual off), head = Linear 4출력 **bare regression** (output_bound off)
 - 입력: 반사율 226채널 원값 — 입력 표준화 없음 (첫 블록 BatchNorm이 대체)
 - 학습: AdamW lr 1e-3 / weight_decay 1e-4, batch 512, 30 epochs, MAE 손실,
   linear warmup 1,000스텝 + cosine 감쇠 (스텝 단위), seed 42
 - 데이터: train 810,000행 → 학습 729,000 + holdout 81,000 (10%, seed 42 고정 —
   프로젝트 공통 검증셋. 이후 모든 실험은 이 셋의 raw MAE로 비교한다. 격자 스냅 없음)
+- best 체크포인트 선택도 같은 holdout의 val MAE로 한다 — 즉 보고 수치는 30에폭 중
+  최소값이다. 81k 행에서 min-선택 편향은 ~0.01 nm 규모로 무시 가능하지만, holdout이
+  모델 선택에도 쓰인다는 점은 명시해 둔다 (k-fold 모드는 fold별 OOF로 선택, holdout 미사용)
 
 ## sub-run 결과 (holdout 81,000행, raw MAE [nm])
 
@@ -28,18 +31,25 @@
 
 ## 분석
 
-1. **dropout은 순손실 (−31%)**. 810k 전수 격자 데이터에서는 과적합 압력이 약해
-   dropout 0.1이 정규화 이득 없이 수렴만 늦춘다. 두 run 모두 train_l1과 val_mae가
-   마지막 에폭까지 동반 하강한 것이 과적합 부재를 뒷받침한다. 대회 1등 수상자도
-   메인 모델 forward에서 dropout을 쓰지 않았다.
+1. **dropout 0.1은 순손실** — holdout MAE 4.599 → 6.645 nm (+44% 악화; 제거 방향으로
+   읽으면 −31%). 810k 전수 격자 데이터에서는 과적합 압력이 약해 dropout 0.1이 정규화
+   이득 없이 수렴만 늦춘다. 두 run 모두 train_l1이 내리는 동안 val_mae가 되오르는
+   괴리(과적합 신호)가 없었다는 것이 근거다 — 단 마지막까지 단조 하강한 것은 아니고,
+   best(27에폭) 이후 3에폭은 LR→0 구간이라 개선 없이 소폭 요동한다(train.log 참조).
+   대회 1등 수상자도 메인 모델 forward에서 dropout을 쓰지 않았다(출처: 분석 4).
 2. **layer_2가 일관되게 최약** (양쪽 run에서 층별 순위 동일). EDA 층별 민감도
    SNR 최저(10.3, `reports/eda_metrics.md`)와 방향이 일치한다. 단 원리적
    사각지대는 아니므로(최소 SNR 10.3) 모델 개선으로 줄일 대상이다.
-3. **에폭 연장 여지**. best가 27에폭에서 나왔고 막판까지 개선 중이었다
+3. **에폭 연장은 별도 실험 대상**. best가 27에폭이고 이후 3에폭은 개선이 없었지만,
+   이는 cosine 스케줄이 LR을 0으로 보낸 구간이라 "수렴 완료"의 근거가 못 된다.
+   연장하려면 늘어난 total step에 맞춰 스케줄을 다시 잡아 재학습해야 한다
    (대회 1등은 100 epochs).
 4. 참고 스케일: 대회 1등 단일 모델 val MAE ≈ 0.42 nm (약 213M 파라미터
-   skip-connection MLP). 본 baseline은 0.66M — 이 격차를 재는 것이
+   skip-connection MLP). 본 baseline은 0.65M — 이 격차를 재는 것이
    strong baseline(수상자 축소 재현) 실험의 역할이다.
+   (출처: [\[1등\]\[Context_KKP\] Skipconnection MLP with Ensemble — 데이콘 코드 공유](https://dacon.io/competitions/official/235554/codeshare/651).
+   skip-connection MLP·앙상블·단일 모델 val 0.42는 페이지 본문에서 확인.
+   파라미터 수·epochs·dropout 미사용은 페이지 본문이 아니라 원문 첨부 코드 기준.)
 
 ## 결론
 
@@ -55,6 +65,10 @@ python -m src.train --config configs/mlp_baseline/dropout0.1.yaml
 python -m src.evaluate --run runs/mlp_baseline/dropout0.0
 ```
 
-부기: 이 실험은 원래 `runs/mlp_baseline_dropout0{,1}` 평면 구조로 실행됐고,
-2026-08-10 리포트 체계 개편 때 현 구조로 이관했다 (metrics.json의
-experiment/run_name 필드도 새 이름으로 갱신). 결과 수치는 실행 당시 그대로다.
+부기: 이 실험은 원래 평면 구조 — dropout0.0은 `runs/mlp_baseline_dropout0/`,
+dropout0.1은 `runs/mlp_baseline/` (각 train.log 1행에 원래 run 이름이 남아 있다) —
+로 실행됐고, 2026-08-10 리포트 체계 개편 때 현 구조로 이관했다 (metrics.json의
+experiment/run_name/ckpt_path를 새 경로로 갱신). train.log는 실행 당시 원문
+그대로라 옛 run 이름과 당시 산출물 목록(`history_*.csv` — 개편 때 폐기)이 보인다.
+결과 수치는 실행 당시 그대로이며, 2026-08-10 현재 코드의 `src.evaluate`로 두
+체크포인트를 재평가해 holdout MAE 4.5990 / 6.6453 nm이 재현됨을 확인했다.
