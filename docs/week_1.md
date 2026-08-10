@@ -164,6 +164,14 @@
   (flatten-dilated 대비 조작 변인 output_bound 하나) + `notebooks/level1_cnn/round3_bound.ipynb`.
   로컬 조립 확인: 파라미터 662,020으로 flatten-dilated와 동일(bound 무파라미터),
   출력 [10, 300] 중앙 초기화 — 공정 비교 조건 충족. 다음: Colab에서 round3 Run-All.
+- **회귀 발견·수정 (round3 push 셀)**: `dbefab4`가 round2 노트북을 IDE 버퍼의 옛
+  상태로 덮어써 `38add7d`의 PAT 자동 로드·5초 반납 fix가 유실됐고, round3가 그
+  되돌려진 버전을 복사해 물려받았다. `38add7d` 시점 셀로 round3에 재이식.
+  **교훈: 노트북 커밋 전 IDE 버퍼가 디스크 최신인지 확인** (열린 탭이 옛 버퍼를
+  저장하면 커밋된 fix를 되돌린다). round2는 완료 라운드 보존 규약에 따라 그대로 둠.
+- 라운드 3 첫 시도에서 VM clone이 origin과 갈라져(`24dbd7c` — 라운드 2 때 VM 커밋)
+  ff-only pull 거부 → 새 config 부재로 실패. VM은 `reset --hard origin/main`으로 복구
+  (내용은 `2e50702`로 이미 origin에 있어 손실 없음).
 
 ---
 
