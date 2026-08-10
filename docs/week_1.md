@@ -160,18 +160,30 @@
   (무중단 실행과 동일 결과, 테스트 검증). 라운드 2에서 실전 작동 (세션 종료 후
   미러 기록으로 3개 run 스킵·복원 → push). push 셀 PAT 정적 소스화(Drive/Secrets),
   전 실험 완료 시 런타임 자동 반납. 노트북은 라운드별 1개로 구조화 (`0ac1fce`).
-- **라운드 3 준비 — bound on/off (Task 5 마지막 축)**: `configs/level1_cnn/flatten-dilated-bound.yaml`
+
+## 2026-08-11 (화) — Task 5 종결: 라운드 3 output bound
+
+- **라운드 3 준비 (`dae1b6e`)**: `configs/level1_cnn/flatten-dilated-bound.yaml`
   (flatten-dilated 대비 조작 변인 output_bound 하나) + `notebooks/level1_cnn/round3_bound.ipynb`.
   로컬 조립 확인: 파라미터 662,020으로 flatten-dilated와 동일(bound 무파라미터),
-  출력 [10, 300] 중앙 초기화 — 공정 비교 조건 충족. 다음: Colab에서 round3 Run-All.
-- **회귀 발견·수정 (round3 push 셀)**: `dbefab4`가 round2 노트북을 IDE 버퍼의 옛
-  상태로 덮어써 `38add7d`의 PAT 자동 로드·5초 반납 fix가 유실됐고, round3가 그
-  되돌려진 버전을 복사해 물려받았다. `38add7d` 시점 셀로 round3에 재이식.
-  **교훈: 노트북 커밋 전 IDE 버퍼가 디스크 최신인지 확인** (열린 탭이 옛 버퍼를
-  저장하면 커밋된 fix를 되돌린다). round2는 완료 라운드 보존 규약에 따라 그대로 둠.
+  출력 [10, 300] 중앙 초기화 — 공정 비교 조건 충족.
 - 라운드 3 첫 시도에서 VM clone이 origin과 갈라져(`24dbd7c` — 라운드 2 때 VM 커밋)
   ff-only pull 거부 → 새 config 부재로 실패. VM은 `reset --hard origin/main`으로 복구
   (내용은 `2e50702`로 이미 origin에 있어 손실 없음).
+- **회귀 발견·수정 (round3 push 셀, `d202a53`)**: `dbefab4`가 round2 노트북을 IDE
+  버퍼의 옛 상태로 덮어써 `38add7d`의 PAT 자동 로드·5초 반납 fix가 유실됐고, round3가
+  그 되돌려진 버전을 복사해 물려받았다. `38add7d` 시점 셀로 round3에 재이식.
+  **교훈: 노트북 커밋·복사 전 IDE 버퍼가 디스크 최신인지 확인** — CLAUDE.md 노트북
+  규약에 명문화 (마운트 force_remount=True, PAT 정적 로드, 반납 sleep 5초 포함).
+  round2는 완료 라운드 보존 규약에 따라 그대로 둠.
+- **라운드 3 완료 (`a281cc6`) — Task 5 종결**: flatten-dilated-bound **2.346 nm**
+  (flatten-dilated 2.931 대비 −20%, baseline 대비 **−49%**). 체크포인트 로컬 재현
+  일치(2.3455). 오차 분해: 이득은 격자 끝에 집중 — 범위 밖 예측 3.4%→0,
+  d=10 MAE 4.91→1.82, d=300 3.46→1.39, 내부도 소폭 개선(2.55→2.25)으로 순손실
+  구간 없음. **MLP 때(bare 채택, `99fe78e`)와 반대 결론** — 강한 백본에서는 격자 끝
+  범위 밖 초과분이 남은 오차를 지배한다는 가설(MLP bound-on 산출물 미보존으로 정량
+  대조 불가). Level 2 백본 = flatten-dilated-bound.
+  취합 리포트 갱신: [reports/level1_cnn.md](../reports/level1_cnn.md).
 
 ---
 
@@ -182,6 +194,7 @@
 | 노이즈 | σ ≈ 0.0087, 균등분포에 가까움, 채널에 균일 | [reports/eda_notes.md](../reports/eda_notes.md) §4 |
 | Stage A 게이트 | RMSE < 1.2σ ≈ 0.0105 **+** 잔차 백색성 (둘 다) | 08-09 결정 (`34b7072`) |
 | baseline | holdout MAE **4.599 nm** (MLP 512×3, dropout 0, bare regression) | [reports/mlp_baseline.md](../reports/mlp_baseline.md) |
+| Level 1 확정 (Level 2 백본) | holdout MAE **2.346 nm** (flatten-dilated-bound 1D CNN) | [reports/level1_cnn.md](../reports/level1_cnn.md) |
 | 층별 최소 SNR | 10.3 (layer_2) — 사각지대 없음 | eda_notes §2 |
 | 강건성 주입 노이즈 | 균등 ±0.015 기본, "기존 노이즈 위 추가분"으로 표기 | eda_notes §4 |
 
@@ -189,9 +202,9 @@
 
 작업 백로그 (순서 준수 — 상세 DoD는 CLAUDE.md):
 
-- [ ] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표
-  — CNN·다중스케일(dilated) 완료 ([reports/level1_cnn.md](../reports/level1_cnn.md),
-  flatten-dilated 2.931 nm). **bound on/off만 남음** (flatten-dilated 기준으로 1 run)
+- [x] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표
+  — 전 축 완료 ([reports/level1_cnn.md](../reports/level1_cnn.md)). 확정:
+  **flatten-dilated-bound 2.346 nm** (baseline −49%). 2026-08-11 라운드 3 종결.
 - [ ] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지 (게이지: SiO₂ Cauchy freeze)
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신

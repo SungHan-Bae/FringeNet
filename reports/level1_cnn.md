@@ -1,9 +1,9 @@
 # 실험 리포트: level1_cnn — Task 5 Level 1 구조 ablation (1D CNN)
 
-2026-08-10. 대실험 주제: **"채널 순서 = 연속 스펙트럼" 구조 bias의 기여 측정** —
+2026-08-10~11. 대실험 주제: **"채널 순서 = 연속 스펙트럼" 구조 bias의 기여 측정** —
 baseline MLP(구조 bias 없음, 4.599 nm) 대비 1D CNN이 무엇을 얻고 무엇을 잃는가.
 산출물: `runs/level1_cnn/<변형>/` (model.pt, train.log, metrics.json).
-남은 항목: **bound on/off ablation** (Task 5 DoD의 마지막 축 — 별도 라운드).
+라운드 3(bound on/off)까지 완료 — **Task 5 DoD 전 축 완료, 대실험 종결**.
 
 ## 변인 통제 (이 실험의 비교가 성립하는 근거)
 
@@ -31,16 +31,18 @@ baseline MLP(구조 bias 없음, 4.599 nm) 대비 1D CNN이 무엇을 얻고 무
 | [`single-scale-shuffled`](../runs/level1_cnn/single-scale-shuffled/) | + 채널 순서 파괴 | 12.234 | 9.928 | 14.544 | 12.522 | 11.943 | 29/30 | 33.6분 |
 | [`flatten`](../runs/level1_cnn/flatten/) | head: GAP→flatten | 13.677 | 9.782 | 17.200 | 13.209 | 14.518 | 30/30 | 6.0분 |
 | [`dilated`](../runs/level1_cnn/dilated/) | dilations [1,2,4,4,2] (RF 97→259) | 4.976 | 3.594 | 5.955 | 5.092 | 5.263 | 28/30 | 6.0분 |
-| [`flatten-dilated`](../runs/level1_cnn/flatten-dilated/) | flatten + dilated | **2.931** | 2.135 | 3.629 | 3.120 | 2.839 | 30/30 | 6.0분 |
+| [`flatten-dilated`](../runs/level1_cnn/flatten-dilated/) | flatten + dilated | 2.931 | 2.135 | 3.629 | 3.120 | 2.839 | 30/30 | 6.0분 |
+| [`flatten-dilated-bound`](../runs/level1_cnn/flatten-dilated-bound/) | + output bound (sigmoid [10, 300]) | **2.346** | 1.594 | 2.961 | 2.730 | 2.096 | 29/30 | 6.0분 |
 
 수렴 궤적 (val MAE, 에폭 1 → 10 → 20 → 30):
 
 - single-scale: 41.97 → 23.16 → 19.04 → 18.17 / shuffled: 35.71 → 15.81 → 12.98 → 12.27
 - flatten: 31.65 → 17.34 → 14.52 → 13.68 / dilated: 22.03 → 8.05 → 5.66 → 4.98
 - flatten-dilated: 17.71 → 5.44 → 3.38 → **2.93**
+- flatten-dilated-bound: 17.54 → 4.55 → 2.78 → **2.35** (best ep 29: 2.3455, ep 30: 2.3463)
 
-검증: 6개 체크포인트 전부 로컬 CPU에서 holdout 재예측으로 기록 수치 재현 확인
-(오차 < 1e-3 nm). 셔플 순열·head·dilations 구성이 체크포인트 `model_cfg`에
+검증: 7개 체크포인트 전부 로컬 CPU에서 holdout 재예측으로 기록 수치 재현 확인
+(오차 < 1e-3 nm). 셔플 순열·head·dilations·bound 구성이 체크포인트 `model_cfg`에
 저장된 대로임을 확인.
 
 ## 분석
@@ -79,7 +81,7 @@ baseline에 근접했다. 그 위에 flatten(위치 보존)을 더하자 2.93 nm
 난다 (dilated 단독 대비 flatten의 한계 기여 +2.0, flatten 단독 대비 dilated의
 한계 기여 +10.7 — 두 축은 상호 보완이되 비대칭).
 
-### 3. 확정 구성(flatten-dilated)의 오차 구조 — 전 영역에서 baseline 우위
+### 3. flatten-dilated의 오차 구조 — 전 영역에서 baseline 우위 (라운드 2 시점)
 
 - 예측-정답 상관 0.9973~0.9988 (baseline 0.9924~0.9968), 예측 std 86.3~86.7로
   평균 회귀 없음.
@@ -91,7 +93,32 @@ baseline에 근접했다. 그 위에 flatten(위치 보존)을 더하자 2.93 nm
 - layer_2가 최약인 순위는 모든 모델 공통 — EDA 층별 민감도 SNR 최저(10.3)와
   일치하는 물리적 패턴이지 특정 구조의 문제가 아니다.
 
-### 4. 한계·주의
+### 4. 라운드 3 — output bound: 이득은 격자 끝에 집중된다 (MLP와 반대 결론)
+
+flatten-dilated에 sigmoid bound(출력을 물리 범위 [10, 300] nm에 가둠, 무파라미터)
+하나만 켠 비교: **2.931 → 2.346 nm (−20.0%)**. MLP baseline에서는 bare regression이
+채택됐었는데(`99fe78e`), 백본이 강해지자 결론이 뒤집혔다.
+
+오차 구조 분해 (동일 holdout, 로컬 재예측):
+
+| 지표 | flatten-dilated | + bound |
+|---|---|---|
+| 범위 밖 예측 (<10 / >300 nm) | 1.82% / 1.53% | **0 / 0** (구조적으로 불가능) |
+| 격자 끝 MAE (d=10 / d=300) | 4.91 / 3.46 | **1.82 / 1.39** (−63% / −60%) |
+| 얇은 구간(10~60 nm) MAE | 4.37 | **3.14** |
+| 내부(70~240 nm) MAE | 2.55 | 2.25 |
+| 예측-정답 상관 (min~max) | 0.9973~0.9988 | 0.9984~0.9993 |
+
+이득이 격자 끝에 집중된다: unbound 모델은 예측의 ~3.4%가 물리적으로 불가능한
+범위 밖 값이었고 그 잔차가 끝 구간 MAE를 지배했는데, bound는 이를 구조적으로
+차단한다. 우려했던 sigmoid 포화(끝 구간 gradient 소실)로 인한 열화는 관측되지
+않았다 — 오히려 끝 구간이 가장 크게 좋아졌고, 내부 구간도 소폭 개선(2.55→2.25)
+이라 순손실 구간이 없다. MLP와의 결론 역전에 대한 가설: 백본이 강할수록 남은
+오차에서 격자 끝 범위 밖 초과분이 차지하는 비중이 커져 같은 제약의 한계 기여가
+커진다. 단, MLP bound-on 산출물은 runs/에 보존되지 않아(`99fe78e`는 config 변경
+커밋만 남음) 정량 대조는 불가 — 가설 수준으로만 기록한다.
+
+### 5. 한계·주의
 
 - **에폭 연장 여지**: flatten·flatten-dilated는 best가 30/30 — cosine 스케줄
   끝까지 하강 중이었다. 30 epochs는 baseline과의 통제 비교용이고, 절대 성능은
@@ -104,24 +131,26 @@ baseline에 근접했다. 그 위에 flatten(위치 보존)을 더하자 2.93 nm
 
 ## 결론
 
-**Level 1 확정: flatten-dilated 1D CNN, holdout MAE 2.931 nm (baseline 대비 −36.3%)**
-— `configs/level1_cnn/flatten-dilated.yaml`.
+**Level 1 확정: flatten-dilated + output bound 1D CNN, holdout MAE 2.346 nm
+(baseline 대비 −49.0%)** — `configs/level1_cnn/flatten-dilated-bound.yaml`.
 
 구조 bias의 기여에 대한 답: "1D conv를 쓰면 좋다"가 아니라 —
 **국소 conv 특징은 (1) 수용영역이 스펙트럼 전 대역을 덮고 (2) 파장축 위치가
 보존될 때만 유효하며, 그 조건이 갖춰지면 동급 용량 MLP를 36% 능가한다.**
 소박한 conv+GAP 이식은 오히려 4배 나쁘고, 그 사실은 채널 셔플 대조군이 정상
-입력을 이기는 역전으로 가장 선명하게 드러났다. Level 2(물리 손실)의 백본은
-flatten-dilated를 기본으로 한다.
+입력을 이기는 역전으로 가장 선명하게 드러났다. 그 위에 물리 범위 제약(output
+bound)이 격자 끝 오차를 지워 추가 −20% — 구조 bias(연결 패턴)와 물리 bias(출력
+범위)는 독립적으로 기여한다. Level 2(물리 손실)의 백본은 flatten-dilated-bound를
+기본으로 한다.
 
 ## 재현
 
 ```bash
 # Colab (권장): notebooks/level1_cnn/round1_gap-vs-shuffled.ipynb (기록 보존),
-#               notebooks/level1_cnn/round2_flatten-dilated.ipynb
+#               round2_flatten-dilated.ipynb, round3_bound.ipynb
 # CLI (GPU 또는 CPU — 오래 걸림):
-python -m src.train_gpu --config configs/level1_cnn/flatten-dilated.yaml
-python -m src.evaluate --run runs/level1_cnn/flatten-dilated
+python -m src.train_gpu --config configs/level1_cnn/flatten-dilated-bound.yaml
+python -m src.evaluate --run runs/level1_cnn/flatten-dilated-bound
 ```
 
 부기: 라운드 2는 세션 유실 대비 체계(에폭 단위 resume.pt + Drive 미러 + 완료 run

@@ -132,6 +132,14 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 - **Colab 노트북은 라운드(학습 세션)별 1개**: `notebooks/<대실험>/roundN_<내용>.ipynb`.
   완료된 라운드의 노트북은 실행 로그 보존을 위해 수정·재실행하지 않는다. 새 라운드는
   직전 노트북을 복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다.
+  **복사 전 원본이 디스크 최신인지 확인** — IDE의 옛 버퍼가 저장되면 커밋된 셀 fix를
+  되돌린다 (실사례: `dbefab4`가 `38add7d`의 push 셀 fix를 덮어씀 → round3에 재이식).
+  GPU 학습 노트북 필수 셀 규약:
+  1. Drive 마운트는 항상 `drive.mount(..., force_remount=True)` — 이전 세션의 stale
+     마운트를 배제하고 최신 상태로 다시 마운트한다
+  2. push 셀 PAT는 정적 소스에서 자동 로드 (env GITHUB_PAT → Colab Secrets →
+     Drive `FringeNet/secrets/github_pat.txt` → 없을 때만 프롬프트) — Run-All 무정지
+  3. 런타임 자동 반납의 취소 대기 sleep은 **5초** (60초 등 긴 대기 금지 — 유휴 과금)
 - 커밋 메시지: `feat|fix|refactor|test|docs|exp: ...`
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
@@ -150,10 +158,12 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 - Baseline(대조군): MLP. 226채널을 순서 없는 피처로 취급 — 구조 bias의 기여를 재기 위한 기준선.
 - Level 1(구조·표현 bias): 1D CNN. 입력 `(B, 1, 226)` → conv 스택 → head(gap|flatten) → 4출력.
   각 요소(head/dilations/kernel_sizes/bound/셔플 대조군)는 config 플래그로 on/off (ablation용).
-  **확정 (2026-08-10, reports/level1_cnn.md): flatten-dilated가 holdout MAE 2.931 nm로
-  baseline 대비 −36%. 국소 conv는 수용영역이 전 대역을 덮고(dilated RF 259) 파장축
-  위치가 보존될 때만(flatten) 유효 — 소박한 conv+GAP는 4배 나쁘고 채널 셔플 대조군보다도
-  나쁘다. Level 2 백본 = flatten-dilated.** bound on/off ablation만 남음.
+  **확정 (2026-08-11, reports/level1_cnn.md): flatten-dilated + output bound가 holdout
+  MAE 2.346 nm로 baseline 대비 −49%. 국소 conv는 수용영역이 전 대역을 덮고(dilated
+  RF 259) 파장축 위치가 보존될 때만(flatten) 유효 — 소박한 conv+GAP는 4배 나쁘고 채널
+  셔플 대조군보다도 나쁘다. sigmoid bound는 격자 끝 오차를 지워 추가 −20%(MLP 때와
+  반대 결론 — 강한 백본에서는 범위 밖 초과분이 남은 오차를 지배). Level 2 백본 =
+  flatten-dilated-bound.**
 - Level 2:
   - Stage A `src/calibrate.py`: train 서브셋(~5만 행)의 (d_true, R_obs)로 forward 미지수 피팅.
     파라미터화 — λ 그리드: `lam = lam_min + cumsum(softplus(u))` (단조);
@@ -230,9 +240,9 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   입력 표준화 없음, batch 512, AdamW 1e-3/wd 1e-4, warmup 1000스텝+cosine.
   **holdout MAE 4.599 nm** — 리포트 `reports/mlp_baseline.md`.
   dropout 0.1은 6.645 nm로 순손실(전수 격자라 과적합 압력 약함). 2026-08-10 확정.)
-- [ ] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표.
-  (CNN·셔플 대조군·flatten·dilated 완료 — `reports/level1_cnn.md`, flatten-dilated
-  **2.931 nm**. 남은 것: bound on/off 1 run.)
+- [x] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표.
+  (전 축 완료 — `reports/level1_cnn.md`. 확정: flatten-dilated-bound **2.346 nm**
+  (baseline −49%). bound는 격자 끝 오차 −60%대 절감, MLP 때와 반대 결론. 2026-08-11.)
 - [ ] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지.
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석.
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신.
