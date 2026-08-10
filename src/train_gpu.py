@@ -16,9 +16,12 @@ src/train.py는 baseline(Task 4)을 만든 CPU 검증 경로 그대로 보존하
 - **매 에폭 resume.pt** 저장: 모델·옵티마이저·스케줄러·best 상태·RNG 상태 전부.
   재실행 시 자동 감지해 다음 에폭부터 재개하며, RNG까지 복원하므로 중단 없이
   돌린 실행과 (같은 기종·cudnn deterministic 하에) 동일한 결과를 낸다.
-- **mirror_dir**(예: Google Drive)를 주면 train.log·resume.pt를 매 에폭,
-  model.pt를 best 갱신 에폭마다 미러에 복사한다. 새 VM에서 재실행하면 미러에서
-  상태를 복원해 이어 달린다. 저장·복사는 원자적(임시파일→교체)이다.
+- **mirror_dir**(예: Google Drive)를 주면 train.log를 매 에폭, resume.pt를
+  mirror_resume_every 에폭마다(기본 1), model.pt를 best 갱신 에폭마다 미러에 복사한다.
+  새 VM에서 재실행하면 미러에서 상태를 복원해 이어 달린다. 저장·복사는
+  원자적(임시파일→교체)이다. 대형 모델은 resume.pt가 수 GB라 Drive 비동기 업로드가
+  에폭 속도를 못 따라갈 수 있다 — 그때 mirror_resume_every를 올려 업로드량을 줄인다
+  (로컬 resume.pt는 항상 매 에폭 저장이라 같은 VM 재개는 무손실).
 - 완료된 run(metrics.json에 결과 존재)은 run_config가 통째로 건너뛴다 —
   여러 실험을 순차 실행하다 끊겨도 재실행하면 끝난 것은 스킵, 하던 것은 재개.
 - 재현성: 같은 시드·같은 GPU 기종에서는 cudnn deterministic(set_seed)으로 재현된다.
@@ -123,6 +126,7 @@ def train_one_model_gpu(
     device: torch.device,
     mirror_dir: Path | None = None,
     resume: bool = True,
+    mirror_resume_every: int = 1,
     _abort_after_epoch: int | None = None,
 ) -> dict[str, Any]:
     """모델 하나를 device에서 학습하고 best(val MAE) 체크포인트를 저장한다.
@@ -132,10 +136,15 @@ def train_one_model_gpu(
     (3) best 갱신 즉시 {tag}.pt 저장, (4) 매 에폭 resume.pt 저장(+미러)로 세션 유실 대비.
 
     Args:
-        mirror_dir: 지정하면 train.log·resume.pt를 매 에폭, {tag}.pt를 best 갱신
-            에폭마다 이 디렉토리에 복사한다. 시작 시 로컬에 resume.pt가 없고 미러에
-            있으면 미러에서 복원해 이어 달린다.
+        mirror_dir: 지정하면 train.log를 매 에폭, resume.pt를 mirror_resume_every
+            에폭마다, {tag}.pt를 best 갱신 에폭마다 이 디렉토리에 복사한다. 시작 시
+            로컬에 resume.pt가 없고 미러에 있으면 미러에서 복원해 이어 달린다.
         resume: False면 resume.pt를 무시하고 처음부터 학습한다.
+        mirror_resume_every: resume.pt 미러 복사 간격(에폭). 로컬 저장은 항상 매 에폭
+            이라 같은 VM 재개는 무손실이고, 이 값은 새 VM 복구의 최대 재계산 폭만
+            정한다. 대형 모델(resume.pt 수 GB)에서 Drive 비동기 업로드가 에폭 생산
+            속도를 못 따라가 밀리는 것을 완화하는 용도 — config가 아닌 함수 인자라
+            fingerprint에 영향이 없어 진행 중 run에도 적용할 수 있다.
         _abort_after_epoch: 테스트 전용 — 해당 에폭의 저장·미러까지 끝낸 뒤 일부러
             RuntimeError를 던져 세션 중단을 흉내 낸다.
 
@@ -151,6 +160,10 @@ def train_one_model_gpu(
     batch_size = int(train_cfg["batch_size"])
     if epochs < 1:
         raise ValueError(f"epochs는 1 이상이어야 한다 (받은 값: {epochs})")
+    if mirror_resume_every < 1:
+        raise ValueError(
+            f"mirror_resume_every는 1 이상이어야 한다 (받은 값: {mirror_resume_every})"
+        )
 
     # 1등 솔루션 충실 재현용 프로토콜 플래그 (configs/strong_baseline/ 참조) —
     # 기본값은 기존 실험과 동일한 동작이라 이전 config·fingerprint에 영향이 없다.
@@ -338,7 +351,11 @@ def train_one_model_gpu(
             },
             resume_path,
         )
-        mirror_names = ("train.log", RESUME_NAME) + ((f"{tag}.pt",) if improved else ())
+        mirror_names = (
+            ("train.log",)
+            + ((RESUME_NAME,) if epoch % mirror_resume_every == 0 else ())
+            + ((f"{tag}.pt",) if improved else ())
+        )
         _mirror_copy(run_dir, mirror_dir, mirror_names)
 
         if _abort_after_epoch is not None and epoch >= _abort_after_epoch:
@@ -391,6 +408,7 @@ def run_config(
     subset: int | None = None,
     resume: bool = True,
     mirror_dir: str | Path | None = None,
+    mirror_resume_every: int = 1,
     runs_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """config 하나를 GPU(가능하면)에서 학습하고 metrics dict를 돌려준다.
@@ -406,6 +424,7 @@ def run_config(
     Args:
         mirror_dir: 세션 유실 대비 미러 루트 (예: Drive 경로). 실제 미러는
             <mirror_dir>/<experiment>/<run_name>/에 쌓인다.
+        mirror_resume_every: resume.pt 미러 복사 간격(에폭) — train_one_model_gpu 참조.
         runs_root: 산출물 루트 (기본 runs/ — 테스트용 오버라이드).
 
     Raises:
@@ -495,6 +514,7 @@ def run_config(
         dev,
         mirror_dir=mirror_run,
         resume=resume,
+        mirror_resume_every=mirror_resume_every,
     )
     result.pop("val_pred")
     metrics["model"] = result
@@ -523,6 +543,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--mirror-dir", default=None, help="세션 유실 대비 미러 루트 (선택)")
     parser.add_argument(
+        "--mirror-resume-every",
+        type=int,
+        default=1,
+        help="resume.pt 미러 복사 간격(에폭) — 대형 모델의 Drive 업로드 밀림 완화용",
+    )
+    parser.add_argument(
         "--no-resume", action="store_true", help="resume.pt·완료 기록을 무시하고 처음부터 학습"
     )
     return parser.parse_args(argv)
@@ -541,6 +567,7 @@ def main(argv: list[str] | None = None) -> None:
         subset=args.subset,
         resume=not args.no_resume,
         mirror_dir=args.mirror_dir,
+        mirror_resume_every=args.mirror_resume_every,
     )
 
 

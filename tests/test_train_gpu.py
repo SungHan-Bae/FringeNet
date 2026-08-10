@@ -332,3 +332,49 @@ def test_eval_mode_after_first_epoch_freezes_bn_stats(flag: bool, tmp_path: Path
 
     frozen = all(torch.equal(after_ep1[k], after_ep3[k]) for k in after_ep1)
     assert frozen == flag
+
+
+# ---------------------------------------------------------------------------
+# resume.pt 미러 간격 (mirror_resume_every) — 대형 모델의 Drive 업로드 밀림 완화
+# ---------------------------------------------------------------------------
+def test_mirror_resume_every_rejects_below_one(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="mirror_resume_every"):
+        _train(tmp_path, mirror_resume_every=0)
+
+
+def test_mirror_resume_interval_skips_off_epochs(tmp_path: Path) -> None:
+    # K=2: 에폭 1(간격 미도달)에서는 미러에 train.log만 가고 resume.pt는 안 간다
+    mirror = tmp_path / "mirror"
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(tmp_path, mirror_dir=mirror, mirror_resume_every=2, _abort_after_epoch=1)
+    assert (mirror / "train.log").exists()
+    assert not (mirror / "resume.pt").exists()
+    assert (tmp_path / "resume.pt").exists()  # 로컬 저장은 매 에폭 그대로
+
+
+def test_lagged_mirror_resume_matches_uninterrupted(tmp_path: Path) -> None:
+    # Drive 비동기 업로드 지연 시나리오의 재현: K=2라 미러 resume.pt가 마지막 에폭(3)보다
+    # 뒤처진(2) 상태에서 세션이 죽고 VM 디스크가 날아가도, 미러에서 재개한 최종 결과는
+    # 무중단 실행과 동일해야 한다 (에폭 3을 같은 궤적으로 재계산)
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["epochs"] = 4
+
+    full_dir = tmp_path / "full"
+    full_dir.mkdir()
+    full = _train(full_dir, cfg)
+
+    run_dir = tmp_path / "run"
+    mirror = tmp_path / "mirror"
+    run_dir.mkdir()
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(run_dir, cfg, mirror_dir=mirror, mirror_resume_every=2, _abort_after_epoch=3)
+    lagged = torch.load(mirror / "resume.pt", map_location="cpu", weights_only=False)
+    assert lagged["epoch"] == 2  # 미러는 에폭 2에 머물러 있다 (로컬은 3까지 갔지만 유실)
+
+    shutil.rmtree(run_dir)
+    run_dir.mkdir()
+    resumed = _train(run_dir, cfg, mirror_dir=mirror, mirror_resume_every=2)
+
+    assert resumed["best_epoch"] == full["best_epoch"]
+    assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
+    assert np.allclose(resumed["val_pred"], full["val_pred"], atol=1e-5)
