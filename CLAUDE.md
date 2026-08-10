@@ -39,8 +39,9 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 
 - 경로: `data/raw/{train.csv, test.csv, sample_submission.csv}` — 사용자가 데이콘에서 직접 배치.
   parquet 캐시는 `data/cache/`에 자동 생성 (최초 29초 → 이후 3.4초).
-- **데이터 파일을 git에 커밋하거나 저장소에 재배포하지 않는다** (.gitignore: `/data/`, `/runs/`).
-  앵커(`/`)가 없으면 `src/data/` 패키지까지 무시되니 주의.
+- **데이터 파일을 git에 커밋하거나 저장소에 재배포하지 않는다** (.gitignore: `/data/**`,
+  구조는 .gitkeep으로만 추적). 앵커(`/`)가 없으면 `src/data/` 패키지까지 무시되니 주의.
+  runs/·configs/·reports/는 전체 git 추적.
 - `train.csv`: `layer_1..layer_4` = 두께[nm] 타깃, 컬럼 `"0".."225"` = 반사율.
 - 헤더 0~225는 **비식별화된 파장 인덱스**다. 실제 nm로 단정하는 코드/서술 금지.
   단, 채널 순서는 연속 스펙트럼으로 의미 있음 (1D conv 유효).
@@ -110,7 +111,8 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   `d: (B, L)` float, `n_layers: (L, W)` complex, `lam: (W,)`, 반환 `R: (B, W)` real.
 - 층 수(L=4)에 대해서만 파이썬 루프 허용. B, W축은 반드시 벡터화.
 - dtype: 검증·캘리브레이션은 complex128, 학습은 complex64. d는 real 유지(autograd가 d로 흐르게).
-- 포맷/린트 ruff, 테스트 pytest, 시드 고정 유틸(`src/utils/seed.py`), 설정은 `configs/*.yaml`.
+- 포맷/린트 ruff, 테스트 pytest, 시드 고정 유틸(`src/utils/seed.py`),
+  설정은 `configs/<실험>/<변형>.yaml` (평가 규약의 실험 관리 구조 참조).
 - 커밋 메시지: `feat|fix|test|docs|exp: ...`
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
@@ -171,6 +173,15 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   단, 데이터에 이미 σ ≈ 0.0087의 노이즈가 있으므로(위 데이터 계약 참조) 주입 노이즈는
   **추가분**이다. 리포트에 "기존 노이즈 위에 더한 양"임을 명시할 것.
 - 위 셋은 Task 4 이후 평가 스크립트에 고정 포함한다. 좋은 숫자만 고르지 않는다.
+- **실험 관리 구조 — 대실험(experiment) / 변형(run) 2단**:
+  - 설정 `configs/<실험>/<변형>.yaml` (config에 `experiment`·`run_name` 키 필수).
+  - 산출물 `runs/<실험>/<변형>/` = **model.pt + train.log + metrics.json 세 가지만**
+    (metrics.json이 설정 스냅샷을 겸한다 — 시작 시 기록, 완료 시 결과 포함 덮어씀.
+    train.log는 에폭마다 실시간 기록). 전부 git 추적.
+  - 변형 이름은 번호(sub_run_1)가 아니라 **무엇이 다른지 드러나는 서술형**으로
+    (예: dropout0.0, layernorm, residual-on).
+  - 대실험이 끝나면 모든 변형의 결과·분석·최종 결론을 **`reports/<실험>.md`**로 취합한다.
+    README에는 성능 수치를 두지 않고 §7에서 리포트 목록만 링크한다.
 
 ## 작업 백로그 (순서 준수, 완료 시 체크)
 
@@ -189,7 +200,11 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   (c) 반사율 분포·범위. DoD: `reports/figures/` 그림 3종 + 관찰 메모.
   (`scripts/eda.py` → 그림 3종 + `reports/eda_metrics.md`(스크립트 산출) +
   `reports/eda_notes.md`(해석). 아래 "EDA 확정 수치" 참조.)
-- [ ] **Task 4 — Baseline 학습**: 90/10 val split(시드 고정), MAE 리포트. DoD: 재현 커맨드 README 반영.
+- [x] **Task 4 — Baseline 학습**: 90/10 val split(시드 고정), MAE 리포트. DoD: 재현 커맨드 README 반영.
+  (확정 baseline: MLP 512×3, Linear→BatchNorm→GELU 블록, dropout 0, bare regression,
+  입력 표준화 없음, batch 512, AdamW 1e-3/wd 1e-4, warmup 1000스텝+cosine.
+  **holdout MAE 4.599 nm** — 리포트 `reports/mlp_baseline.md`.
+  dropout 0.1은 6.645 nm로 순손실(전수 격자라 과적합 압력 약함). 2026-08-10 확정.)
 - [ ] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표.
 - [ ] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지.
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석.
@@ -210,7 +225,7 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 pytest -q
 ruff check . && ruff format .
 python scripts/verify_data.py
-python -m src.train --config configs/baseline.yaml
+python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
 ```
 
 ## 세션 시작 체크리스트

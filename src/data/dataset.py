@@ -179,3 +179,57 @@ def random_split_indices(
     perm = rng.permutation(n)
     n_val = int(round(n * val_frac))
     return perm[n_val:], perm[:n_val]
+
+
+def kfold_indices(
+    indices: np.ndarray, n_folds: int, seed: int = 42
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """주어진 인덱스 집합 안에서 k-fold (train, val) 분할 목록을 만든다.
+
+    프로젝트 공통 holdout(random_split_indices의 val)을 **뺀 나머지** 안에서만 접는
+    용도다 — 어떤 fold 모델도 holdout을 보지 않아야 fold 앙상블을 holdout으로
+    공정하게 평가할 수 있다 (src/train.py 프로토콜 참조).
+
+    Args:
+        indices: 접을 인덱스 배열 (예: train_idx).
+        n_folds: fold 수 (>= 2).
+        seed: 셔플 시드.
+
+    Returns:
+        길이 n_folds의 [(train_idx, val_idx)]. val들은 서로소이고 합집합이 indices 전체.
+    """
+    if n_folds < 2:
+        raise ValueError(f"n_folds는 2 이상이어야 한다 (받은 값: {n_folds})")
+    if len(indices) < n_folds:
+        raise ValueError(f"인덱스 수({len(indices)})가 n_folds({n_folds})보다 적다")
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(np.asarray(indices))
+    chunks = np.array_split(perm, n_folds)
+    out: list[tuple[np.ndarray, np.ndarray]] = []
+    for i in range(n_folds):
+        train_part = np.concatenate([c for j, c in enumerate(chunks) if j != i])
+        out.append((train_part, chunks[i]))
+    return out
+
+
+def prepare_train_arrays(
+    *, val_frac: float = 0.1, seed: int = 42, subset: int | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """학습 배열과 (train_idx, holdout_idx)를 만든다 — train.py / evaluate.py 공용.
+
+    subset을 주면 시드 고정 **무작위** 표본을 먼저 뽑는다. train 행이 (layer_1..4)
+    사전식 정렬이라 `x[:N]` 앞머리 자르기는 표본이 아니기 때문이다 (CLAUDE.md
+    "표본 추출 주의"). 같은 (seed, subset, val_frac)이면 항상 같은 분할이 나온다.
+
+    Returns:
+        (x, y, train_idx, holdout_idx):
+            x (N, 226) float32 반사율, y (N, 4) float32 두께 [nm],
+            인덱스 두 개는 x/y 기준 행 번호 (서로소, 합집합 = 전체).
+    """
+    x, y = load_train()
+    if subset is not None:
+        rng = np.random.default_rng(seed)
+        pick = rng.choice(len(x), size=int(subset), replace=False)
+        x, y = x[pick], y[pick]
+    train_idx, holdout_idx = random_split_indices(len(x), val_frac=val_frac, seed=seed)
+    return x, y, train_idx, holdout_idx

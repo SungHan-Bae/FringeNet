@@ -1,0 +1,35 @@
+run mlp_baseline_dropout0: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout
+[model] epoch   1/30  train_l1 47.6537  val_mae 26.4054  lr 1.00e-03  26.4s *
+[model] epoch   2/30  train_l1 21.1069  val_mae 17.2046  lr 9.95e-04  25.9s *
+[model] epoch   3/30  train_l1 16.6039  val_mae 14.7494  lr 9.85e-04  25.5s *
+[model] epoch   4/30  train_l1 14.3646  val_mae 12.7041  lr 9.69e-04  25.1s *
+[model] epoch   5/30  train_l1 12.9450  val_mae 11.2209  lr 9.48e-04  24.6s *
+[model] epoch   6/30  train_l1 11.9190  val_mae 10.2204  lr 9.21e-04  29.8s *
+[model] epoch   7/30  train_l1 11.0556  val_mae 9.6024  lr 8.90e-04  28.9s *
+[model] epoch   8/30  train_l1 10.4013  val_mae 9.0344  lr 8.55e-04  27.9s *
+[model] epoch   9/30  train_l1 9.8884  val_mae 8.5412  lr 8.15e-04  26.1s *
+[model] epoch  10/30  train_l1 9.4101  val_mae 7.8957  lr 7.71e-04  26.5s *
+[model] epoch  11/30  train_l1 8.9697  val_mae 7.3901  lr 7.25e-04  27.5s *
+[model] epoch  12/30  train_l1 8.6566  val_mae 7.1888  lr 6.76e-04  22.7s *
+[model] epoch  13/30  train_l1 8.3446  val_mae 6.7336  lr 6.25e-04  21.4s *
+[model] epoch  14/30  train_l1 8.0405  val_mae 6.6548  lr 5.72e-04  27.5s *
+[model] epoch  15/30  train_l1 7.7925  val_mae 6.2844  lr 5.19e-04  27.7s *
+[model] epoch  16/30  train_l1 7.5620  val_mae 6.0907  lr 4.65e-04  31.6s *
+[model] epoch  17/30  train_l1 7.3283  val_mae 5.8748  lr 4.12e-04  40.9s *
+[model] epoch  18/30  train_l1 7.1535  val_mae 5.6228  lr 3.60e-04  27.7s *
+[model] epoch  19/30  train_l1 6.9410  val_mae 5.4629  lr 3.09e-04  27.5s *
+[model] epoch  20/30  train_l1 6.8190  val_mae 5.2698  lr 2.61e-04  27.1s *
+[model] epoch  21/30  train_l1 6.6384  val_mae 5.1953  lr 2.15e-04  28.1s *
+[model] epoch  22/30  train_l1 6.5425  val_mae 5.0671  lr 1.73e-04  27.0s *
+[model] epoch  23/30  train_l1 6.4104  val_mae 4.8672  lr 1.34e-04  27.3s *
+[model] epoch  24/30  train_l1 6.3093  val_mae 4.8176  lr 1.00e-04  28.5s *
+[model] epoch  25/30  train_l1 6.2147  val_mae 4.7422  lr 7.02e-05  27.5s *
+[model] epoch  26/30  train_l1 6.1541  val_mae 4.6096  lr 4.53e-05  27.6s *
+[model] epoch  27/30  train_l1 6.1178  val_mae 4.5990  lr 2.56e-05  26.5s *
+[model] epoch  28/30  train_l1 6.0556  val_mae 4.6358  lr 1.15e-05  28.8s
+[model] epoch  29/30  train_l1 6.0327  val_mae 4.6012  lr 2.87e-06  28.3s
+[model] epoch  30/30  train_l1 6.0362  val_mae 4.6184  lr 0.00e+00  30.9s
+
+[model] holdout MAE 4.5990 nm  (layer_1=3.562  layer_2=5.390  layer_3=4.782  layer_4=4.662) (best epoch 27)
+
+산출물: /home/bshzz1006/workspace/FringeNet/runs/mlp_baseline_dropout0/ (metrics.json, history_*.csv, train.log, *.pt)

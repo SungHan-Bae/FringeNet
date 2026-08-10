@@ -16,7 +16,9 @@ from src.data.dataset import (
     N_CHANNELS,
     RAW_DIR,
     FringeDataset,
+    kfold_indices,
     load_frame,
+    prepare_train_arrays,
     random_split_indices,
 )
 
@@ -62,6 +64,31 @@ def test_random_split_rejects_invalid_fraction() -> None:
             random_split_indices(100, val_frac=bad)
 
 
+def test_kfold_indices_partitions_given_indices() -> None:
+    base = np.arange(100, 200)  # holdout을 뺀 나머지 인덱스를 흉내낸다
+    folds = kfold_indices(base, 5, seed=0)
+
+    assert len(folds) == 5
+    # OOF 조각들이 base를 정확히 한 번씩 덮는다
+    all_val = np.concatenate([val for _, val in folds])
+    assert np.array_equal(np.sort(all_val), base)
+    for train_part, val_part in folds:
+        assert set(train_part).isdisjoint(val_part)
+        assert np.array_equal(np.sort(np.concatenate([train_part, val_part])), base)
+
+    again = kfold_indices(base, 5, seed=0)
+    for (t1, v1), (t2, v2) in zip(folds, again, strict=True):
+        assert np.array_equal(t1, t2)
+        assert np.array_equal(v1, v2)
+
+
+def test_kfold_indices_rejects_bad_fold_count() -> None:
+    with pytest.raises(ValueError):
+        kfold_indices(np.arange(10), 1)
+    with pytest.raises(ValueError):
+        kfold_indices(np.arange(3), 5)
+
+
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
@@ -102,6 +129,22 @@ def test_load_frame_rejects_unknown_split() -> None:
 # ---------------------------------------------------------------------------
 # 실제 파일이 있을 때만 — 검증 스크립트가 확정한 데이터 계약을 로더가 지키는지
 # ---------------------------------------------------------------------------
+@requires_raw_data
+def test_prepare_train_arrays_subset_is_random_and_reproducible() -> None:
+    x1, y1, tr1, va1 = prepare_train_arrays(val_frac=0.1, seed=42, subset=1000)
+    x2, _, tr2, va2 = prepare_train_arrays(val_frac=0.1, seed=42, subset=1000)
+
+    assert x1.shape == (1000, N_CHANNELS)
+    assert y1.shape == (1000, 4)
+    assert len(va1) == 100
+    # 같은 (seed, subset)이면 같은 분할 — evaluate.py가 holdout을 재현하는 근거
+    assert np.array_equal(x1, x2)
+    assert np.array_equal(tr1, tr2)
+    assert np.array_equal(va1, va2)
+    # 사전식 앞머리(x[:N])가 아님을 간접 확인 — layer_1이 구석 값에 몰려 있으면 안 된다
+    assert len(np.unique(y1[:, 0])) > 5
+
+
 @requires_raw_data
 def test_train_frame_matches_verified_contract() -> None:
     frame = load_frame("train")

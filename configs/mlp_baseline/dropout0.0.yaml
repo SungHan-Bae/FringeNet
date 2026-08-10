@@ -1,0 +1,29 @@
+# mlp_baseline 실험 — 확정 baseline (Task 4). 구조 bias 없는 MLP 대조군.
+# holdout 10%(seed 42)는 프로젝트 공통 검증셋 — 이후 모든 실험이 같은 셋으로 비교된다.
+# 입력 표준화는 하지 않는다 — 모델 첫 블록의 norm 층이 그 역할을 겸한다.
+# 결과: holdout MAE 4.599 nm — 취합 리포트 reports/mlp_baseline.md
+seed: 42
+experiment: mlp_baseline
+run_name: dropout0.0
+
+data:
+  val_frac: 0.1
+  subset: null         # 정수를 주면 시드 고정 무작위 서브셋 (스모크 테스트용)
+
+model:
+  name: mlp
+  hidden_dims: [512, 512, 512]   # --hidden-dims "256,256"처럼 CLI로도 조절 가능
+  activation: gelu     # relu | gelu | silu
+  norm: batchnorm      # batchnorm | layernorm | none
+  dropout: 0.0         # 810k 전수 격자에선 과적합 압력이 약해 dropout이 순손실 (0.1 대비 holdout 6.65→4.60 nm)
+  residual: false      # 블록별 skip connection (폭 다르면 Linear projection)
+  output_bound: false  # bare regression (strong baseline 방식) — Task 5에서 on/off ablation
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine  # cosine(스텝 단위 warmup+cosine) | none
+  warmup_steps: 1000
+  num_folds: 0         # 0 = holdout 단일 학습, k>=2 = 90% 안에서 k-fold (--folds로도 지정)

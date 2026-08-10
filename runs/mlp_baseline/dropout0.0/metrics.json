@@ -1,0 +1,56 @@
+{
+  "experiment": "mlp_baseline",
+  "run_name": "dropout0.0",
+  "seed": 42,
+  "mode": "holdout",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "run_name": "dropout0.0",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "mlp",
+      "hidden_dims": [
+        512,
+        512,
+        512
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "residual": false,
+      "output_bound": false
+    },
+    "train": {
+      "epochs": 30,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 1000,
+      "num_folds": 0
+    },
+    "experiment": "mlp_baseline"
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "/home/bshzz1006/workspace/FringeNet/runs/mlp_baseline_dropout0/model.pt",
+    "best_epoch": 27,
+    "val_mae": 4.598990440368652,
+    "val_mae_per_layer": {
+      "layer_1": 3.561955690383911,
+      "layer_2": 5.389780044555664,
+      "layer_3": 4.781865119934082,
+      "layer_4": 4.6623616218566895,
+      "overall": 4.598990440368652
+    },
+    "wall_sec": 829.0026064679996
+  }
+}
