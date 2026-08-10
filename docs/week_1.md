@@ -160,6 +160,10 @@
   (무중단 실행과 동일 결과, 테스트 검증). 라운드 2에서 실전 작동 (세션 종료 후
   미러 기록으로 3개 run 스킵·복원 → push). push 셀 PAT 정적 소스화(Drive/Secrets),
   전 실험 완료 시 런타임 자동 반납. 노트북은 라운드별 1개로 구조화 (`0ac1fce`).
+- **라운드 3 준비 — bound on/off (Task 5 마지막 축)**: `configs/level1_cnn/flatten-dilated-bound.yaml`
+  (flatten-dilated 대비 조작 변인 output_bound 하나) + `notebooks/level1_cnn/round3_bound.ipynb`.
+  로컬 조립 확인: 파라미터 662,020으로 flatten-dilated와 동일(bound 무파라미터),
+  출력 [10, 300] 중앙 초기화 — 공정 비교 조건 충족. 다음: Colab에서 round3 Run-All.
 
 ---
 
