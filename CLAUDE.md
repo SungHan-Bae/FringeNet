@@ -114,10 +114,13 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 - dtype: 검증·캘리브레이션은 complex128, 학습은 complex64. d는 real 유지(autograd가 d로 흐르게).
 - 포맷/린트 ruff, 테스트 pytest, 시드 고정 유틸(`src/utils/seed.py`),
   설정은 `configs/<실험>/<변형>.yaml` (평가 규약의 실험 관리 구조 참조).
-- **GPU 학습은 `src/train_gpu.py`** (holdout 전용, Colab 드라이버 `notebooks/colab_train.ipynb`).
-  CPU 파이프라인(`src/train.py` — baseline 검증 경로)과 디커플, 수정 금지. 산출물 계약은
-  동일하며 체크포인트는 CPU 텐서로 저장돼 로컬 evaluate.py와 호환. CPU↔GPU는 bit 단위
-  재현이 아니라 MAE 수준에서 비교한다. 워크플로: Colab에서 학습·push → 로컬 pull·분석.
+- **GPU 학습은 `src/train_gpu.py`** (holdout 전용). CPU 파이프라인(`src/train.py` —
+  baseline 검증 경로)과 디커플, 수정 금지. 산출물 계약은 동일하며 체크포인트는 CPU
+  텐서로 저장돼 로컬 evaluate.py와 호환. CPU↔GPU는 bit 단위 재현이 아니라 MAE 수준에서
+  비교한다. 워크플로: Colab에서 학습·push → 로컬 pull·분석.
+- **Colab 노트북은 라운드(학습 세션)별 1개**: `notebooks/<대실험>/roundN_<내용>.ipynb`.
+  완료된 라운드의 노트북은 실행 로그 보존을 위해 수정·재실행하지 않는다. 새 라운드는
+  직전 노트북을 복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다.
 - 커밋 메시지: `feat|fix|refactor|test|docs|exp: ...`
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
