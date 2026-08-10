@@ -209,29 +209,36 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 
 ```
 .
-├── README.md               # 본 문서
-├── CLAUDE.md               # Claude Code 작업 메모리 (계약·테스트 스펙·백로그)
+├── README.md                   # 본 문서
+├── CLAUDE.md                   # Claude Code 작업 메모리 (계약·테스트 스펙·백로그)
 ├── requirements.txt
-├── configs/<실험>/<변형>.yaml   # 실험 설정 — runs/와 같은 2단 구조 (§7)
-├── data/raw/               # 데이콘 원본 (파일은 git 미포함, 구조만 .gitkeep)
-├── data/cache/             # parquet 캐시 (자동 생성, 파일은 git 미포함)
-├── runs/<실험>/<변형>/     # 실행 산출물: model.pt, train.log, metrics.json (git 추적, §7)
-├── reports/<실험>.md       # 대실험별 취합 리포트 — 결과·분석·결론 (§7)
-├── reports/figures/        # 산출 그림
-├── reports/eda_metrics.md  # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
-├── reports/eda_notes.md    # EDA 관찰·해석 메모
-├── scripts/verify_data.py  # 데이터 계약 검증 (통과 여부를 종료 코드로 반환)
-├── scripts/eda.py          # EDA 그림 3종 + 측정값 생성
+├── configs/                    # 실험 설정 — runs/와 같은 2단 구조 (§7)
+│   └── <실험>/
+│       └── <변형>.yaml         #   예: mlp_baseline/dropout0.0.yaml
+├── data/                       # 대회 데이터 — 파일은 git 미포함, 구조만 .gitkeep (§2)
+│   ├── raw/                    #   데이콘 원본 (사용자가 직접 배치)
+│   └── cache/                  #   parquet 캐시 (최초 실행 시 자동 생성)
+├── runs/                       # 실행 산출물 — git 추적 (§7)
+│   └── <실험>/
+│       └── <변형>/             #   model.pt · train.log · metrics.json 세 가지만
+├── reports/
+│   ├── <실험>.md               # 대실험별 취합 리포트 — 결과·분석·결론 (§7)
+│   ├── eda_metrics.md          # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
+│   ├── eda_notes.md            # EDA 관찰·해석 메모
+│   └── figures/                # 산출 그림
+├── scripts/
+│   ├── verify_data.py          # 데이터 계약 검증 (통과 여부를 종료 코드로 반환)
+│   └── eda.py                  # EDA 그림 3종 + 측정값 생성
 ├── src/
-│   ├── physics/tmm.py      # 미분가능 TMM — 프로젝트의 물리 코어
-│   ├── data/dataset.py     # CSV → parquet 캐시 → numpy/torch
-│   ├── models/cnn1d.py     # (Task 5 예정)
-│   ├── calibrate.py        # Stage A (Task 6 예정)
-│   ├── train.py            # baseline/k-fold 학습 (Stage B 물리 손실은 Task 7 예정)
-│   └── evaluate.py         # holdout 재평가·제출 파일 생성
+│   ├── physics/tmm.py          # 미분가능 TMM — 프로젝트의 물리 코어
+│   ├── data/dataset.py         # CSV → parquet 캐시 → numpy/torch
+│   ├── models/cnn1d.py         # (Task 5 예정)
+│   ├── calibrate.py            # Stage A (Task 6 예정)
+│   ├── train.py                # baseline/k-fold 학습 (Stage B 물리 손실은 Task 7 예정)
+│   └── evaluate.py             # holdout 재평가·제출 파일 생성
 └── tests/
-    ├── test_tmm.py         # §3.3 물리 단위 테스트
-    └── test_dataset.py     # 로더·split (데이터 없으면 해당 테스트만 skip)
+    ├── test_tmm.py             # §3.3 물리 단위 테스트
+    └── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
 ```
 
 ## 5. 시작하기
