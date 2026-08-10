@@ -251,3 +251,77 @@ def test_run_config_restores_completed_run_from_mirror(tmp_path: Path) -> None:
     assert (run_dir / "metrics.json").exists()
     assert (run_dir / "model.pt").exists()
     assert (run_dir / "train.log").exists()
+
+
+# ---------------------------------------------------------------------------
+# 1등 재현 프로토콜 플래그 (strong_baseline) — shuffle "once" / eval 모드 학습 quirk.
+# 기본값 경로(기존 실험)는 위 테스트들이 새 키 없는 config로 그대로 검증한다.
+# ---------------------------------------------------------------------------
+def _tiny_winner_cfg() -> dict:
+    return {
+        "model": {"name": "winner_skip_mlp", "up_dims": [16, 32], "head_dim": 8},
+        "train": {
+            "epochs": 3,
+            "batch_size": 64,
+            "lr": 1.0e-3,
+            "weight_decay": 0.0,
+            "adam_eps": 1.0e-6,
+            "lr_schedule": "cosine",
+            "warmup_steps": 2,
+            "shuffle": "once",
+            "eval_mode_after_first_epoch": True,
+        },
+    }
+
+
+def test_invalid_shuffle_mode_raises(tmp_path: Path) -> None:
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["shuffle"] = "never"
+    with pytest.raises(ValueError, match="shuffle"):
+        _train(tmp_path, cfg)
+
+
+def test_winner_protocol_resume_matches_uninterrupted(tmp_path: Path) -> None:
+    # shuffle "once"(시드 고정 전용 generator)와 에폭 2부터 eval 모드 학습이 resume을
+    # 가로질러도 무중단 실행과 동일해야 한다 (재개 = 무중단 계약이 새 플래그에도 성립)
+    cfg = _tiny_winner_cfg()
+
+    full_dir = tmp_path / "full"
+    full_dir.mkdir()
+    full = _train(full_dir, cfg)
+
+    part_dir = tmp_path / "interrupted"
+    part_dir.mkdir()
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(part_dir, cfg, _abort_after_epoch=1)
+    resumed = _train(part_dir, cfg)
+
+    assert resumed["best_epoch"] == full["best_epoch"]
+    assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
+    assert np.allclose(resumed["val_pred"], full["val_pred"], atol=1e-5)
+
+
+def _bn_running_stats(state: dict) -> dict:
+    return {k: v.clone() for k, v in state.items() if k.endswith(("running_mean", "running_var"))}
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_eval_mode_after_first_epoch_freezes_bn_stats(flag: bool, tmp_path: Path) -> None:
+    # 원본 train.py의 quirk 재현 검증 — 플래그 on이면 에폭 1 이후 BatchNorm running
+    # 통계가 동결되고(에폭 2부터 eval 모드 학습), off면 매 에폭 갱신되어야 한다.
+    cfg = _tiny_winner_cfg()
+    cfg["train"]["eval_mode_after_first_epoch"] = flag
+
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(tmp_path, cfg, _abort_after_epoch=1)
+    state = torch.load(tmp_path / "resume.pt", map_location="cpu", weights_only=False)
+    after_ep1 = _bn_running_stats(state["model"])
+    assert after_ep1  # BN이 실제로 존재해야 테스트가 의미 있다
+
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(tmp_path, cfg, _abort_after_epoch=3)  # ep1 상태에서 재개 -> ep3까지
+    state = torch.load(tmp_path / "resume.pt", map_location="cpu", weights_only=False)
+    after_ep3 = _bn_running_stats(state["model"])
+
+    frozen = all(torch.equal(after_ep1[k], after_ep3[k]) for k in after_ep1)
+    assert frozen == flag

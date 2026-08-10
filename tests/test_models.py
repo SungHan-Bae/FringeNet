@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from src.models import CNN1D, MLP, ThicknessBound, build_model
+from src.models import CNN1D, MLP, ThicknessBound, WinnerSkipMLP, build_model
 from src.utils.seed import set_seed
 
 B = 8
@@ -338,3 +338,81 @@ def test_build_cnn_from_config_dict() -> None:
 def test_build_model_rejects_bad_config(config: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         build_model(config)
+
+
+# ---------------------------------------------------------------------------
+# WinnerSkipMLP — 1등 솔루션 충실 재현 (strong_baseline)
+# ---------------------------------------------------------------------------
+_TINY_WINNER = {"up_dims": (16, 32, 48), "head_dim": 8}
+
+
+def test_winner_skip_mlp_maps_spectrum_batch_to_four_thicknesses() -> None:
+    model = WinnerSkipMLP(**_TINY_WINNER)
+    out = model(_batch())
+    assert out.shape == (B, 4)
+    assert out.dtype == torch.float32
+    assert torch.isfinite(out).all()
+
+
+def test_winner_skip_mlp_rejects_wrong_shapes() -> None:
+    model = WinnerSkipMLP(**_TINY_WINNER)
+    with pytest.raises(ValueError):
+        model(torch.zeros(4, 225))
+    with pytest.raises(ValueError):
+        model(torch.zeros(4, 1, 226))
+
+
+def test_winner_skip_mlp_param_count_matches_original() -> None:
+    # 기본 인자 = 원본 SkipConnectionModel(226->2000->4000->7000->10000->...->300->4).
+    # 이 수가 어긋나면 폭·블록 구성 어딘가가 원본과 다른 것이다 (재현 주장의 근거 고정).
+    model = WinnerSkipMLP()
+    assert sum(p.numel() for p in model.parameters()) == 213_208_104
+
+
+def test_winner_skip_mlp_block_structure_matches_original() -> None:
+    # 블록 = Linear -> GELU(tanh 근사) -> BatchNorm1d, down 입구 LayerNorm(eps 1e-5),
+    # dropout 없음(원본이 정의만 하고 미호출), head는 bare Linear (bound 없음)
+    model = WinnerSkipMLP(**_TINY_WINNER)
+    for block in [*model.ups, *model.downs]:
+        kinds = [type(m) for m in block]
+        assert kinds == [torch.nn.Linear, torch.nn.GELU, torch.nn.BatchNorm1d]
+        assert block[1].approximate == "tanh"
+    assert all(isinstance(n, torch.nn.LayerNorm) and n.eps == 1e-5 for n in model.norms)
+    assert not any(isinstance(m, torch.nn.Dropout) for m in model.modules())
+    assert not any(isinstance(m, ThicknessBound) for m in model.modules())
+
+
+def test_winner_skip_mlp_forward_matches_original_expression() -> None:
+    # 원본 forward 전개식과 대조 — skip 위치(마지막 down 제외)와 LayerNorm 위치(down 입구,
+    # skip이 더해진 뒤의 값에 적용)를 고정한다. 원본: down_i(ln(skip_{i-1})) + up_{k-i}
+    set_seed(0)
+    model = WinnerSkipMLP(**_TINY_WINNER).eval()
+    x = _batch()
+    up1 = model.ups[0](x)
+    up2 = model.ups[1](up1)
+    up3 = model.ups[2](up2)
+    skip1 = model.downs[0](model.norms[0](up3)) + up2
+    skip2 = model.downs[1](model.norms[1](skip1)) + up1
+    down3 = model.downs[2](model.norms[2](skip2))  # 마지막 down은 skip 없음
+    expected = model.head(down3)
+    assert torch.allclose(model(x), expected)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"up_dims": (16,)},  # skip이 성립하려면 up 중간 출력이 필요 — 2개 이상
+        {"up_dims": (16, 0)},
+        {"up_dims": (16, 32), "head_dim": 0},
+    ],
+)
+def test_winner_skip_mlp_invalid_dims_raise(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        WinnerSkipMLP(**kwargs)  # type: ignore[arg-type]
+
+
+def test_build_winner_skip_mlp_from_config_dict() -> None:
+    config = {"name": "winner_skip_mlp", "up_dims": [16, 32], "head_dim": 8}
+    model = build_model(config)
+    assert isinstance(model, WinnerSkipMLP)
+    assert model(_batch()).shape == (B, 4)

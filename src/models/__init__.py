@@ -22,13 +22,15 @@ from torch import nn
 from src.models.cnn import CNN1D
 from src.models.heads import ThicknessBound
 from src.models.mlp import MLP
+from src.models.winner_skip_mlp import WinnerSkipMLP
 
 _REGISTRY: dict[str, type[nn.Module]] = {
     "mlp": MLP,
     "cnn": CNN1D,
+    "winner_skip_mlp": WinnerSkipMLP,
 }
 
-__all__ = ["CNN1D", "MLP", "ThicknessBound", "build_model"]
+__all__ = ["CNN1D", "MLP", "ThicknessBound", "WinnerSkipMLP", "build_model"]
 
 
 def build_model(config: Mapping[str, Any]) -> nn.Module:

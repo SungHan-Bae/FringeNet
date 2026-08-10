@@ -152,6 +152,18 @@ def train_one_model_gpu(
     if epochs < 1:
         raise ValueError(f"epochs는 1 이상이어야 한다 (받은 값: {epochs})")
 
+    # 1등 솔루션 충실 재현용 프로토콜 플래그 (configs/strong_baseline/ 참조) —
+    # 기본값은 기존 실험과 동일한 동작이라 이전 config·fingerprint에 영향이 없다.
+    #   shuffle: "epoch" = 매 에폭 재셔플(기존 동작) | "once" = 시드 고정 순열 하나를
+    #     전 에폭 재사용 (원본이 미리 섞어둔 CSV를 shuffle 없는 DataLoader로 돌린 것과 등가).
+    #   eval_mode_after_first_epoch: True면 에폭 2부터 eval 모드로 학습한다 — 원본
+    #     train.py가 평가 후 model.train() 복귀를 빠뜨려 BatchNorm 통계가 에폭 1 이후
+    #     동결된 채 0.42가 나왔으므로, 재현에서는 이 동작까지 그대로 따른다.
+    shuffle_mode = str(train_cfg.get("shuffle", "epoch"))
+    if shuffle_mode not in ("epoch", "once"):
+        raise ValueError(f'shuffle은 "epoch" | "once" 여야 한다 (받은 값: {shuffle_mode!r})')
+    eval_after_first = bool(train_cfg.get("eval_mode_after_first_epoch", False))
+
     set_seed(seed)
 
     x_t = torch.from_numpy(x_train).to(device)
@@ -162,6 +174,7 @@ def train_one_model_gpu(
         model.parameters(),
         lr=float(train_cfg["lr"]),
         weight_decay=float(train_cfg.get("weight_decay", 0.0)),
+        eps=float(train_cfg.get("adam_eps", 1e-8)),
     )
 
     n = len(x_t)
@@ -249,9 +262,18 @@ def train_one_model_gpu(
     t_start = time.perf_counter()
 
     for epoch in range(start_epoch, epochs + 1):
-        model.train()
+        # eval_mode_after_first_epoch=True면 에폭 2부터 eval 모드로 학습 (위 플래그 주석).
+        # epoch 번호만으로 결정되므로 resume 후에도 무중단 실행과 같은 모드가 된다.
+        model.train(epoch == 1 or not eval_after_first)
         t_epoch = time.perf_counter()
-        perm = torch.randperm(n, device=device)
+        if shuffle_mode == "once":
+            # 시드 고정 전용 generator — 전역 RNG를 소모하지 않아 매 에폭·resume 후에도
+            # 항상 같은 순열이 나온다 (원본의 "한 번 섞은 순서 고정" 재현)
+            perm_gen = torch.Generator(device=device)
+            perm_gen.manual_seed(seed)
+            perm = torch.randperm(n, generator=perm_gen, device=device)
+        else:
+            perm = torch.randperm(n, device=device)
         loss_sum = 0.0
         for start in range(0, n, batch_size):
             idx = perm[start : start + batch_size]
