@@ -215,6 +215,7 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 ├── configs/                # 실험 설정 (yaml, Task 4부터 생성)
 ├── data/raw/               # 데이콘 원본 (git 미포함)
 ├── data/cache/             # parquet 캐시 (자동 생성, git 미포함)
+├── runs/                   # 실험별 산출물 — report.md만 git 추적 (§7)
 ├── notebooks/              # EDA (탐색용; 재사용 로직은 src/로 승격)
 ├── reports/figures/        # 산출 그림
 ├── reports/eda_metrics.md  # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
@@ -226,8 +227,8 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 │   ├── data/dataset.py     # CSV → parquet 캐시 → numpy/torch
 │   ├── models/cnn1d.py     # (Task 5 예정)
 │   ├── calibrate.py        # Stage A (Task 6 예정)
-│   ├── train.py            # Stage B 포함 (Task 4 예정)
-│   └── evaluate.py         # (Task 4 예정)
+│   ├── train.py            # baseline/k-fold 학습 (Stage B 물리 손실은 Task 7 예정)
+│   └── evaluate.py         # holdout 재평가·제출 파일 생성
 └── tests/
     ├── test_tmm.py         # §3.3 물리 단위 테스트
     └── test_dataset.py     # 로더·split (데이터 없으면 해당 테스트만 skip)
@@ -242,7 +243,8 @@ pip install -r requirements.txt
 pytest -q                          # 물리 단위 테스트 + 로더 테스트
 python scripts/verify_data.py      # 데이터 계약 검증 (통과 시 종료 코드 0)
 python scripts/eda.py              # EDA 그림 3종 + 측정값 표
-python -m src.train --config configs/baseline.yaml  # (미구현)
+python -m src.train --config configs/baseline.yaml  # baseline 학습 -> runs/mlp_baseline/
+python -m src.evaluate --run runs/mlp_baseline      # holdout 재평가 (--submission 으로 제출 csv)
 ```
 
 `verify_data.py` 최초 실행은 `train.csv`(1.9 GB)를 파싱해 `data/cache/train.parquet`을
@@ -252,19 +254,22 @@ python -m src.train --config configs/baseline.yaml  # (미구현)
 
 ## 6. 로드맵 (3주)
 
-- **Week 1** — [x] 스캐폴드 · [x] TMM 모듈+테스트 통과 · [x] 데이터 검증 · [x] EDA · [ ] baseline 학습
+- **Week 1** — [x] 스캐폴드 · [x] TMM 모듈+테스트 통과 · [x] 데이터 검증 · [x] EDA · [x] baseline 학습
 - **Week 2** — [ ] 구조 ablation(MLP/CNN, 다중 스케일) · [ ] Stage A 캘리브레이션 + 게이트 판정 · [ ] Stage B 물리 손실 학습
 - **Week 3** — [ ] 신뢰도 지표 분석 · [ ] 결과·그림 정리 · [ ] 문서화 마감
 
-## 7. 결과
+## 7. 결과 보고 방식
 
-*(실험 완료 후 갱신 — 아래는 양식)*
+성능 수치는 README에 두지 않는다. 실험마다 실행 산출물과 같은 위치인
+**`runs/<run_name>/report.md`**에 설정·결과·해석·재현 커맨드를 기록한다
+(`.gitignore`가 `runs/` 아래에서 report.md만 추적한다 — 체크포인트·로그는 로컬 전용).
 
-| 모델 | val MAE (nm) | 비고 |
-|---|---|---|
-| MLP baseline | TBD | 구조 bias 대조군 |
-| 1D CNN (Level 1) | TBD | 다중 스케일 수용영역 |
-| + TMM 물리 손실 (Level 2) | TBD | β ablation 포함 |
+현재까지의 리포트:
+
+| run | 내용 |
+|---|---|
+| [`runs/mlp_baseline_dropout0/report.md`](runs/mlp_baseline_dropout0/report.md) | **확정 baseline** (Task 4) — MLP 대조군 |
+| [`runs/mlp_baseline_dropout01/report.md`](runs/mlp_baseline_dropout01/report.md) | dropout 0.1 ablation 변형 |
 
 ## 8. 참고자료
 

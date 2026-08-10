@@ -171,6 +171,9 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   단, 데이터에 이미 σ ≈ 0.0087의 노이즈가 있으므로(위 데이터 계약 참조) 주입 노이즈는
   **추가분**이다. 리포트에 "기존 노이즈 위에 더한 양"임을 명시할 것.
 - 위 셋은 Task 4 이후 평가 스크립트에 고정 포함한다. 좋은 숫자만 고르지 않는다.
+- **실험 리포트는 `runs/<run_name>/report.md`에 쓴다** (설정·결과·해석·재현 커맨드).
+  .gitignore가 runs/ 아래에서 report.md만 추적한다. README에는 성능 수치를 두지 않고
+  §7에서 리포트 목록만 링크한다. 학습 로그는 `runs/<run>/train.log`에 실시간 기록된다.
 
 ## 작업 백로그 (순서 준수, 완료 시 체크)
 
@@ -189,7 +192,11 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   (c) 반사율 분포·범위. DoD: `reports/figures/` 그림 3종 + 관찰 메모.
   (`scripts/eda.py` → 그림 3종 + `reports/eda_metrics.md`(스크립트 산출) +
   `reports/eda_notes.md`(해석). 아래 "EDA 확정 수치" 참조.)
-- [ ] **Task 4 — Baseline 학습**: 90/10 val split(시드 고정), MAE 리포트. DoD: 재현 커맨드 README 반영.
+- [x] **Task 4 — Baseline 학습**: 90/10 val split(시드 고정), MAE 리포트. DoD: 재현 커맨드 README 반영.
+  (확정 baseline: MLP 512×3, Linear→BatchNorm→GELU 블록, dropout 0, bare regression,
+  입력 표준화 없음, batch 512, AdamW 1e-3/wd 1e-4, warmup 1000스텝+cosine.
+  **holdout MAE 4.599 nm** — 리포트 `runs/mlp_baseline_dropout0/report.md`.
+  dropout 0.1은 6.645 nm로 순손실(전수 격자라 과적합 압력 약함). 2026-08-10 확정.)
 - [ ] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표.
 - [ ] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지.
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석.
