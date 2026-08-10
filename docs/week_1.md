@@ -211,6 +211,16 @@
   T4 에폭당 ~4분 → 100ep 5~7시간 (resume으로 멀티 세션 완주 가능). 노트북 셀 1은
   pull 대신 fetch+reset --hard로 구조화 (VM 갈라짐 `24dbd7c` 재발 방지). Run-All
   무정지 검증: PAT 4단 체인·push 실패 시 반납 중단·5초 반납·force_remount 확인.
+- **GPU resume 잠복 버그 수정 (`a9519ed`)**: `torch.load(resume.pt, map_location=device)`가
+  CPU 계약 텐서(best_pred·best_state)까지 cuda로 올려 `.numpy()`에서 TypeError.
+  CPU에서는 재현 불가라 잠복 — GPU 학습 중 resume은 이번이 실전 최초 (이전 라운드는
+  완료 run 스킵 경로만). 로드 직후 CPU로 되돌리고, resume 테스트 2종을 device
+  파라미터화 (Colab pytest에서 cuda 커버).
+- **발견 — Drive FUSE 비동기 업로드로 미러 지연**: 세션 사망 시 train.log(KB)는
+  epoch 7까지 반영됐는데 resume.pt(213M 모델 기준 ~3.4GB, 업로드 수 분)는 epoch 2
+  버전이 남아 5에폭 뒤에서 재개됐다. resume은 "미러의 최신 완료본" 기준으로 설계대로
+  동작한 것. 결과 불변(RNG 복원으로 동일 궤적 재계산), 손실은 재계산 ~20분 —
+  대용량 모델에서 미러 지연은 정상 열화로 수용.
 
 ---
 
