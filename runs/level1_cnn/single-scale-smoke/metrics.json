@@ -1,0 +1,69 @@
+{
+  "experiment": "level1_cnn",
+  "run_name": "single-scale-smoke",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 18000,
+    "holdout": 2000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "level1_cnn",
+    "run_name": "single-scale-smoke",
+    "data": {
+      "val_frac": 0.1,
+      "subset": 20000
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        64,
+        128,
+        200,
+        280
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "output_bound": false,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 2,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 1000,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/level1_cnn/single-scale-smoke/model.pt",
+    "best_epoch": 2,
+    "val_mae": 71.56423950195312,
+    "val_mae_per_layer": {
+      "layer_1": 71.99190521240234,
+      "layer_2": 71.45928955078125,
+      "layer_3": 70.7121353149414,
+      "layer_4": 72.09363555908203,
+      "overall": 71.56423950195312
+    },
+    "wall_sec": 4.327961512000002
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "experiment": "level1_cnn",
+  "run_name": "single-scale",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "level1_cnn",
+    "run_name": "single-scale",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        64,
+        128,
+        200,
+        280
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "output_bound": false,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 30,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 1000,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/level1_cnn/single-scale/model.pt",
+    "best_epoch": 29,
+    "val_mae": 18.161325454711914,
+    "val_mae_per_layer": {
+      "layer_1": 12.28687858581543,
+      "layer_2": 23.5307559967041,
+      "layer_3": 17.70877456665039,
+      "layer_4": 19.1188907623291,
+      "overall": 18.161325454711914
+    },
+    "wall_sec": 2007.8326926709997
+  }
+}

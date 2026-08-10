@@ -1,0 +1,35 @@
+run level1_cnn/single-scale-shuffled: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] epoch   1/30  train_l1 56.1015  val_mae 35.7113  lr 1.00e-03  67.4s *
+[model] epoch   2/30  train_l1 27.7387  val_mae 23.7369  lr 9.95e-04  67.1s *
+[model] epoch   3/30  train_l1 22.1933  val_mae 21.1377  lr 9.85e-04  66.9s *
+[model] epoch   4/30  train_l1 20.1331  val_mae 19.7179  lr 9.69e-04  67.2s *
+[model] epoch   5/30  train_l1 18.8382  val_mae 18.7039  lr 9.48e-04  67.4s *
+[model] epoch   6/30  train_l1 17.8914  val_mae 17.7740  lr 9.21e-04  67.4s *
+[model] epoch   7/30  train_l1 17.1636  val_mae 17.2167  lr 8.90e-04  67.3s *
+[model] epoch   8/30  train_l1 16.5496  val_mae 16.6255  lr 8.55e-04  67.1s *
+[model] epoch   9/30  train_l1 16.0003  val_mae 16.2019  lr 8.15e-04  67.1s *
+[model] epoch  10/30  train_l1 15.5126  val_mae 15.8148  lr 7.71e-04  67.0s *
+[model] epoch  11/30  train_l1 15.0875  val_mae 15.2112  lr 7.25e-04  67.1s *
+[model] epoch  12/30  train_l1 14.6959  val_mae 14.9484  lr 6.76e-04  67.3s *
+[model] epoch  13/30  train_l1 14.3036  val_mae 14.5475  lr 6.25e-04  67.3s *
+[model] epoch  14/30  train_l1 13.9880  val_mae 14.3711  lr 5.72e-04  67.1s *
+[model] epoch  15/30  train_l1 13.6941  val_mae 14.1230  lr 5.19e-04  66.9s *
+[model] epoch  16/30  train_l1 13.3805  val_mae 13.8895  lr 4.65e-04  67.0s *
+[model] epoch  17/30  train_l1 13.1053  val_mae 13.5274  lr 4.12e-04  67.3s *
+[model] epoch  18/30  train_l1 12.8568  val_mae 13.3342  lr 3.60e-04  67.3s *
+[model] epoch  19/30  train_l1 12.6262  val_mae 13.1824  lr 3.09e-04  67.3s *
+[model] epoch  20/30  train_l1 12.3930  val_mae 12.9776  lr 2.61e-04  67.3s *
+[model] epoch  21/30  train_l1 12.2069  val_mae 12.8631  lr 2.15e-04  67.1s *
+[model] epoch  22/30  train_l1 12.0089  val_mae 12.6684  lr 1.73e-04  66.9s *
+[model] epoch  23/30  train_l1 11.8461  val_mae 12.5637  lr 1.34e-04  67.0s *
+[model] epoch  24/30  train_l1 11.7222  val_mae 12.4480  lr 1.00e-04  66.9s *
+[model] epoch  25/30  train_l1 11.5863  val_mae 12.3830  lr 7.02e-05  67.1s *
+[model] epoch  26/30  train_l1 11.4717  val_mae 12.3075  lr 4.53e-05  67.3s *
+[model] epoch  27/30  train_l1 11.3932  val_mae 12.2873  lr 2.56e-05  67.3s *
+[model] epoch  28/30  train_l1 11.3383  val_mae 12.2551  lr 1.15e-05  67.1s *
+[model] epoch  29/30  train_l1 11.2768  val_mae 12.2343  lr 2.87e-06  67.0s *
+[model] epoch  30/30  train_l1 11.2626  val_mae 12.2699  lr 0.00e+00  67.0s
+
+[model] holdout MAE 12.2343 nm  (layer_1=9.928  layer_2=14.544  layer_3=12.522  layer_4=11.943) (best epoch 29)
+
+산출물: /content/FringeNet/runs/level1_cnn/single-scale-shuffled/ (metrics.json, train.log, model.pt)

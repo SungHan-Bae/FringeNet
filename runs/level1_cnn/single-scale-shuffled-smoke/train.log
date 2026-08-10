@@ -1,0 +1,7 @@
+run level1_cnn/single-scale-shuffled-smoke: 행 20,000 = 학습 18,000 + holdout 2,000 / mode=holdout / device=cuda
+[model] epoch   1/2  train_l1 73.9097  val_mae 73.9707  lr 5.84e-04  1.5s *
+[model] epoch   2/2  train_l1 71.9680  val_mae 71.7552  lr 0.00e+00  1.4s *
+
+[model] holdout MAE 71.7552 nm  (layer_1=73.091  layer_2=71.783  layer_3=71.608  layer_4=70.539) (best epoch 2)
+
+산출물: /content/FringeNet/runs/level1_cnn/single-scale-shuffled-smoke/ (metrics.json, train.log, model.pt)
