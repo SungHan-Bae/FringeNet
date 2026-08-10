@@ -1,0 +1,35 @@
+# level1_cnn 실험 — 채널 셔플 대조군: "스펙트럼 순서 정보"의 기여를 직접 분리한다.
+#
+# single-scale.yaml과 유일한 차이 = channel_shuffle_seed (고정 무작위 순열로 채널
+# 순서 파괴). 모델·파라미터 수·연산량·학습 프로토콜 전부 동일하므로,
+#   MAE(single-scale-shuffled) - MAE(single-scale)
+# 이 곧 "채널 순서 = 연속 스펙트럼" 가정에서 CNN이 얻는 이득이다.
+# MLP는 입력 순열에 불변이라(첫 Linear의 열 순서만 바뀜) 이 대조군이 필요 없다 —
+# 순열에 민감한 것은 conv의 국소 연결뿐이다.
+seed: 42
+experiment: level1_cnn
+run_name: single-scale-shuffled
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  output_bound: false
+  channel_shuffle_seed: 7            # 고정 순열 시드 — 모델 buffer로 저장돼 체크포인트에 남는다
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000
+  num_folds: 0

@@ -1,0 +1,37 @@
+# level1_cnn 실험 — Task 5: MLP baseline vs 1D CNN, 구조 bias의 기여 측정.
+#
+# 변인 통제 (비교 대상: runs/mlp_baseline/dropout0.0, holdout MAE 4.599 nm):
+#   - 학습 프로토콜 전부 동일: seed 42, holdout 10%, epochs/batch/lr/wd/schedule 동일
+#   - 블록 구성 동일: Conv->BatchNorm->GELU (MLP의 Linear->BatchNorm->GELU 대응),
+#     dropout 0, bare regression + head bias 중앙 초기화 (output_bound false)
+#   - 파라미터 수 매칭: CNN 646,340 vs MLP 646,660 (-0.05%) — 용량이 아니라
+#     연결 패턴(dense·순서 무시 vs local conv·순서 사용)만 다르다
+#   - 유일한 조작 변인: 아키텍처. 순서 정보 자체의 기여는 채널 셔플 대조군
+#     (single-scale-shuffled.yaml)과의 차이로 분리한다.
+seed: 42
+experiment: level1_cnn
+run_name: single-scale
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]  # 파라미터 수를 baseline MLP에 맞춘 값 (test_models.py에서 ±10% 검증)
+  strides: [1, 2, 2, 2, 2]           # 첫 블록은 226 전체 해상도, 이후 절반씩 (226->113->57->29->15)
+  kernel_sizes: [7]                  # 단일 스케일. 다중 스케일 ablation은 [3, 7, 15] 변형으로
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  output_bound: false                # baseline과 동일 — bound on/off는 별도 ablation
+  channel_shuffle_seed: null
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000
+  num_folds: 0
