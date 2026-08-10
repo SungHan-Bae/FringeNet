@@ -6,20 +6,32 @@ src/train.py는 baseline(Task 4)을 만든 CPU 검증 경로 그대로 보존하
 - 산출물: runs/<experiment>/<run_name>/{model.pt, train.log, metrics.json} — CPU와 동일.
   metrics.json에 "device" 필드가 추가된다는 것만 다르다.
 - 데이터 전체를 GPU에 상주시킨다 (train x 810k×226 float32 ≈ 0.69 GB — T4 16 GB에 여유).
-  DataLoader 없이 GPU 텐서 인덱싱으로 배치를 뽑아 호스트-디바이스 복사를 없앤다.
 - 체크포인트 state_dict는 **CPU 텐서로 변환해 저장**한다 — 로컬(CPU 전용)에서
   evaluate.py / load_model_checkpoint로 바로 분석할 수 있게.
 - holdout 단일 모드만 지원한다. k-fold가 필요해지면 그때 추가한다.
+
+세션 유실 대비 (Colab 런타임이 언제든 끊길 수 있다는 전제):
+- **best 체크포인트(model.pt)는 val MAE가 갱신되는 즉시 저장**한다 — 학습 종료를
+  기다리지 않으므로 어느 시점에 죽어도 best-so-far 모델이 남는다.
+- **매 에폭 resume.pt** 저장: 모델·옵티마이저·스케줄러·best 상태·RNG 상태 전부.
+  재실행 시 자동 감지해 다음 에폭부터 재개하며, RNG까지 복원하므로 중단 없이
+  돌린 실행과 (같은 기종·cudnn deterministic 하에) 동일한 결과를 낸다.
+- **mirror_dir**(예: Google Drive)를 주면 train.log·resume.pt를 매 에폭,
+  model.pt를 best 갱신 에폭마다 미러에 복사한다. 새 VM에서 재실행하면 미러에서
+  상태를 복원해 이어 달린다. 저장·복사는 원자적(임시파일→교체)이다.
+- 완료된 run(metrics.json에 결과 존재)은 run_config가 통째로 건너뛴다 —
+  여러 실험을 순차 실행하다 끊겨도 재실행하면 끝난 것은 스킵, 하던 것은 재개.
 - 재현성: 같은 시드·같은 GPU 기종에서는 cudnn deterministic(set_seed)으로 재현된다.
   단 CPU와 GPU는 부동소수 연산 순서가 달라 bit 단위로 같지 않다 — CPU baseline과의
   비교는 MAE 수준에서 한다.
 
-사용 (Colab 노트북 notebooks/colab_train.ipynb가 이 함수를 호출한다):
+사용 (Colab 노트북 notebooks/<대실험>/roundN_*.ipynb가 이 함수를 호출한다):
     from src.train_gpu import run_config
-    metrics = run_config("configs/level1_cnn/single-scale.yaml")
+    metrics = run_config("configs/level1_cnn/flatten.yaml",
+                         mirror_dir="/content/drive/MyDrive/FringeNet/runs_mirror")
 
     # CLI로도 동작한다
-    python -m src.train_gpu --config configs/level1_cnn/single-scale.yaml
+    python -m src.train_gpu --config configs/level1_cnn/flatten.yaml
 """
 
 from __future__ import annotations
@@ -27,6 +39,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -42,6 +56,8 @@ from src.evaluate import format_mae, mae_per_layer
 from src.models import build_model
 from src.train import RUNS_DIR, build_lr_scheduler, log_line
 from src.utils.seed import set_seed
+
+RESUME_NAME = "resume.pt"
 
 
 def resolve_device(device: str | None = None) -> torch.device:
@@ -64,6 +80,37 @@ def predict_on_device(model: torch.nn.Module, x: Tensor, batch_size: int = 8192)
     return np.concatenate(outs, axis=0)
 
 
+def _atomic_save(obj: dict[str, Any], path: Path) -> None:
+    """torch.save를 임시파일→교체로 수행 — 저장 도중 세션이 죽어도 파일이 깨지지 않는다."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(obj, tmp)
+    tmp.replace(path)
+
+
+def _mirror_copy(run_dir: Path, mirror_dir: Path | None, names: tuple[str, ...]) -> None:
+    """run_dir의 파일들을 미러 디렉토리로 원자적으로 복사한다 (있는 것만)."""
+    if mirror_dir is None:
+        return
+    mirror_dir.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        src = run_dir / name
+        if not src.exists():
+            continue
+        tmp = mirror_dir / (name + ".tmp")
+        shutil.copy2(src, tmp)
+        tmp.replace(mirror_dir / name)
+
+
+def _fingerprint(cfg: dict[str, Any], seed: int, n_train: int) -> str:
+    """resume 호환성 판별용 설정 지문 — 다른 설정의 resume.pt를 이어받지 않도록."""
+    return json.dumps(
+        {"model": cfg["model"], "train": cfg["train"], "seed": seed, "n_train": n_train},
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
 def train_one_model_gpu(
     x_train: np.ndarray,
     y_train: np.ndarray,
@@ -74,12 +121,26 @@ def train_one_model_gpu(
     run_dir: Path,
     tag: str,
     device: torch.device,
+    mirror_dir: Path | None = None,
+    resume: bool = True,
+    _abort_after_epoch: int | None = None,
 ) -> dict[str, Any]:
     """모델 하나를 device에서 학습하고 best(val MAE) 체크포인트를 저장한다.
 
     src/train.py의 train_one_model과 같은 입출력 계약(반환 키·체크포인트 포맷·로그
-    형식)을 따른다. 차이는 (1) 데이터·모델이 device에 상주, (2) 저장 전 state_dict를
-    CPU로 옮긴다는 것뿐.
+    형식)을 따른다. 차이: (1) 데이터·모델이 device에 상주, (2) 체크포인트는 CPU 텐서,
+    (3) best 갱신 즉시 {tag}.pt 저장, (4) 매 에폭 resume.pt 저장(+미러)로 세션 유실 대비.
+
+    Args:
+        mirror_dir: 지정하면 train.log·resume.pt를 매 에폭, {tag}.pt를 best 갱신
+            에폭마다 이 디렉토리에 복사한다. 시작 시 로컬에 resume.pt가 없고 미러에
+            있으면 미러에서 복원해 이어 달린다.
+        resume: False면 resume.pt를 무시하고 처음부터 학습한다.
+        _abort_after_epoch: 테스트 전용 — 해당 에폭의 저장·미러까지 끝낸 뒤 일부러
+            RuntimeError를 던져 세션 중단을 흉내 낸다.
+
+    Raises:
+        ValueError: resume.pt의 설정 지문이 현재 설정과 다른 경우.
 
     Returns:
         {"tag", "seed", "ckpt_path", "best_epoch", "val_mae", "val_mae_per_layer",
@@ -111,14 +172,83 @@ def train_one_model_gpu(
         warmup_steps=int(train_cfg.get("warmup_steps", 0)),
         total_steps=steps_per_epoch * epochs,
     )
+
+    fingerprint = _fingerprint(cfg, seed, len(x_train))
+    ckpt_path = run_dir / f"{tag}.pt"
+    resume_path = run_dir / RESUME_NAME
+
+    def save_best_checkpoint(
+        best_state: dict[str, Tensor], best_epoch: int, best_mae: float
+    ) -> None:
+        _atomic_save(
+            {
+                "model_cfg": dict(cfg["model"]),
+                "state_dict": best_state,
+                "seed": seed,
+                "tag": tag,
+                "best_epoch": best_epoch,
+                "val_mae": best_mae,
+            },
+            ckpt_path,
+        )
+
     best_mae = float("inf")
     best_state: dict[str, Tensor] | None = None
     best_epoch = -1
     best_metrics: dict[str, float] = {}
     best_pred: np.ndarray | None = None
+    start_epoch = 1
+    wall_prev = 0.0
+
+    if resume:
+        if not resume_path.exists() and mirror_dir is not None:
+            # 새 VM: 미러에 남은 상태에서 복원
+            restored: list[str] = []
+            for name in (RESUME_NAME, "train.log", f"{tag}.pt"):
+                src = mirror_dir / name
+                if src.exists():
+                    shutil.copy2(src, run_dir / name)
+                    restored.append(name)
+            if restored:
+                log_line(run_dir, f"[{tag}] 미러에서 복원: {restored}")
+        if resume_path.exists():
+            try:
+                # resume.pt는 이 모듈이 만든 자기 산출물 — RNG 상태 등 비텐서 객체 포함
+                state = torch.load(resume_path, map_location=device, weights_only=False)
+            except Exception as err:  # 저장 도중 죽어 깨진 파일 등
+                log_line(run_dir, f"[{tag}] resume.pt 로드 실패({err!r}) — 처음부터 학습")
+                state = None
+            if state is not None:
+                if state["fingerprint"] != fingerprint:
+                    raise ValueError(
+                        "resume.pt의 설정이 현재 config와 다르다 — "
+                        "run_name을 바꾸거나 resume.pt를 지우고 다시 실행할 것"
+                    )
+                model.load_state_dict(state["model"])
+                optimizer.load_state_dict(state["optimizer"])
+                if scheduler is not None and state["scheduler"] is not None:
+                    scheduler.load_state_dict(state["scheduler"])
+                best_mae = state["best_mae"]
+                best_state = state["best_state"]
+                best_epoch = state["best_epoch"]
+                best_metrics = state["best_metrics"]
+                best_pred = state["best_pred"].numpy() if state["best_pred"] is not None else None
+                torch.set_rng_state(state["torch_rng"].cpu())
+                if device.type == "cuda" and state.get("cuda_rng") is not None:
+                    torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda_rng"]])
+                np.random.set_state(state["numpy_rng"])  # noqa: NPY002 (seed.py와 동일 이유)
+                random.setstate(state["py_rng"])
+                start_epoch = state["epoch"] + 1
+                wall_prev = state["wall_sec"]
+                log_line(
+                    run_dir,
+                    f"[{tag}] resume: epoch {state['epoch']}까지 완료 상태에서 재개"
+                    f" (best {best_mae:.4f} @ ep {best_epoch})",
+                )
+
     t_start = time.perf_counter()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         model.train()
         t_epoch = time.perf_counter()
         perm = torch.randperm(n, device=device)
@@ -143,48 +273,82 @@ def train_one_model_gpu(
             "sec": time.perf_counter() - t_epoch,
         }
         marker = ""
-        if val_metrics["overall"] < best_mae:
+        improved = val_metrics["overall"] < best_mae
+        if improved:
             best_mae = val_metrics["overall"]
             # copy=True: CPU 텐서여도 참조가 아닌 복사본을 남긴다 (이후 학습이 덮어쓰지 않게)
-            state = model.state_dict()
-            best_state = {k: v.detach().to("cpu", copy=True) for k, v in state.items()}
+            state_now = model.state_dict()
+            best_state = {k: v.detach().to("cpu", copy=True) for k, v in state_now.items()}
             best_epoch = epoch
             best_metrics = val_metrics
             best_pred = val_pred
             marker = " *"
+            save_best_checkpoint(best_state, best_epoch, best_mae)  # 갱신 즉시 저장
         log_line(
             run_dir,
             f"[{tag}] epoch {epoch:3d}/{epochs}  train_l1 {row['train_l1']:.4f}  "
             f"val_mae {row['val_mae']:.4f}  lr {row['lr']:.2e}  {row['sec']:.1f}s{marker}",
         )
 
+        _atomic_save(
+            {
+                "fingerprint": fingerprint,
+                "epoch": epoch,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict() if scheduler is not None else None,
+                "best_mae": best_mae,
+                "best_state": best_state,
+                "best_epoch": best_epoch,
+                "best_metrics": best_metrics,
+                "best_pred": torch.from_numpy(best_pred) if best_pred is not None else None,
+                "torch_rng": torch.get_rng_state(),
+                "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
+                "numpy_rng": np.random.get_state(),  # noqa: NPY002
+                "py_rng": random.getstate(),
+                "wall_sec": wall_prev + time.perf_counter() - t_start,
+            },
+            resume_path,
+        )
+        mirror_names = ("train.log", RESUME_NAME) + ((f"{tag}.pt",) if improved else ())
+        _mirror_copy(run_dir, mirror_dir, mirror_names)
+
+        if _abort_after_epoch is not None and epoch >= _abort_after_epoch:
+            raise RuntimeError(f"테스트용 세션 중단 흉내 (epoch {epoch})")
+
     if best_state is None or best_pred is None:  # epochs >= 1 이므로 도달 불가
         raise RuntimeError("best 체크포인트가 만들어지지 않았다")
 
-    ckpt_path = run_dir / f"{tag}.pt"
-    torch.save(
-        {
-            "model_cfg": dict(cfg["model"]),
-            "state_dict": best_state,
-            "seed": seed,
-            "tag": tag,
-            "best_epoch": best_epoch,
-            "val_mae": best_mae,
-        },
-        ckpt_path,
-    )
-    if ckpt_path.is_relative_to(REPO_ROOT):  # metrics.json에 로컬 절대경로가 남지 않게
-        ckpt_path = ckpt_path.relative_to(REPO_ROOT)
+    # 완료: 재개용 상태는 로컬·미러 모두 정리 (best 체크포인트·로그는 남는다)
+    resume_path.unlink(missing_ok=True)
+    if mirror_dir is not None:
+        (mirror_dir / RESUME_NAME).unlink(missing_ok=True)
+        _mirror_copy(run_dir, mirror_dir, ("train.log", f"{tag}.pt"))
+
+    out_path = ckpt_path
+    if out_path.is_relative_to(REPO_ROOT):  # metrics.json에 로컬 절대경로가 남지 않게
+        out_path = out_path.relative_to(REPO_ROOT)
     return {
         "tag": tag,
         "seed": seed,
-        "ckpt_path": str(ckpt_path),
+        "ckpt_path": str(out_path),
         "best_epoch": best_epoch,
         "val_mae": best_mae,
         "val_mae_per_layer": best_metrics,
         "val_pred": best_pred,
-        "wall_sec": time.perf_counter() - t_start,
+        "wall_sec": wall_prev + time.perf_counter() - t_start,
     }
+
+
+def _load_completed_metrics(path: Path) -> dict[str, Any] | None:
+    """완료된 run의 metrics.json이면 그 내용을, 아니면 None을 돌려준다."""
+    if not path.exists():
+        return None
+    try:
+        metrics = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+    return metrics if "model" in metrics else None
 
 
 def run_config(
@@ -197,11 +361,24 @@ def run_config(
     lr: float | None = None,
     weight_decay: float | None = None,
     subset: int | None = None,
+    resume: bool = True,
+    mirror_dir: str | Path | None = None,
+    runs_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """config 하나를 GPU(가능하면)에서 학습하고 metrics dict를 돌려준다.
 
     노트북에서 호출하는 진입점. 키워드 인자는 config 값을 덮어쓴다
     (src/train.py의 CLI 오버라이드와 같은 의미).
+
+    세션 유실 대비 (resume=True 기본):
+    - 이미 완료된 run(metrics.json에 결과 존재 — 로컬 또는 미러)은 학습 없이
+      기존 metrics를 돌려준다. 여러 실험 순차 실행 중 끊겨도 재실행이 싸다.
+    - 진행 중이던 run은 resume.pt에서 다음 에폭부터 재개한다 (train_one_model_gpu).
+
+    Args:
+        mirror_dir: 세션 유실 대비 미러 루트 (예: Drive 경로). 실제 미러는
+            <mirror_dir>/<experiment>/<run_name>/에 쌓인다.
+        runs_root: 산출물 루트 (기본 runs/ — 테스트용 오버라이드).
 
     Raises:
         ValueError: config가 k-fold 모드(num_folds >= 2)인 경우 —
@@ -230,6 +407,26 @@ def run_config(
             'config에 "experiment" 키(대실험 주제)가 필요하다 — runs/<experiment>/<run_name> 구조'
         )
 
+    run_dir = Path(runs_root) if runs_root is not None else RUNS_DIR
+    run_dir = run_dir / str(experiment) / str(cfg["run_name"])
+    run_dir.mkdir(parents=True, exist_ok=True)
+    mirror_run: Path | None = None
+    if mirror_dir is not None:
+        mirror_run = Path(mirror_dir) / str(experiment) / str(cfg["run_name"])
+
+    if resume:
+        done = _load_completed_metrics(run_dir / "metrics.json")
+        if done is None and mirror_run is not None:
+            done = _load_completed_metrics(mirror_run / "metrics.json")
+            if done is not None:  # 미러에만 완료 기록이 있으면 산출물을 로컬로 되가져온다
+                _mirror_copy(mirror_run, run_dir, ("metrics.json", "train.log", "model.pt"))
+        if done is not None:
+            print(
+                f"run {experiment}/{cfg['run_name']}: 이미 완료 — 건너뜀"
+                f" (holdout MAE {done['model']['val_mae']:.4f} nm)"
+            )
+            return done
+
     dev = resolve_device(device)
     seed = int(cfg["seed"])
     set_seed(seed)
@@ -240,8 +437,6 @@ def run_config(
         subset=data_cfg.get("subset"),
     )
 
-    run_dir = RUNS_DIR / str(experiment) / str(cfg["run_name"])
-    run_dir.mkdir(parents=True, exist_ok=True)
     log_line(
         run_dir,
         f"run {experiment}/{cfg['run_name']}: 행 {len(x):,} = 학습 {len(train_idx):,}"
@@ -270,6 +465,8 @@ def run_config(
         run_dir,
         "model",
         dev,
+        mirror_dir=mirror_run,
+        resume=resume,
     )
     result.pop("val_pred")
     metrics["model"] = result
@@ -279,6 +476,7 @@ def run_config(
         f" (best epoch {result['best_epoch']})",
     )
     (run_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
+    _mirror_copy(run_dir, mirror_run, ("metrics.json", "train.log"))
     log_line(run_dir, f"\n산출물: {run_dir}/ (metrics.json, train.log, model.pt)")
     return metrics
 
@@ -295,6 +493,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--subset", type=int, default=None, help="시드 고정 무작위 서브셋 크기 (스모크용)"
     )
+    parser.add_argument("--mirror-dir", default=None, help="세션 유실 대비 미러 루트 (선택)")
+    parser.add_argument(
+        "--no-resume", action="store_true", help="resume.pt·완료 기록을 무시하고 처음부터 학습"
+    )
     return parser.parse_args(argv)
 
 
@@ -309,6 +511,8 @@ def main(argv: list[str] | None = None) -> None:
         lr=args.lr,
         weight_decay=args.weight_decay,
         subset=args.subset,
+        resume=not args.no_resume,
+        mirror_dir=args.mirror_dir,
     )
 
 

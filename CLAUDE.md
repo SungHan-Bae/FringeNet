@@ -118,6 +118,9 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   baseline 검증 경로)과 디커플, 수정 금지. 산출물 계약은 동일하며 체크포인트는 CPU
   텐서로 저장돼 로컬 evaluate.py와 호환. CPU↔GPU는 bit 단위 재현이 아니라 MAE 수준에서
   비교한다. 워크플로: Colab에서 학습·push → 로컬 pull·분석.
+  세션 유실 대비: best 갱신 즉시 model.pt 저장, 매 에폭 resume.pt(+RNG) 저장,
+  mirror_dir(Drive)로 에폭 단위 백업, 재실행 시 자동 resume·완료 run 스킵 —
+  재개 결과는 무중단 실행과 동일(RNG 복원, 테스트로 검증).
 - **Colab 노트북은 라운드(학습 세션)별 1개**: `notebooks/<대실험>/roundN_<내용>.ipynb`.
   완료된 라운드의 노트북은 실행 로그 보존을 위해 수정·재실행하지 않는다. 새 라운드는
   직전 노트북을 복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다.

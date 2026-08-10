@@ -29,5 +29,8 @@ __pycache__/
 # --- 캐시된 데이터셋 ---
 *.parquet
 
+# --- 학습 재개용 상태 (train_gpu.py — 완료 시 자동 삭제되지만 중단된 로컬 run 안전장치) ---
+resume.pt
+
 # --- OS ---
 .DS_Store
