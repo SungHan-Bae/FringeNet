@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,7 @@ import torch
 import yaml
 from torch import Tensor
 from torch.nn.functional import l1_loss
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import LambdaLR
 
 from src.data.dataset import REPO_ROOT, kfold_indices, prepare_train_arrays
 from src.evaluate import (
@@ -45,6 +46,41 @@ from src.models import build_model
 from src.utils.seed import set_seed
 
 RUNS_DIR = REPO_ROOT / "runs"
+
+
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    schedule: str,
+    warmup_steps: int,
+    total_steps: int,
+) -> LambdaLR | None:
+    """스텝 단위 LR 스케줄러를 만든다.
+
+    Args:
+        schedule: "cosine" = linear warmup 후 cosine 감쇠(끝에서 0), "none" = 고정 lr.
+        warmup_steps: warmup 스텝 수. 첫 스텝이 lr=0이 되지 않도록 (step+1)/warmup을 쓴다.
+        total_steps: 전체 학습 스텝 수 (= 에폭당 스텝 × 에폭).
+
+    Raises:
+        ValueError: 모르는 schedule 이름이거나 warmup_steps >= total_steps인 경우.
+    """
+    if schedule == "none":
+        return None
+    if schedule != "cosine":
+        raise ValueError(f'lr_schedule은 "cosine" | "none" 이어야 한다 (받은 값: {schedule!r})')
+    if warmup_steps < 0 or warmup_steps >= total_steps:
+        raise ValueError(
+            f"warmup_steps는 [0, total_steps) 범위여야 한다"
+            f" (받은 값: {warmup_steps}, total_steps={total_steps})"
+        )
+
+    def factor(step: int) -> float:
+        if step < warmup_steps:
+            return (step + 1) / warmup_steps
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
+
+    return LambdaLR(optimizer, factor)
 
 
 def train_one_model(
@@ -64,7 +100,7 @@ def train_one_model(
         y_train: (N, 4) float32 두께 [nm].
         x_val / y_val: best 선택용 검증 행 — holdout 모드에서는 공통 holdout,
             k-fold 모드에서는 해당 fold의 OOF 조각.
-        cfg: 전체 config (model/train/data 섹션 사용).
+        cfg: 전체 config (model/train 섹션 사용).
         seed: 이 모델의 시드 (fold마다 다르게 주면 앙상블 다양성이 생긴다).
         run_dir: 체크포인트({tag}.pt)·history(history_{tag}.csv) 저장 위치.
         tag: 파일명 태그 ("model" 또는 "fold0" 등).
@@ -81,14 +117,6 @@ def train_one_model(
 
     set_seed(seed)
 
-    # 채널별 표준화 — 통계는 이 모델의 학습 행에서만 계산하고 체크포인트에 저장한다.
-    norm_mean: Tensor | None = None
-    norm_std: Tensor | None = None
-    if cfg.get("data", {}).get("normalize", True):
-        norm_mean = torch.from_numpy(x_train.mean(axis=0, dtype=np.float64).astype(np.float32))
-        std64 = x_train.std(axis=0, dtype=np.float64)
-        norm_std = torch.from_numpy(np.maximum(std64, 1e-6).astype(np.float32))
-
     x_t = torch.from_numpy(x_train)
     y_t = torch.from_numpy(y_train)
     model = build_model(cfg["model"])
@@ -97,11 +125,15 @@ def train_one_model(
         lr=float(train_cfg["lr"]),
         weight_decay=float(train_cfg.get("weight_decay", 0.0)),
     )
-    scheduler = None
-    if train_cfg.get("lr_schedule", "cosine") == "cosine":
-        scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
 
     n = len(x_t)
+    steps_per_epoch = math.ceil(n / batch_size)
+    scheduler = build_lr_scheduler(
+        optimizer,
+        schedule=str(train_cfg.get("lr_schedule", "cosine")),
+        warmup_steps=int(train_cfg.get("warmup_steps", 0)),
+        total_steps=steps_per_epoch * epochs,
+    )
     best_mae = float("inf")
     best_state: dict[str, Tensor] | None = None
     best_epoch = -1
@@ -117,18 +149,15 @@ def train_one_model(
         loss_sum = 0.0
         for start in range(0, n, batch_size):
             idx = perm[start : start + batch_size]
-            xb = x_t[idx]
-            if norm_mean is not None and norm_std is not None:
-                xb = (xb - norm_mean) / norm_std
-            loss = l1_loss(model(xb), y_t[idx])
+            loss = l1_loss(model(x_t[idx]), y_t[idx])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            if scheduler is not None:  # warmup+cosine은 스텝 단위로 움직인다
+                scheduler.step()
             loss_sum += loss.item() * len(idx)
-        if scheduler is not None:
-            scheduler.step()
 
-        val_pred = predict(model, x_val, norm_mean, norm_std)
+        val_pred = predict(model, x_val)
         val_metrics = mae_per_layer(val_pred, y_val)
         row = {
             "epoch": epoch,
@@ -160,8 +189,6 @@ def train_one_model(
         {
             "model_cfg": dict(cfg["model"]),
             "state_dict": best_state,
-            "norm_mean": norm_mean,
-            "norm_std": norm_std,
             "seed": seed,
             "tag": tag,
             "best_epoch": best_epoch,
@@ -187,6 +214,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="configs/*.yaml 경로")
     parser.add_argument("--run-name", default=None, help="runs/ 아래 저장 이름 (config 덮어씀)")
     parser.add_argument("--epochs", type=int, default=None, help="config 덮어씀")
+    parser.add_argument("--batch-size", type=int, default=None, help="config 덮어씀")
+    parser.add_argument("--lr", type=float, default=None, help="config 덮어씀")
+    parser.add_argument("--weight-decay", type=float, default=None, help="config 덮어씀")
+    parser.add_argument(
+        "--hidden-dims",
+        default=None,
+        help='은닉 블록 폭, 쉼표 구분 (예: "256,256,256") — config 덮어씀',
+    )
     parser.add_argument(
         "--folds", type=int, default=None, help="0=holdout 단일, k>=2 = k-fold (config 덮어씀)"
     )
@@ -203,6 +238,14 @@ def main(argv: list[str] | None = None) -> None:
         cfg["run_name"] = args.run_name
     if args.epochs is not None:
         cfg["train"]["epochs"] = args.epochs
+    if args.batch_size is not None:
+        cfg["train"]["batch_size"] = args.batch_size
+    if args.lr is not None:
+        cfg["train"]["lr"] = args.lr
+    if args.weight_decay is not None:
+        cfg["train"]["weight_decay"] = args.weight_decay
+    if args.hidden_dims is not None:
+        cfg["model"]["hidden_dims"] = [int(w) for w in args.hidden_dims.split(",")]
     if args.folds is not None:
         cfg["train"]["num_folds"] = args.folds
     if args.subset is not None:
@@ -265,8 +308,8 @@ def main(argv: list[str] | None = None) -> None:
                 f"fold{i}",
             )
             oof_pred[fold_val] = result.pop("val_pred")
-            model, mu, sd = load_model_checkpoint(result["ckpt_path"])
-            hold_pred = predict(model, x_hold, mu, sd)
+            model = load_model_checkpoint(result["ckpt_path"])
+            hold_pred = predict(model, x_hold)
             holdout_preds.append(hold_pred)
             result["holdout_mae"] = mae_per_layer(hold_pred, y_hold)
             fold_rows.append(result)

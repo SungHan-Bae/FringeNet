@@ -74,11 +74,40 @@ def test_unbounded_head_initializes_at_range_center() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 블록 구성 — Linear -> Norm -> Activation -> Dropout 순서, norm/residual 옵션
+# ---------------------------------------------------------------------------
+def test_block_order_is_linear_norm_activation_dropout() -> None:
+    model = MLP(hidden_dims=(8,), norm="batchnorm", activation="gelu", dropout=0.1)
+    kinds = [type(m) for m in model.net[0].body]
+    assert kinds == [torch.nn.Linear, torch.nn.BatchNorm1d, torch.nn.GELU, torch.nn.Dropout]
+
+
+def test_norm_option_selects_layer_type() -> None:
+    bn = MLP(hidden_dims=(8,), norm="batchnorm")
+    ln = MLP(hidden_dims=(8,), norm="layernorm")
+    none = MLP(hidden_dims=(8,), norm="none")
+    assert any(isinstance(m, torch.nn.BatchNorm1d) for m in bn.modules())
+    assert not any(isinstance(m, torch.nn.LayerNorm) for m in bn.modules())
+    assert any(isinstance(m, torch.nn.LayerNorm) for m in ln.modules())
+    assert not any(isinstance(m, torch.nn.BatchNorm1d) for m in ln.modules())
+    assert not any(isinstance(m, torch.nn.BatchNorm1d | torch.nn.LayerNorm) for m in none.modules())
+
+
+def test_residual_uses_projection_only_when_widths_differ() -> None:
+    model = MLP(hidden_dims=(32, 32), residual=True)
+    assert isinstance(model.net[0].skip, torch.nn.Linear)  # 226 -> 32: projection
+    assert isinstance(model.net[1].skip, torch.nn.Identity)  # 32 -> 32: identity
+    assert model(_batch()).shape == (B, 4)
+    no_residual = MLP(hidden_dims=(32, 32), residual=False)
+    assert no_residual.net[0].skip is None
+
+
+# ---------------------------------------------------------------------------
 # 미분 가능성 · 재현성
 # ---------------------------------------------------------------------------
 def test_gradients_flow_to_every_parameter() -> None:
     set_seed(0)
-    model = MLP(hidden_dims=(32, 16))
+    model = MLP(hidden_dims=(32, 16), residual=True)  # projection skip 파라미터까지 확인
     loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
     loss.backward()
     for name, param in model.named_parameters():
@@ -104,6 +133,8 @@ def test_seeded_construction_is_reproducible() -> None:
     "kwargs",
     [
         {"activation": "swish"},
+        {"activation": "tanh"},
+        {"norm": "instancenorm"},
         {"dropout": 1.0},
         {"dropout": -0.1},
         {"hidden_dims": (64, 0)},

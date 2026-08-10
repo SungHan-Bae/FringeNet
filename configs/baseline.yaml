@@ -1,24 +1,27 @@
 # Task 4 baseline — 구조 bias 없는 MLP 대조군 (CLAUDE.md 모델·학습 스펙).
 # holdout 10%(seed 42)는 프로젝트 공통 검증셋 — 이후 모든 실험이 같은 셋으로 비교된다.
+# 입력 표준화는 하지 않는다 — 모델 첫 블록의 norm 층이 그 역할을 겸한다.
 seed: 42
 run_name: mlp_baseline
 
 data:
   val_frac: 0.1
-  normalize: true      # 채널별 표준화 (학습 행 통계, 체크포인트에 저장)
   subset: null         # 정수를 주면 시드 고정 무작위 서브셋 (스모크 테스트용)
 
 model:
   name: mlp
-  hidden_dims: [512, 512, 256]
-  activation: relu
-  dropout: 0.0
+  hidden_dims: [256, 256, 256]   # --hidden-dims "256,256"처럼 CLI로도 조절 가능
+  activation: gelu     # relu | gelu | silu
+  norm: batchnorm      # batchnorm | layernorm | none
+  dropout: 0.1
+  residual: false      # 블록별 skip connection (폭 다르면 Linear projection)
   output_bound: true   # sigmoid -> [10, 300] nm (Task 5에서 on/off ablation)
 
 train:
   epochs: 30
-  batch_size: 1024
+  batch_size: 512
   lr: 1.0e-3
-  weight_decay: 0.0
-  lr_schedule: cosine  # cosine | none
+  weight_decay: 1.0e-4
+  lr_schedule: cosine  # cosine(스텝 단위 warmup+cosine) | none
+  warmup_steps: 1000
   num_folds: 0         # 0 = holdout 단일 학습, k>=2 = 90% 안에서 k-fold (--folds로도 지정)

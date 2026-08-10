@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from src.evaluate import (
     build_submission_frame,
@@ -15,14 +16,20 @@ from src.evaluate import (
     predict,
     snap_to_grid,
 )
-from src.train import train_one_model
+from src.train import build_lr_scheduler, train_one_model
 
 
 def _tiny_cfg() -> dict:
     return {
-        "data": {"normalize": True},
         "model": {"name": "mlp", "hidden_dims": [8], "output_bound": True},
-        "train": {"epochs": 2, "batch_size": 64, "lr": 1.0e-3, "lr_schedule": "none"},
+        "train": {
+            "epochs": 2,
+            "batch_size": 64,
+            "lr": 1.0e-3,
+            "weight_decay": 1.0e-4,
+            "lr_schedule": "cosine",
+            "warmup_steps": 2,
+        },
     }
 
 
@@ -73,6 +80,34 @@ def test_build_submission_frame_rejects_missing_id(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# LR 스케줄러 — linear warmup 후 cosine 감쇠 (스텝 단위)
+# ---------------------------------------------------------------------------
+def test_lr_scheduler_warmup_then_cosine_decay() -> None:
+    opt = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1.0)
+    sched = build_lr_scheduler(opt, "cosine", warmup_steps=4, total_steps=10)
+    assert sched is not None
+    lrs = []
+    for _ in range(10):
+        lrs.append(opt.param_groups[0]["lr"])
+        opt.step()
+        sched.step()
+    # warmup 4스텝: (step+1)/4 로 선형 상승 — 첫 스텝부터 lr > 0
+    assert lrs[:4] == pytest.approx([0.25, 0.5, 0.75, 1.0])
+    # 이후 cosine 단조 감소, 전체 스텝을 다 돌면 0에 도달
+    assert all(a >= b for a, b in zip(lrs[3:], lrs[4:], strict=False))
+    assert opt.param_groups[0]["lr"] == pytest.approx(0.0)
+
+
+def test_lr_scheduler_none_and_invalid() -> None:
+    opt = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1.0)
+    assert build_lr_scheduler(opt, "none", warmup_steps=0, total_steps=10) is None
+    with pytest.raises(ValueError):
+        build_lr_scheduler(opt, "step", warmup_steps=0, total_steps=10)
+    with pytest.raises(ValueError):
+        build_lr_scheduler(opt, "cosine", warmup_steps=10, total_steps=10)
+
+
+# ---------------------------------------------------------------------------
 # 학습 스모크 — 합성 데이터 2 epoch + 체크포인트 왕복 결정성
 # ---------------------------------------------------------------------------
 def test_train_one_model_smoke_and_checkpoint_roundtrip(tmp_path: Path) -> None:
@@ -92,6 +127,6 @@ def test_train_one_model_smoke_and_checkpoint_roundtrip(tmp_path: Path) -> None:
     assert len(history) == 2
 
     # 체크포인트 왕복: 복원한 모델이 best 시점 예측을 그대로 재현해야 한다
-    model, mu, sd = load_model_checkpoint(tmp_path / "model.pt")
-    again = predict(model, x[192:], mu, sd)
+    model = load_model_checkpoint(tmp_path / "model.pt")
+    again = predict(model, x[192:])
     assert np.allclose(again, result["val_pred"], atol=1e-5)

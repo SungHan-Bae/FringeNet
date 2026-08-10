@@ -22,31 +22,22 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
-from torch import Tensor, nn
+from torch import nn
 
 from src.data.dataset import LAYER_COLS, RAW_DIR, load_test, prepare_train_arrays
 from src.models import build_model
 
 
 @torch.no_grad()
-def predict(
-    model: nn.Module,
-    x: np.ndarray,
-    norm_mean: Tensor | None,
-    norm_std: Tensor | None,
-    batch_size: int = 8192,
-) -> np.ndarray:
-    """배치 추론. x (N, 226) float32 -> 예측 (N, 4) float32 [nm].
+def predict(model: nn.Module, x: np.ndarray, batch_size: int = 8192) -> np.ndarray:
+    """배치 추론. x (N, 226) float32 반사율 원값 -> 예측 (N, 4) float32 [nm].
 
-    norm_mean/norm_std ((226,) float32)가 있으면 학습 때와 같은 채널별 표준화를
-    입력에 적용한다 (체크포인트에 저장된 학습 행 통계를 그대로 쓸 것).
+    입력 표준화는 하지 않는다 — 모델이 자체 norm 층(batchnorm/layernorm)으로 처리한다.
     """
     model.eval()
     outs: list[np.ndarray] = []
     for start in range(0, len(x), batch_size):
         xb = torch.from_numpy(x[start : start + batch_size])
-        if norm_mean is not None and norm_std is not None:
-            xb = (xb - norm_mean) / norm_std
         outs.append(model(xb).numpy())
     return np.concatenate(outs, axis=0)
 
@@ -65,13 +56,13 @@ def format_mae(metrics: dict[str, float]) -> str:
     return f"MAE {metrics['overall']:.4f} nm  ({layers})"
 
 
-def load_model_checkpoint(path: Path | str) -> tuple[nn.Module, Tensor | None, Tensor | None]:
-    """train.py가 저장한 체크포인트에서 (모델, norm_mean, norm_std)를 복원한다."""
+def load_model_checkpoint(path: Path | str) -> nn.Module:
+    """train.py가 저장한 체크포인트에서 모델을 복원한다 (eval 모드)."""
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
     model = build_model(ckpt["model_cfg"])
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
-    return model, ckpt["norm_mean"], ckpt["norm_std"]
+    return model
 
 
 def find_checkpoints(run_dir: Path) -> list[Path]:
@@ -133,7 +124,7 @@ def main(argv: list[str] | None = None) -> None:
         subset=data_cfg.get("subset"),
     )
     x_hold, y_hold = x[holdout_idx], y[holdout_idx]
-    preds = [predict(m, x_hold, mu, sd, args.batch_size) for m, mu, sd in models]
+    preds = [predict(m, x_hold, args.batch_size) for m in models]
     for path, pred in zip(ckpt_paths, preds, strict=True):
         print(f"  {path.name:10s} holdout {format_mae(mae_per_layer(pred, y_hold))}")
     ensemble = np.mean(preds, axis=0)
@@ -145,9 +136,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.submission:
         ids, x_test = load_test()
-        test_pred = np.mean(
-            [predict(m, x_test, mu, sd, args.batch_size) for m, mu, sd in models], axis=0
-        )
+        test_pred = np.mean([predict(m, x_test, args.batch_size) for m in models], axis=0)
         sample_path = RAW_DIR / "sample_submission.csv"
         out_path = run_dir / f"submission_{run_dir.name}.csv"
         build_submission_frame(ids, test_pred, sample_path).to_csv(out_path, index=False)
