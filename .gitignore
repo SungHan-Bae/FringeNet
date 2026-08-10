@@ -22,6 +22,8 @@ __pycache__/
 # 실수로 add되어 데이터 재배포 금지 계약을 어기지 않도록 함께 무시한다.
 *.ipynb
 /tmp.csv
+# 단, notebooks/의 노트북은 커밋 대상이다 (Colab GPU 학습 드라이버 등 — 데이터 출력 금지 유지)
+!/notebooks/*.ipynb
 
 # --- 캐시된 데이터셋 ---
 *.parquet
