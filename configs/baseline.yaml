@@ -15,7 +15,7 @@ model:
   norm: batchnorm      # batchnorm | layernorm | none
   dropout: 0.1
   residual: false      # 블록별 skip connection (폭 다르면 Linear projection)
-  output_bound: true   # sigmoid -> [10, 300] nm (Task 5에서 on/off ablation)
+  output_bound: false  # bare regression (strong baseline 방식) — Task 5에서 on/off ablation
 
 train:
   epochs: 30
