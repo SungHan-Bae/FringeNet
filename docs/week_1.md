@@ -185,6 +185,33 @@
   대조 불가). Level 2 백본 = flatten-dilated-bound.
   취합 리포트 갱신: [reports/level1_cnn.md](../reports/level1_cnn.md).
 
+## 2026-08-11 (화) — strong baseline 착수: 1등 단일 모델 원본 충실 재현 (Task 6 앞 삽입)
+
+- **방향 결정**: 축소 재현 대신 **원본 재현 + 단일 모델**로 보고 수치(val MAE ≈ 0.42 nm)가
+  실제로 재현되는지부터 확인한다 — 축소판은 "격차가 스케일 탓인지 구현 실수 탓인지"를
+  구분 못 한다. Task 6과 의존성이 없어 Colab 학습(이 실험)과 로컬 Stage A 작업을 병렬
+  가능. 열린 항목 "에폭 연장(100ep)"도 이 프로토콜에 흡수된다.
+- **원본 코드 확보**: 데이콘 페이지 첨부가 아니라 위키북스 책 공식 저장소
+  https://github.com/wikibook/dacon ch02에 전문 공개 (config.py / train.py / src/model.py).
+  레시피: SkipConnectionModel 213,208,104 파라미터 (up 226→2000→4000→7000→10000,
+  down →300, GELU tanh 근사+BatchNorm, down 입구 LayerNorm, 덧셈 skip), AdamW lr 1e-3
+  eps 1e-6 wd 0, L1, batch 2048, 100ep, warmup 2000 + cosine(hard restarts num_cycles=1
+  — 수학적으로 단일 cosine과 동일), 9:1 split, 입력 표준화 없음.
+- **원본 코드의 특이점 2가지를 그대로 재현하기로 결정** (0.42가 나온 조건의 일부):
+  (1) 에폭 1 평가 후 `model.train()` 복귀 누락 → 에폭 2부터 eval 모드 학습(BN 통계 동결),
+  (2) train DataLoader shuffle 없음(미리 섞은 CSV 순서 고정). 고친 변형은 재현 확인 후 별도 run.
+- **구현**: `src/models/winner_skip_mlp.py`(레지스트리 `winner_skip_mlp`, 파라미터 수
+  테스트로 고정) + `src/train_gpu.py`에 재현 플래그 3종(`adam_eps`/`shuffle: once`/
+  `eval_mode_after_first_epoch`) — **전부 opt-in, 기본값이 기존 동작과 동일**해 이전
+  실험·fingerprint에 무영향 (기존 테스트 스위트 무수정 통과로 확인). 신규 테스트:
+  forward 원본 전개식 대조, BN 동결 on/off, 새 플래그 하 resume=무중단 동일성.
+  로컬 CPU 스모크(subset 1500) 통과.
+- **라운드 1 준비**: `configs/strong_baseline/winner-repro-asis.yaml`(헤더에 원본
+  프로토콜 대응표) + `notebooks/strong_baseline/round1_winner-repro.ipynb`. 예상 비용
+  T4 에폭당 ~4분 → 100ep 5~7시간 (resume으로 멀티 세션 완주 가능). 노트북 셀 1은
+  pull 대신 fetch+reset --hard로 구조화 (VM 갈라짐 `24dbd7c` 재발 방지). Run-All
+  무정지 검증: PAT 4단 체인·push 실패 시 반납 중단·5초 반납·force_remount 확인.
+
 ---
 
 ## 확정 수치 (이후 작업의 기준선)
@@ -211,8 +238,10 @@
 
 백로그 외 열린 항목:
 
-- [ ] 에폭 연장 실험 — cosine 스케줄 재설정 필요 (30ep 끝은 LR→0 플래토; 대회 1등은 100ep)
-- [ ] strong baseline (1등 솔루션 축소 재현) — 0.65M vs 213M 격차 측정용
+- [ ] **strong baseline (1등 솔루션 원본 재현) — 진행 중 (08-11 라운드 1 준비 완료,
+  Colab 학습 대기)**: 단일 모델 0.42 nm 재현 확인 → `reports/strong_baseline.md`.
+  축소 재현에서 원본 재현으로 방향 변경, 에폭 연장(100ep) 항목을 흡수.
+- [x] ~~에폭 연장 실험~~ — strong baseline이 원본 100ep 프로토콜로 흡수 (별도 실험 불필요)
 - [ ] holdout과 분리된 best-epoch 선택용 split 도입 여부 (현재는 문서 명시로 처리)
 - [ ] 물리 손실 채널 가중 ablation (대역 오른쪽 정보량 3배 — 기본은 균등 가중)
 - [ ] layer_4 40~60 nm 민감도 저하 구간의 오차 확인 (두께 구간별 오차 분석 시)

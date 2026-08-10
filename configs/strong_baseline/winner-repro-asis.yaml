@@ -1,0 +1,49 @@
+# strong_baseline — 대회 1등 단일 모델 원본 충실 재현 (보고 val MAE ≈ 0.42 nm 재현 확인)
+#
+# 출처: [1등][Context_KKP] Skipconnection MLP with Ensemble
+#   https://dacon.io/competitions/official/235554/codeshare/651
+#   코드 원문: https://github.com/wikibook/dacon ch02 (config.py, train.py, src/model.py)
+#
+# 역할: 0.65M(flatten-dilated-bound 2.346 nm) vs 213M의 격차를 신뢰 가능한 숫자로 만들고,
+# Task 7 물리 손실의 기여를 자리매김할 상한 기준선을 확보한다. 앙상블은 제외 — 0.42는
+# 단일 모델 수치다. split 시드가 원본과 달라 bit 재현이 아닌 MAE 수준 재현을 본다.
+#
+# 원본 프로토콜 대응표 (전부 원문 코드 기준):
+#   모델          winner_skip_mlp = SkipConnectionModel (up 226→2000→4000→7000→10000,
+#                 down →300, GELU tanh 근사 + BatchNorm, down 입구 LayerNorm, 덧셈 skip,
+#                 dropout 미사용, bare regression, 입력 표준화 없음) — 213,208,104 파라미터
+#   손실/평가     L1Loss / val 9:1 random split (data.val_frac 0.1)
+#   옵티마이저    AdamW lr 1e-3, eps 1e-6(adam_eps), weight decay 0
+#                 (원본은 no_decay 그룹을 나누지만 두 그룹 모두 0.0이라 wd 0과 등가)
+#   스케줄        warmup 2000스텝 + cosine 감쇠 — 원본 get_cosine_with_hard_restarts(
+#                 num_cycles=1.0)는 수학적으로 단일 cosine과 동일, 우리 "cosine"과 일치
+#                 (total 35,600스텝이라 10% 클램프 3,560 > 2000 — 미발동)
+#   epochs/batch  100 / 2048
+#   shuffle: once 원본은 미리 섞어둔 CSV + shuffle 없는 DataLoader — 순열 1회 고정과 등가
+#   eval_mode_after_first_epoch: true — 원본 train.py는 에폭 1 평가 후 model.train()
+#                 복귀가 없어 에폭 2부터 eval 모드(BN 통계 동결)로 학습된다. 0.42가 나온
+#                 조건의 일부이므로 버그까지 그대로 재현한다 (고친 변형은 재현 확인 후 별도 run).
+seed: 42
+experiment: strong_baseline
+run_name: winner-repro-asis
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: winner_skip_mlp
+  up_dims: [2000, 4000, 7000, 10000]
+  head_dim: 300
+
+train:
+  epochs: 100
+  batch_size: 2048
+  lr: 1.0e-3
+  weight_decay: 0.0
+  adam_eps: 1.0e-6
+  lr_schedule: cosine
+  warmup_steps: 2000
+  shuffle: once
+  eval_mode_after_first_epoch: true
+  num_folds: 0
