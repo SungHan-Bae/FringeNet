@@ -92,6 +92,28 @@
 - **문서 구조 개편** (이 커밋): README 슬림화(소개·구조·불변 사실만) +
   `docs/week_N.md` 주차별 실험 노트 도입. 진행 서사·발견 기록·TODO는 이 노트에서 관리.
 
+## 2026-08-10 (월) — Task 5 착수: MLP vs 1D CNN (변인 통제 설계)
+
+- **CNN1D 구현** (`8f8838b`): `src/models/cnn.py` — ConvBlock(다중 커널 병렬 분기,
+  ablation용 플래그) 스택 → GAP → Linear 헤드. 블록 구성(Conv→BN→GELU)·출력 규약
+  (bare head + bias 중앙 초기화)을 baseline MLP와 동일하게 두고 **연결 패턴만** 바꿨다.
+  모델 테스트 13종 추가, 전체 42종 green.
+- **변인 통제 설계** — "성능 차 = 구조 bias 기여"를 말하기 위한 장치:
+  1. **파라미터 매칭**: channels (32,64,128,200,280)에서 CNN 646,340 vs MLP 646,660
+     (**−0.05%**). 테스트가 ±10%를 강제한다 — 용량 차이 반론 차단.
+  2. **채널 셔플 대조군**: 같은 CNN에 고정 무작위 순열(seed 7)로 채널 순서만 파괴.
+     MLP는 입력 순열에 불변(첫 Linear 열 순서만 바뀜)이므로 셔플 대조군은 CNN에만
+     의미가 있고, CNN vs shuffled-CNN 낙폭이 **스펙트럼 순서 정보의 기여를 직접 측정**한다.
+  3. 학습 프로토콜(seed 42, holdout, AdamW 1e-3/wd 1e-4, warmup+cosine, 30ep, batch 512)
+     은 baseline과 완전 동일. 조작 변인은 아키텍처 하나.
+- 아키텍처 결정: 첫 블록 stride 1(226 전체 해상도 유지 — fringe 고주파 보존), 이후
+  stride 2 4회. stride-2 stem은 에폭당 4분으로 빨라지지만 해상도 손실 위험이 있어 기각.
+  CPU 벤치마크: CNN 에폭 ~7.1분 (MLP 26초의 ~16배, 가중치 공유로 파라미터당 연산이
+  많은 conv의 본질적 비용).
+- full run 2종(single-scale, single-scale-shuffled) 순차 실행 시작 — 총 ~7시간 예상.
+- 열린 확인 사항: lr 1e-3은 MLP 기준으로 고른 값이라 CNN에 불리할 수 있음 —
+  결과가 이상하면 subset lr 스윕(3e-4/1e-3/3e-3)으로 공정성 확인 예정.
+
 ---
 
 ## 확정 수치 (이후 작업의 기준선)
