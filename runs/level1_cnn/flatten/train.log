@@ -1,0 +1,33 @@
+run level1_cnn/flatten: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] epoch   1/30  train_l1 43.9734  val_mae 31.6454  lr 1.00e-03  12.2s *
+[model] epoch   2/30  train_l1 26.3433  val_mae 24.8709  lr 9.95e-04  11.8s *
+[model] epoch   3/30  train_l1 23.4145  val_mae 24.8045  lr 9.85e-04  12.0s *
+[model] epoch   4/30  train_l1 21.7868  val_mae 21.4557  lr 9.69e-04  12.1s *
+[model] epoch   5/30  train_l1 20.5950  val_mae 20.8148  lr 9.48e-04  12.1s *
+[model] epoch   6/30  train_l1 19.6265  val_mae 21.5428  lr 9.21e-04  12.1s
+[model] epoch   7/30  train_l1 18.8553  val_mae 19.8248  lr 8.90e-04  12.0s *
+[model] epoch   8/30  train_l1 18.2279  val_mae 18.2600  lr 8.55e-04  11.9s *
+[model] epoch   9/30  train_l1 17.6623  val_mae 18.2175  lr 8.15e-04  11.9s *
+[model] epoch  10/30  train_l1 17.1297  val_mae 17.3390  lr 7.71e-04  11.9s *
+[model] epoch  11/30  train_l1 16.6947  val_mae 16.9669  lr 7.25e-04  11.9s *
+[model] epoch  12/30  train_l1 16.3092  val_mae 17.9132  lr 6.76e-04  12.0s
+[model] epoch  13/30  train_l1 15.9370  val_mae 18.3374  lr 6.25e-04  12.0s
+[model] epoch  14/30  train_l1 15.5926  val_mae 16.3068  lr 5.72e-04  12.0s *
+[model] epoch  15/30  train_l1 15.2691  val_mae 16.2091  lr 5.19e-04  12.0s *
+[model] epoch  16/30  train_l1 14.9697  val_mae 16.3416  lr 4.65e-04  12.0s
+[model] epoch  17/30  train_l1 14.6991  val_mae 15.3117  lr 4.12e-04  12.0s *
+[model] epoch  18/30  train_l1 14.4425  val_mae 14.8921  lr 3.60e-04  12.0s *
+[model] epoch  19/30  train_l1 14.1945  val_mae 14.8427  lr 3.09e-04  12.0s *
+[model] epoch  20/30  train_l1 13.9895  val_mae 14.5152  lr 2.61e-04  12.0s *
+[model] epoch  21/30  train_l1 13.7824  val_mae 14.4169  lr 2.15e-04  12.0s *
+[model] epoch  22/30  train_l1 13.5756  val_mae 14.5342  lr 1.73e-04  12.0s
+[model] epoch  23/30  train_l1 13.4036  val_mae 14.1364  lr 1.34e-04  12.0s *
+[model] epoch  24/30  train_l1 13.2637  val_mae 13.9889  lr 1.00e-04  12.0s *
+[model] epoch  25/30  train_l1 13.1228  val_mae 13.8679  lr 7.02e-05  12.0s *
+[model] epoch  26/30  train_l1 13.0231  val_mae 13.7635  lr 4.53e-05  12.0s *
+[model] epoch  27/30  train_l1 12.9327  val_mae 13.7394  lr 2.56e-05  12.0s *
+[model] epoch  28/30  train_l1 12.8674  val_mae 13.6981  lr 1.15e-05  11.9s *
+[model] epoch  29/30  train_l1 12.8230  val_mae 13.6796  lr 2.87e-06  12.0s *
+[model] epoch  30/30  train_l1 12.7987  val_mae 13.6774  lr 0.00e+00  11.9s *
+
+[model] holdout MAE 13.6774 nm  (layer_1=9.782  layer_2=17.200  layer_3=13.210  layer_4=14.518) (best epoch 30)

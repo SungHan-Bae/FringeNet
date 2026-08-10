@@ -1,0 +1,77 @@
+{
+  "experiment": "level1_cnn",
+  "run_name": "dilated",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "level1_cnn",
+    "run_name": "dilated",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        64,
+        128,
+        200,
+        280
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "dilations": [
+        1,
+        2,
+        4,
+        4,
+        2
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "head": "gap",
+      "output_bound": false,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 30,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 1000,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/level1_cnn/dilated/model.pt",
+    "best_epoch": 28,
+    "val_mae": 4.976066589355469,
+    "val_mae_per_layer": {
+      "layer_1": 3.594306707382202,
+      "layer_2": 5.9548540115356445,
+      "layer_3": 5.092408180236816,
+      "layer_4": 5.262696743011475,
+      "overall": 4.976066589355469
+    },
+    "wall_sec": 362.3984511429999
+  }
+}
