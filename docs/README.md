@@ -6,7 +6,7 @@
 
 | 노트 | 기간 | 요약 |
 |---|---|---|
-| [week_1.md](week_1.md) | 2026-08-08 ~ 08-14 | 스캐폴드 → TMM(테스트 7종) → 데이터 검증(**노이즈 σ ≈ 0.0087 발견**) → EDA → Stage A 게이트 확정 → **baseline 4.599 nm** |
+| [week_1.md](week_1.md) | 2026-08-08 ~ 08-14 | 스캐폴드 → TMM(테스트 7종) → 데이터 검증(**노이즈 σ ≈ 0.0087 발견**) → EDA → Stage A 게이트 확정 → **baseline 4.599 nm** → GPU(Colab) 전환 → CNN ablation 라운드 1·2 (**flatten-dilated 2.931 nm**) |
 
 ## 로드맵 (3주)
 
@@ -21,3 +21,4 @@
 | 리포트 | 내용 |
 |---|---|
 | [mlp_baseline.md](../reports/mlp_baseline.md) | **Task 4 baseline 확정** — MLP 대조군 + dropout ablation, holdout MAE 4.599 nm |
+| [level1_cnn.md](../reports/level1_cnn.md) | **Task 5 Level 1 구조 ablation** — CNN 5변형(셔플 대조군·flatten·dilated), **flatten-dilated 2.931 nm (−36%)**. 수용영역+위치 보존이 결합돼야 conv가 유효 |

@@ -148,6 +148,18 @@
      비교는 유효하나, "CNN에 30ep가 부족한가"는 flatten 결과를 본 뒤 판단.
   - **다음 변형: GAP → flatten 헤드** (위치 정보 보존). CNN이 MLP와 경쟁하려면
     이 축이 필수라는 가설. 스모크 산출물(-smoke)은 저장소에서 제거, push 셀도 제외 처리.
+- **라운드 2 완료 — flatten·dilated·flatten-dilated (`2e50702`)**:
+  **flatten-dilated 2.931 nm로 baseline(4.599) 대비 −36.3%, 첫 돌파.**
+  분해: 지배 요인은 수용영역(dilated 단독 +13.2, RF 97→259 전 대역), 위치 보존
+  (flatten 단독 +4.5)은 그 위에서 시너지 — 라운드 1 진단("GAP가 병목")은 절반만
+  맞았다. 확정 구성은 전 두께 구간에서 baseline 우위 (얇은 10~60 nm: 4.37 vs 6.49).
+  체크포인트 6종 로컬 재현 검증 완료. **취합 리포트: [reports/level1_cnn.md](../reports/level1_cnn.md)**.
+  Level 2 백본은 flatten-dilated로 확정.
+- 인프라: 세션 유실 대비 체계 구축 (`2cf209e`) — best 갱신 즉시 model.pt 저장,
+  매 에폭 resume.pt(+RNG)·Drive 미러, 재실행 시 완료 run 스킵·진행 run 재개
+  (무중단 실행과 동일 결과, 테스트 검증). 라운드 2에서 실전 작동 (세션 종료 후
+  미러 기록으로 3개 run 스킵·복원 → push). push 셀 PAT 정적 소스화(Drive/Secrets),
+  전 실험 완료 시 런타임 자동 반납. 노트북은 라운드별 1개로 구조화 (`0ac1fce`).
 
 ---
 
@@ -166,6 +178,8 @@
 작업 백로그 (순서 준수 — 상세 DoD는 CLAUDE.md):
 
 - [ ] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표
+  — CNN·다중스케일(dilated) 완료 ([reports/level1_cnn.md](../reports/level1_cnn.md),
+  flatten-dilated 2.931 nm). **bound on/off만 남음** (flatten-dilated 기준으로 1 run)
 - [ ] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지 (게이지: SiO₂ Cauchy freeze)
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신

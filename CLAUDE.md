@@ -140,10 +140,12 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 ## 모델·학습 스펙 요약
 
 - Baseline(대조군): MLP. 226채널을 순서 없는 피처로 취급 — 구조 bias의 기여를 재기 위한 기준선.
-- Level 1(구조·표현 bias): 1D CNN. 입력 `(B, 1, 226)` → conv 스택 → GAP → MLP 헤드 → 4출력,
-  `sigmoid*290+10` bound (범위는 데이터 검증 결과에 맞춰 조정).
-  fringe 주기가 두께에 따라 변하므로 커널 크기 혼합 또는 dilated conv로 다중 스케일 수용영역 확보.
-  각 요소(구조/다중스케일/bound)는 config 플래그로 on/off 가능해야 한다 (ablation용).
+- Level 1(구조·표현 bias): 1D CNN. 입력 `(B, 1, 226)` → conv 스택 → head(gap|flatten) → 4출력.
+  각 요소(head/dilations/kernel_sizes/bound/셔플 대조군)는 config 플래그로 on/off (ablation용).
+  **확정 (2026-08-10, reports/level1_cnn.md): flatten-dilated가 holdout MAE 2.931 nm로
+  baseline 대비 −36%. 국소 conv는 수용영역이 전 대역을 덮고(dilated RF 259) 파장축
+  위치가 보존될 때만(flatten) 유효 — 소박한 conv+GAP는 4배 나쁘고 채널 셔플 대조군보다도
+  나쁘다. Level 2 백본 = flatten-dilated.** bound on/off ablation만 남음.
 - Level 2:
   - Stage A `src/calibrate.py`: train 서브셋(~5만 행)의 (d_true, R_obs)로 forward 미지수 피팅.
     파라미터화 — λ 그리드: `lam = lam_min + cumsum(softplus(u))` (단조);
@@ -221,6 +223,8 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   **holdout MAE 4.599 nm** — 리포트 `reports/mlp_baseline.md`.
   dropout 0.1은 6.645 nm로 순손실(전수 격자라 과적합 압력 약함). 2026-08-10 확정.)
 - [ ] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표.
+  (CNN·셔플 대조군·flatten·dilated 완료 — `reports/level1_cnn.md`, flatten-dilated
+  **2.931 nm**. 남은 것: bound on/off 1 run.)
 - [ ] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지.
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석.
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신.
