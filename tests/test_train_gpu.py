@@ -118,7 +118,7 @@ def _synthetic() -> tuple[np.ndarray, np.ndarray]:
     return x, y
 
 
-def _train(run_dir: Path, cfg: dict | None = None, **kwargs: object) -> dict:
+def _train(run_dir: Path, cfg: dict | None = None, device: str = "cpu", **kwargs: object) -> dict:
     x, y = _synthetic()
     return train_one_model_gpu(
         x[:192],
@@ -129,27 +129,30 @@ def _train(run_dir: Path, cfg: dict | None = None, **kwargs: object) -> dict:
         seed=0,
         run_dir=run_dir,
         tag="model",
-        device=torch.device("cpu"),
+        device=torch.device(device),
         **kwargs,  # type: ignore[arg-type]
     )
 
 
-def test_resume_after_interrupt_matches_uninterrupted(tmp_path: Path) -> None:
+# device 파라미터화 필수 — resume 로드는 map_location=device로 CPU 계약 텐서(best_pred·
+# best_state)까지 device로 올리는 회귀가 있었다 (GPU에서만 재현, Colab pytest로 검증).
+@pytest.mark.parametrize("device", _DEVICES)
+def test_resume_after_interrupt_matches_uninterrupted(device: str, tmp_path: Path) -> None:
     cfg = _tiny_cnn_cfg()
     cfg["train"]["epochs"] = 3
 
     full_dir = tmp_path / "full"
     full_dir.mkdir()
-    full = _train(full_dir, cfg)
+    full = _train(full_dir, cfg, device)
 
     # epoch 1 직후 세션 중단을 흉내 낸 뒤 재개 — RNG까지 복원되므로 결과가 같아야 한다
     part_dir = tmp_path / "interrupted"
     part_dir.mkdir()
     with pytest.raises(RuntimeError, match="중단"):
-        _train(part_dir, cfg, _abort_after_epoch=1)
+        _train(part_dir, cfg, device, _abort_after_epoch=1)
     assert (part_dir / "resume.pt").exists()
     assert (part_dir / "model.pt").exists()  # best는 갱신 즉시 저장 — 중단 시점에도 존재
-    resumed = _train(part_dir, cfg)
+    resumed = _train(part_dir, cfg, device)
 
     assert resumed["best_epoch"] == full["best_epoch"]
     assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
@@ -157,21 +160,25 @@ def test_resume_after_interrupt_matches_uninterrupted(tmp_path: Path) -> None:
     assert not (part_dir / "resume.pt").exists()  # 완료 시 재개 상태는 정리된다
     # 로그에 재개 기록이 남는다
     assert "resume" in (part_dir / "train.log").read_text()
+    # resume 직후 저장되는 best 체크포인트는 device와 무관하게 CPU 텐서 계약을 지켜야 한다
+    ckpt = torch.load(part_dir / "model.pt", map_location=None, weights_only=True)
+    assert all(v.device.type == "cpu" for v in ckpt["state_dict"].values())
 
 
-def test_resume_restores_from_mirror_on_fresh_vm(tmp_path: Path) -> None:
+@pytest.mark.parametrize("device", _DEVICES)
+def test_resume_restores_from_mirror_on_fresh_vm(device: str, tmp_path: Path) -> None:
     cfg = _tiny_cnn_cfg()
     cfg["train"]["epochs"] = 3
 
     full_dir = tmp_path / "full"
     full_dir.mkdir()
-    full = _train(full_dir, cfg)
+    full = _train(full_dir, cfg, device)
 
     run_dir = tmp_path / "run"
     mirror = tmp_path / "mirror"
     run_dir.mkdir()
     with pytest.raises(RuntimeError, match="중단"):
-        _train(run_dir, cfg, mirror_dir=mirror, _abort_after_epoch=2)
+        _train(run_dir, cfg, device, mirror_dir=mirror, _abort_after_epoch=2)
     # 미러에 에폭 단위 백업이 남아 있어야 한다
     assert (mirror / "resume.pt").exists()
     assert (mirror / "train.log").exists()
@@ -180,7 +187,7 @@ def test_resume_restores_from_mirror_on_fresh_vm(tmp_path: Path) -> None:
     # 세션 유실로 VM 디스크가 날아간 상황: run_dir를 비우고 미러만으로 재개
     shutil.rmtree(run_dir)
     run_dir.mkdir()
-    resumed = _train(run_dir, cfg, mirror_dir=mirror)
+    resumed = _train(run_dir, cfg, device, mirror_dir=mirror)
 
     assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
     assert np.allclose(resumed["val_pred"], full["val_pred"], atol=1e-5)

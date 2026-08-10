@@ -242,10 +242,16 @@ def train_one_model_gpu(
                 if scheduler is not None and state["scheduler"] is not None:
                     scheduler.load_state_dict(state["scheduler"])
                 best_mae = state["best_mae"]
+                # map_location=device가 저장 시 CPU였던 텐서도 device로 올리므로,
+                # CPU 계약인 것들(best_state = 체크포인트용, best_pred = numpy)은 되돌린다
                 best_state = state["best_state"]
+                if best_state is not None:
+                    best_state = {k: v.detach().to("cpu", copy=True) for k, v in best_state.items()}
                 best_epoch = state["best_epoch"]
                 best_metrics = state["best_metrics"]
-                best_pred = state["best_pred"].numpy() if state["best_pred"] is not None else None
+                best_pred = (
+                    state["best_pred"].cpu().numpy() if state["best_pred"] is not None else None
+                )
                 torch.set_rng_state(state["torch_rng"].cpu())
                 if device.type == "cuda" and state.get("cuda_rng") is not None:
                     torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda_rng"]])
