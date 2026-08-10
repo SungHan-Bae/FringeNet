@@ -1,8 +1,11 @@
 """학습 엔트리포인트 — Task 4 baseline(holdout 단일) + k-fold 앙상블 학습.
 
 프로토콜 (CLAUDE.md 평가 규약과의 관계):
-  - seed 고정 holdout(기본 10%)이 프로젝트 공통 검증셋이다. 어떤 모델의 학습에도
-    쓰지 않으며, 실험 간 비교(ablation)는 전부 이 셋의 raw MAE로 한다.
+  - seed 고정 holdout(기본 10%)이 프로젝트 공통 검증셋이다. gradient 학습에는 쓰지
+    않지만, holdout 단일 모드에서는 best-epoch 선택(에폭별 val MAE 최소)에도 쓰인다 —
+    즉 보고 수치는 에폭 중 최소값이라 min-선택 편향이 있다 (81k 행 기준 표준오차
+    ~0.01 nm 규모라 무시 가능하나, "완전히 안 본 셋"은 아니라는 점을 명시해 둔다).
+    실험 간 비교(ablation)는 전부 이 셋의 raw MAE로 같은 규칙으로 한다.
   - k-fold(``--folds k``)는 holdout을 뺀 나머지 90% 안에서만 접는다. 그래야
     fold 모델 누구도 보지 않은 holdout으로 앙상블을 공정하게 평가할 수 있고,
     단일 모델 대비 앙상블의 이득이 같은 잣대로 측정된다. fold 모델의 best
@@ -208,6 +211,10 @@ def train_one_model(
         },
         ckpt_path,
     )
+    # metrics.json에 로컬 홈 절대경로가 커밋되지 않도록 저장소 상대 경로로 기록한다
+    # (저장소 밖 run_dir — 테스트의 tmp 경로 등 — 은 그대로 둔다).
+    if ckpt_path.is_relative_to(REPO_ROOT):
+        ckpt_path = ckpt_path.relative_to(REPO_ROOT)
     return {
         "tag": tag,
         "seed": seed,
@@ -327,7 +334,8 @@ def main(argv: list[str] | None = None) -> None:
                 f"fold{i}",
             )
             oof_pred[fold_val] = result.pop("val_pred")
-            model = load_model_checkpoint(result["ckpt_path"])
+            # ckpt_path가 저장소 상대 경로면 REPO_ROOT 기준으로 푼다 (절대경로면 그대로).
+            model = load_model_checkpoint(REPO_ROOT / result["ckpt_path"])
             hold_pred = predict(model, x_hold)
             holdout_preds.append(hold_pred)
             result["holdout_mae"] = mae_per_layer(hold_pred, y_hold)

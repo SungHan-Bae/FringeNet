@@ -1,7 +1,8 @@
 # CLAUDE.md — FringeNet
 
 이 파일은 매 세션 자동 로드되는 프로젝트 작업 메모리다.
-배경·방법론의 전체 서사는 @README.md 참고. 여기에는 작업에 필요한 계약과 스펙만 둔다.
+배경·설계는 @README.md, 진행 기록·발견·TODO 상세는 docs/week_N.md(주차별 실험 노트) 참고.
+여기에는 작업에 필요한 계약과 스펙만 둔다.
 
 ## 한 줄 요약
 
@@ -113,7 +114,7 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 - dtype: 검증·캘리브레이션은 complex128, 학습은 complex64. d는 real 유지(autograd가 d로 흐르게).
 - 포맷/린트 ruff, 테스트 pytest, 시드 고정 유틸(`src/utils/seed.py`),
   설정은 `configs/<실험>/<변형>.yaml` (평가 규약의 실험 관리 구조 참조).
-- 커밋 메시지: `feat|fix|test|docs|exp: ...`
+- 커밋 메시지: `feat|fix|refactor|test|docs|exp: ...`
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
 
@@ -181,9 +182,13 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   - 변형 이름은 번호(sub_run_1)가 아니라 **무엇이 다른지 드러나는 서술형**으로
     (예: dropout0.0, layernorm, residual-on).
   - 대실험이 끝나면 모든 변형의 결과·분석·최종 결론을 **`reports/<실험>.md`**로 취합한다.
-    README에는 성능 수치를 두지 않고 §7에서 리포트 목록만 링크한다.
+    README에는 성능 수치·진행 서사를 두지 않는다 — 리포트 목록은 docs/README.md에서 링크.
+- **주차별 실험 노트 `docs/week_N.md`** (첫 커밋 2026-08-08 기준 7일 단위, week_1 = 08-08~08-14):
+  날짜별 진행·결과·발견·결정을 그때그때 기록하고, **TODO 관리도 여기서** 한다
+  (백로그 외 열린 항목 포함). 백로그 체크박스를 갱신할 때 해당 주 노트도 함께 갱신한다.
+  노트 인덱스·로드맵은 docs/README.md.
 
-## 작업 백로그 (순서 준수, 완료 시 체크)
+## 작업 백로그 (순서 준수, 완료 시 체크 — 일일 진행·열린 항목은 docs/week_N.md)
 
 - [x] **Task 0 — 스캐폴드**: 디렉토리(README §4), `.gitignore`(data/, runs/, .venv 등),
   `requirements.txt`(torch, numpy, pandas, pyarrow, matplotlib, scikit-learn, pytest, ruff, pyyaml, tqdm),
@@ -232,4 +237,4 @@ python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
 
 1. 본 파일과 git log/status로 현재 상태 파악 → 백로그 최상단 미완료 Task 확인
 2. 착수 전 계획을 2~4줄로 요약해 제시
-3. 구현 → 테스트 → 커밋 → 체크박스 갱신
+3. 구현 → 테스트 → 커밋 → 체크박스·docs 주차 노트 갱신
