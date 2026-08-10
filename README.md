@@ -212,11 +212,11 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 ├── README.md               # 본 문서
 ├── CLAUDE.md               # Claude Code 작업 메모리 (계약·테스트 스펙·백로그)
 ├── requirements.txt
-├── configs/                # 실험 설정 (yaml, Task 4부터 생성)
-├── data/raw/               # 데이콘 원본 (git 미포함)
-├── data/cache/             # parquet 캐시 (자동 생성, git 미포함)
-├── runs/                   # 실험별 산출물 — report.md만 git 추적 (§7)
-├── notebooks/              # EDA (탐색용; 재사용 로직은 src/로 승격)
+├── configs/<실험>/<변형>.yaml   # 실험 설정 — runs/와 같은 2단 구조 (§7)
+├── data/raw/               # 데이콘 원본 (파일은 git 미포함, 구조만 .gitkeep)
+├── data/cache/             # parquet 캐시 (자동 생성, 파일은 git 미포함)
+├── runs/<실험>/<변형>/     # 실행 산출물: model.pt, train.log, metrics.json (git 추적, §7)
+├── reports/<실험>.md       # 대실험별 취합 리포트 — 결과·분석·결론 (§7)
 ├── reports/figures/        # 산출 그림
 ├── reports/eda_metrics.md  # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
 ├── reports/eda_notes.md    # EDA 관찰·해석 메모
@@ -243,8 +243,8 @@ pip install -r requirements.txt
 pytest -q                          # 물리 단위 테스트 + 로더 테스트
 python scripts/verify_data.py      # 데이터 계약 검증 (통과 시 종료 코드 0)
 python scripts/eda.py              # EDA 그림 3종 + 측정값 표
-python -m src.train --config configs/baseline.yaml  # baseline 학습 -> runs/mlp_baseline/
-python -m src.evaluate --run runs/mlp_baseline      # holdout 재평가 (--submission 으로 제출 csv)
+python -m src.train --config configs/mlp_baseline/dropout0.0.yaml  # baseline 학습
+python -m src.evaluate --run runs/mlp_baseline/dropout0.0  # holdout 재평가 (--submission 으로 제출 csv)
 ```
 
 `verify_data.py` 최초 실행은 `train.csv`(1.9 GB)를 파싱해 `data/cache/train.parquet`을
@@ -258,18 +258,21 @@ python -m src.evaluate --run runs/mlp_baseline      # holdout 재평가 (--submi
 - **Week 2** — [ ] 구조 ablation(MLP/CNN, 다중 스케일) · [ ] Stage A 캘리브레이션 + 게이트 판정 · [ ] Stage B 물리 손실 학습
 - **Week 3** — [ ] 신뢰도 지표 분석 · [ ] 결과·그림 정리 · [ ] 문서화 마감
 
-## 7. 결과 보고 방식
+## 7. 실험 관리·결과 보고 방식
 
-성능 수치는 README에 두지 않는다. 실험마다 실행 산출물과 같은 위치인
-**`runs/<run_name>/report.md`**에 설정·결과·해석·재현 커맨드를 기록한다
-(`.gitignore`가 `runs/` 아래에서 report.md만 추적한다 — 체크포인트·로그는 로컬 전용).
+성능 수치는 README에 두지 않는다. 실험은 **대실험(experiment) / 변형(run)** 2단 구조로 관리한다.
+
+- **설정**: `configs/<실험>/<변형>.yaml` — config에 `experiment`·`run_name` 키를 둔다.
+- **실행 산출물**: `runs/<실험>/<변형>/` — `model.pt`(best 체크포인트),
+  `train.log`(에폭별 실시간 로그), `metrics.json`(설정 스냅샷 + 최종 지표). 전부 git 추적.
+- **리포트**: 대실험이 끝나면 모든 변형의 결과·분석·최종 결론을
+  **`reports/<실험>.md`** 한 파일로 취합한다.
 
 현재까지의 리포트:
 
-| run | 내용 |
+| 리포트 | 내용 |
 |---|---|
-| [`runs/mlp_baseline_dropout0/report.md`](runs/mlp_baseline_dropout0/report.md) | **확정 baseline** (Task 4) — MLP 대조군 |
-| [`runs/mlp_baseline_dropout01/report.md`](runs/mlp_baseline_dropout01/report.md) | dropout 0.1 ablation 변형 |
+| [`reports/mlp_baseline.md`](reports/mlp_baseline.md) | **Task 4 baseline 확정** — MLP 대조군 + dropout ablation |
 
 ## 8. 참고자료
 

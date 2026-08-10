@@ -1,8 +1,10 @@
-# Task 4 baseline — 구조 bias 없는 MLP 대조군 (CLAUDE.md 모델·학습 스펙).
+# mlp_baseline 실험 — 확정 baseline (Task 4). 구조 bias 없는 MLP 대조군.
 # holdout 10%(seed 42)는 프로젝트 공통 검증셋 — 이후 모든 실험이 같은 셋으로 비교된다.
 # 입력 표준화는 하지 않는다 — 모델 첫 블록의 norm 층이 그 역할을 겸한다.
+# 결과: holdout MAE 4.599 nm — 취합 리포트 reports/mlp_baseline.md
 seed: 42
-run_name: mlp_baseline
+experiment: mlp_baseline
+run_name: dropout0.0
 
 data:
   val_frac: 0.1

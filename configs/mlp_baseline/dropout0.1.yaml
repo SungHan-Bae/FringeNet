@@ -1,0 +1,27 @@
+# mlp_baseline 실험 — dropout 0.1 ablation 변형. dropout 외에는 dropout0.0.yaml과 동일.
+# 결과: holdout MAE 6.645 nm (dropout 0.0의 4.599 대비 순손실) — reports/mlp_baseline.md
+seed: 42
+experiment: mlp_baseline
+run_name: dropout0.1
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: mlp
+  hidden_dims: [512, 512, 512]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.1
+  residual: false
+  output_bound: false
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000
+  num_folds: 0

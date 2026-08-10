@@ -11,10 +11,14 @@
     (분리 보고가 필요하면 evaluate.py --snap).
 
 사용:
-    python -m src.train --config configs/baseline.yaml
-    python -m src.train --config configs/baseline.yaml --folds 5 --run-name mlp_cv5
-    python -m src.train --config configs/baseline.yaml --subset 20000 --epochs 2 \
-        --run-name smoke   # 스모크 테스트
+    python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
+    python -m src.train --config configs/mlp_baseline/dropout0.0.yaml --folds 5 --run-name cv5
+    python -m src.train --config configs/mlp_baseline/dropout0.0.yaml --subset 20000 \
+        --epochs 2 --run-name smoke   # 스모크 테스트
+
+산출물 구조: runs/<experiment>/<run_name>/{model.pt, train.log, metrics.json}
+(experiment = 대실험 주제, run_name = 변형 이름. 대실험이 끝나면 결과를
+reports/<experiment>.md로 취합한다 — CLAUDE.md 평가 규약.)
 """
 
 from __future__ import annotations
@@ -28,7 +32,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import torch
 import yaml
 from torch import Tensor
@@ -69,20 +72,20 @@ def build_lr_scheduler(
     Args:
         schedule: "cosine" = linear warmup 후 cosine 감쇠(끝에서 0), "none" = 고정 lr.
         warmup_steps: warmup 스텝 수. 첫 스텝이 lr=0이 되지 않도록 (step+1)/warmup을 쓴다.
+            total_steps의 10%를 넘으면 10%로 클램프한다 — subset 스모크처럼 전체 스텝이
+            짧은 실행에서도 같은 config로 돌 수 있게.
         total_steps: 전체 학습 스텝 수 (= 에폭당 스텝 × 에폭).
 
     Raises:
-        ValueError: 모르는 schedule 이름이거나 warmup_steps >= total_steps인 경우.
+        ValueError: 모르는 schedule 이름이거나 warmup_steps < 0인 경우.
     """
     if schedule == "none":
         return None
     if schedule != "cosine":
         raise ValueError(f'lr_schedule은 "cosine" | "none" 이어야 한다 (받은 값: {schedule!r})')
-    if warmup_steps < 0 or warmup_steps >= total_steps:
-        raise ValueError(
-            f"warmup_steps는 [0, total_steps) 범위여야 한다"
-            f" (받은 값: {warmup_steps}, total_steps={total_steps})"
-        )
+    if warmup_steps < 0:
+        raise ValueError(f"warmup_steps는 0 이상이어야 한다 (받은 값: {warmup_steps})")
+    warmup_steps = min(warmup_steps, total_steps // 10)
 
     def factor(step: int) -> float:
         if step < warmup_steps:
@@ -112,8 +115,8 @@ def train_one_model(
             k-fold 모드에서는 해당 fold의 OOF 조각.
         cfg: 전체 config (model/train 섹션 사용).
         seed: 이 모델의 시드 (fold마다 다르게 주면 앙상블 다양성이 생긴다).
-        run_dir: 체크포인트({tag}.pt)·history(history_{tag}.csv)·train.log 저장 위치.
-            history와 로그는 에폭마다 즉시 기록된다 (중단 시에도 남는다).
+        run_dir: 체크포인트({tag}.pt)·train.log 저장 위치.
+            로그는 에폭마다 즉시 기록된다 (중단 시에도 남는다).
         tag: 파일명 태그 ("model" 또는 "fold0" 등).
 
     Returns:
@@ -150,7 +153,6 @@ def train_one_model(
     best_epoch = -1
     best_metrics: dict[str, float] = {}
     best_pred: np.ndarray | None = None
-    history: list[dict[str, float]] = []
     t_start = time.perf_counter()
 
     for epoch in range(1, epochs + 1):
@@ -177,9 +179,6 @@ def train_one_model(
             "lr": optimizer.param_groups[0]["lr"],
             "sec": time.perf_counter() - t_epoch,
         }
-        history.append(row)
-        # 중간에 죽어도 기록이 남도록 history를 에폭마다 덮어쓴다.
-        pd.DataFrame(history).to_csv(run_dir / f"history_{tag}.csv", index=False)
         marker = ""
         if val_metrics["overall"] < best_mae:
             best_mae = val_metrics["overall"]
@@ -271,28 +270,35 @@ def main(argv: list[str] | None = None) -> None:
         seed=seed,
         subset=data_cfg.get("subset"),
     )
-    run_dir = RUNS_DIR / str(cfg["run_name"])
+    experiment = cfg.get("experiment")
+    if not experiment:
+        raise ValueError(
+            'config에 "experiment" 키(대실험 주제)가 필요하다 — runs/<experiment>/<run_name> 구조'
+        )
+    run_dir = RUNS_DIR / str(experiment) / str(cfg["run_name"])
     run_dir.mkdir(parents=True, exist_ok=True)
-    # evaluate.py가 같은 분할을 재현할 수 있도록 CLI 오버라이드가 반영된 config를 남긴다.
-    (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False))
 
     x_hold, y_hold = x[holdout_idx], y[holdout_idx]
     n_folds = int(cfg["train"].get("num_folds", 0))
     mode = "kfold" if n_folds >= 2 else "holdout"
     log_line(
         run_dir,
-        f"run {cfg['run_name']}: 행 {len(x):,} = 학습 {len(train_idx):,}"
+        f"run {experiment}/{cfg['run_name']}: 행 {len(x):,} = 학습 {len(train_idx):,}"
         f" + holdout {len(holdout_idx):,} / mode={mode}"
         + (f" (k={n_folds})" if mode == "kfold" else ""),
     )
 
     metrics: dict[str, Any] = {
+        "experiment": experiment,
         "run_name": cfg["run_name"],
         "seed": seed,
         "mode": mode,
         "rows": {"train": int(len(train_idx)), "holdout": int(len(holdout_idx))},
         "config": cfg,
     }
+    # 시작 시점에 설정 스냅샷을 남긴다 (CLI 오버라이드 반영본 — evaluate.py가 분할 재현에 사용).
+    # 학습이 끝나면 결과를 합쳐 같은 파일을 덮어쓴다. 중단돼도 설정 기록은 남는다.
+    (run_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
 
     if mode == "holdout":
         result = train_one_model(
@@ -346,7 +352,7 @@ def main(argv: list[str] | None = None) -> None:
         log_line(run_dir, f"제출 파일 생성: python -m src.evaluate --run {run_dir} --submission")
 
     (run_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
-    log_line(run_dir, f"\n산출물: {run_dir}/ (metrics.json, history_*.csv, train.log, *.pt)")
+    log_line(run_dir, f"\n산출물: {run_dir}/ (metrics.json, train.log, *.pt)")
 
 
 if __name__ == "__main__":

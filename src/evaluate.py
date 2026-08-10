@@ -1,9 +1,11 @@
 """평가·추론 — 저장된 run의 체크포인트로 holdout MAE 리포트와 제출 파일을 만든다.
 
 사용:
-    python -m src.evaluate --run runs/mlp_baseline                  # holdout MAE 재계산
-    python -m src.evaluate --run runs/mlp_cv5 --submission          # 앙상블 test 추론 -> csv
-    python -m src.evaluate --run runs/mlp_cv5 --submission --snap   # + 격자 스냅본(분리 보고)
+    python -m src.evaluate --run runs/mlp_baseline/dropout0.0            # holdout MAE 재계산
+    python -m src.evaluate --run runs/mlp_baseline/cv5 --submission      # 앙상블 test 추론 -> csv
+    python -m src.evaluate --run runs/mlp_baseline/cv5 --submission --snap  # + 격자 스냅본
+
+run 디렉토리에는 train.py가 남긴 metrics.json(설정 스냅샷 포함)과 체크포인트(*.pt)가 있어야 한다.
 
 체크포인트가 여러 개면(fold*.pt) 예측 평균 앙상블로 추론한다.
 
@@ -15,13 +17,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
-import yaml
 from torch import nn
 
 from src.data.dataset import LAYER_COLS, RAW_DIR, load_test, prepare_train_arrays
@@ -111,7 +113,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     run_dir = Path(args.run)
-    cfg: dict[str, Any] = yaml.safe_load((run_dir / "config.yaml").read_text())
+    # 학습 시점 설정 스냅샷 — train.py가 metrics.json의 "config" 키에 남긴다.
+    cfg: dict[str, Any] = json.loads((run_dir / "metrics.json").read_text())["config"]
     ckpt_paths = find_checkpoints(run_dir)
     models = [load_model_checkpoint(p) for p in ckpt_paths]
     print(f"run {run_dir.name}: 체크포인트 {len(models)}개 — {[p.name for p in ckpt_paths]}")

@@ -84,10 +84,10 @@ def test_build_submission_frame_rejects_missing_id(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 def test_lr_scheduler_warmup_then_cosine_decay() -> None:
     opt = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1.0)
-    sched = build_lr_scheduler(opt, "cosine", warmup_steps=4, total_steps=10)
+    sched = build_lr_scheduler(opt, "cosine", warmup_steps=4, total_steps=40)
     assert sched is not None
     lrs = []
-    for _ in range(10):
+    for _ in range(40):
         lrs.append(opt.param_groups[0]["lr"])
         opt.step()
         sched.step()
@@ -98,13 +98,21 @@ def test_lr_scheduler_warmup_then_cosine_decay() -> None:
     assert opt.param_groups[0]["lr"] == pytest.approx(0.0)
 
 
+def test_lr_scheduler_warmup_clamped_to_tenth_of_total() -> None:
+    # 전체 스텝이 warmup보다 짧은 스모크 실행 — 죽지 않고 10%로 클램프돼야 한다
+    opt = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1.0)
+    sched = build_lr_scheduler(opt, "cosine", warmup_steps=1000, total_steps=10)
+    assert sched is not None
+    assert opt.param_groups[0]["lr"] == pytest.approx(1.0)  # warmup 1스텝 -> 즉시 최고 lr
+
+
 def test_lr_scheduler_none_and_invalid() -> None:
     opt = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1.0)
     assert build_lr_scheduler(opt, "none", warmup_steps=0, total_steps=10) is None
     with pytest.raises(ValueError):
         build_lr_scheduler(opt, "step", warmup_steps=0, total_steps=10)
     with pytest.raises(ValueError):
-        build_lr_scheduler(opt, "cosine", warmup_steps=10, total_steps=10)
+        build_lr_scheduler(opt, "cosine", warmup_steps=-1, total_steps=10)
 
 
 # ---------------------------------------------------------------------------
@@ -123,8 +131,8 @@ def test_train_one_model_smoke_and_checkpoint_roundtrip(tmp_path: Path) -> None:
     assert np.isfinite(result["val_mae"])
     assert result["val_pred"].shape == (64, 4)
     assert (tmp_path / "model.pt").exists()
-    history = pd.read_csv(tmp_path / "history_model.csv")
-    assert len(history) == 2
+    log_text = (tmp_path / "train.log").read_text()
+    assert log_text.count("epoch") == 2  # 에폭마다 즉시 기록
 
     # 체크포인트 왕복: 복원한 모델이 best 시점 예측을 그대로 재현해야 한다
     model = load_model_checkpoint(tmp_path / "model.pt")
