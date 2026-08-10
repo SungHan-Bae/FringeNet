@@ -1,0 +1,35 @@
+run level1_cnn/flatten-dilated-bound: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] epoch   1/30  train_l1 28.4163  val_mae 17.5380  lr 1.00e-03  12.4s *
+[model] epoch   2/30  train_l1 13.6287  val_mae 11.8251  lr 9.95e-04  12.0s *
+[model] epoch   3/30  train_l1 9.6612  val_mae 8.3741  lr 9.85e-04  12.1s *
+[model] epoch   4/30  train_l1 7.8338  val_mae 7.2648  lr 9.69e-04  12.1s *
+[model] epoch   5/30  train_l1 6.7720  val_mae 6.5091  lr 9.48e-04  12.3s *
+[model] epoch   6/30  train_l1 6.0883  val_mae 5.8858  lr 9.21e-04  12.2s *
+[model] epoch   7/30  train_l1 5.5546  val_mae 5.5052  lr 8.90e-04  12.1s *
+[model] epoch   8/30  train_l1 5.1304  val_mae 5.0197  lr 8.55e-04  12.1s *
+[model] epoch   9/30  train_l1 4.7855  val_mae 4.6865  lr 8.15e-04  12.0s *
+[model] epoch  10/30  train_l1 4.4959  val_mae 4.5523  lr 7.71e-04  12.0s *
+[model] epoch  11/30  train_l1 4.2407  val_mae 4.1335  lr 7.25e-04  12.1s *
+[model] epoch  12/30  train_l1 4.0356  val_mae 4.4695  lr 6.76e-04  12.0s
+[model] epoch  13/30  train_l1 3.8159  val_mae 3.6804  lr 6.25e-04  12.1s *
+[model] epoch  14/30  train_l1 3.6407  val_mae 3.5503  lr 5.72e-04  12.1s *
+[model] epoch  15/30  train_l1 3.4696  val_mae 3.5486  lr 5.19e-04  12.1s *
+[model] epoch  16/30  train_l1 3.3281  val_mae 3.3770  lr 4.65e-04  12.1s *
+[model] epoch  17/30  train_l1 3.1745  val_mae 3.2483  lr 4.12e-04  12.1s *
+[model] epoch  18/30  train_l1 3.0485  val_mae 3.0678  lr 3.60e-04  12.1s *
+[model] epoch  19/30  train_l1 2.9193  val_mae 2.9334  lr 3.09e-04  12.1s *
+[model] epoch  20/30  train_l1 2.7973  val_mae 2.7775  lr 2.61e-04  12.1s *
+[model] epoch  21/30  train_l1 2.6922  val_mae 2.7340  lr 2.15e-04  12.1s *
+[model] epoch  22/30  train_l1 2.5945  val_mae 2.6354  lr 1.73e-04  12.0s *
+[model] epoch  23/30  train_l1 2.5077  val_mae 2.5930  lr 1.34e-04  12.0s *
+[model] epoch  24/30  train_l1 2.4229  val_mae 2.5135  lr 1.00e-04  12.0s *
+[model] epoch  25/30  train_l1 2.3559  val_mae 2.4405  lr 7.02e-05  12.1s *
+[model] epoch  26/30  train_l1 2.3037  val_mae 2.4021  lr 4.53e-05  12.0s *
+[model] epoch  27/30  train_l1 2.2547  val_mae 2.3795  lr 2.56e-05  12.0s *
+[model] epoch  28/30  train_l1 2.2188  val_mae 2.3566  lr 1.15e-05  12.0s *
+[model] epoch  29/30  train_l1 2.1943  val_mae 2.3455  lr 2.87e-06  12.0s *
+[model] epoch  30/30  train_l1 2.1835  val_mae 2.3463  lr 0.00e+00  12.0s
+
+[model] holdout MAE 2.3455 nm  (layer_1=1.594  layer_2=2.961  layer_3=2.730  layer_4=2.096) (best epoch 29)
+
+산출물: /content/FringeNet/runs/level1_cnn/flatten-dilated-bound/ (metrics.json, train.log, model.pt)
