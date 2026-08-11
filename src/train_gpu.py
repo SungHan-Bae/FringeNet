@@ -136,6 +136,8 @@ def train_one_model_gpu(
     (3) best 갱신 즉시 {tag}.pt 저장, (4) 매 에폭 resume.pt 저장(+미러)로 세션 유실 대비.
 
     Args:
+        x_train: (N, 226) float32 반사율. y_train: (N, 4) float32 두께 [nm].
+        x_val: (M, 226) float32 holdout 반사율. y_val: (M, 4) float32 두께 [nm].
         mirror_dir: 지정하면 train.log를 매 에폭, resume.pt를 mirror_resume_every
             에폭마다, {tag}.pt를 best 갱신 에폭마다 이 디렉토리에 복사한다. 시작 시
             로컬에 resume.pt가 없고 미러에 있으면 미러에서 복원해 이어 달린다.
