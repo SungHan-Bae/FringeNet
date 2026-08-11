@@ -202,8 +202,12 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
       확인 덕에 "백색 + 크기 σ" 기준의 판별력이 좋다.)
     - (b) "스무딩 후 비교"는 채택하지 않음 — 노이즈와 함께 무늬 곡률도 뭉개져 판별력이 떨어진다.
     실패 시 fallback: 지도학습 d→R forward emulator(NN)를 동결 디코더로 사용하고, 실패 사실을 README에 기록.
-  - Stage B `src/train.py --physics`: `L = MAE(d_hat, d) + beta * L1(R_dec(d_hat), R_obs)`,
+  - Stage B (구현: `src/train_gpu.py`의 config `train.physics` 블록 + `src/physics/decoder.py`
+    동결 TMMDecoder): `L = MAE(d_hat, d) + beta * L1(R_dec(d_hat), R_obs)`,
     beta 워밍업 스케줄. ablation: beta=0 vs beta>0.
+    **확정 (2026-08-11, reports/stage_b.md): 물리 손실은 유해(β 단조), 물리 역산
+    refinement는 −79% (beta0 2.3455 → 0.4877 nm). CNN = 분지 선택, TMM = 분지 내
+    정밀 피팅이라는 역할 분담이 결론. 물리 잔차 = 라벨 없는 신뢰도 지표.**
 - 평가: 전체/층별 MAE, 학습곡선, TMM 재구성 오차 히스토그램(신뢰도 지표), 두께 구간별 오차 분석.
 
 ## 평가 규약 (데이터가 시뮬레이션 격자라서 생기는 함정)
@@ -271,7 +275,13 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   f_j = 2n_j(λ)/λ + SiO₂ 게이지로 λ_c 채널별 닫힌형 해 (λ = 284~793 nm 내림차순)
   → 매끈 피팅 → 채널별 공동 미세조정 2-phase. Stage B 디코더 =
   runs/stage_a/sio2-freeze-refine/model.pt, 2026-08-11.)
-- [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석.
+- [x] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석.
+  (완료 — reports/stage_b.md. **물리 손실은 β에 단조 유해**(+3%@30 ~ +54%@300, 대조군
+  beta0 = 2.3455가 level1 재현) — 전수 라벨이라 정보 무추가 + 민감도 재가중 + 노이즈
+  바닥 간섭. 역산 실험이 "타깃 편향" 가설 기각: 물리 손실의 최적해는 참값 ±0.359 nm.
+  **물리의 기여는 추론에서**: 동결 TMM 역산 refinement로 **0.4877 nm** (−79%, 213M 상한
+  0.3955에 0.09 nm 차). 물리 잔차 = 라벨 없는 신뢰도 지표(ρ 0.69, D10/D1 7.6×).
+  진단 재현: scripts/diagnose_stage_b.py. 2026-08-11.)
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신.
 
 ## 하지 말 것

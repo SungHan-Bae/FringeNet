@@ -325,6 +325,30 @@ Task 7 직행.
 
 ---
 
+## 2026-08-11 (화) — Task 7 종결: β ablation 결과 + 물리 역산 발견
+
+취합 리포트: **[reports/stage_b.md](../reports/stage_b.md)**, 수치·그림은
+`scripts/diagnose_stage_b.py` 산출([reports/stage_b_metrics.md](../reports/stage_b_metrics.md)).
+Colab 라운드 1 (4 runs × 30ep, T4 ~33분) 완주 — physics 경로 첫 GPU 실전, 세션 유실 없음.
+
+- **β ablation: 물리 손실은 단조 유해.** beta0 **2.3455**(level1 2.346 재현 — 기준점 성립)
+  → β30 2.4251(+3.4%) → β100 2.7737(+18%) → β300 3.6218(+54%). train_l1도 같이
+  나빠짐 → 일반화가 아니라 최적화 간섭. 열화는 얇은 두께(10~30 nm, 민감도 최저 구간)에
+  집중 — 물리 gradient의 민감도 재가중이 오차 큰 곳의 학습을 억누른다는 방향과 일치.
+- **핵심 발견 — 물리 역산 refinement**: 진단 스크립트의 역산 실험(행별 Adam, 라벨
+  미사용)이 "타깃 편향" 가설을 기각(참값 초기화 역산 = 참값 ±**0.359 nm**)했고, 그
+  부산물로 **beta0 예측 초기화 역산 = holdout 전체 0.4877 nm (−79%)**를 얻었다.
+  0.66M CNN + 물리가 213M 상한(0.3955)에 0.09 nm 차 — 격차 1.95 nm의 95.3% 회수.
+  전형 행은 median 0.281 nm, 평균은 0.77% 오분지 꼬리가 끌어올린다.
+  역할 분담: CNN 전역 분지 선택 + TMM 분지 내 피팅.
+- **신뢰도 지표(Task 7 목표 2)**: 행별 물리 잔차 ↔ 실제 오차 Spearman 0.69,
+  잔차 D10 평균 오차 6.54 vs D1 0.86 nm — 라벨 없는 오차 선별 실용성 확인.
+- **부수 확인**: layer_4 40~60 nm 사각 구간 실재(1.31×, 백로그 항목 종결). 물리 잔차
+  바닥 0.00788 (E|ε|=0.0075 + 디코더 오차 — EDA·Stage A 수치와 정합).
+- 채널 가중 ablation·β 학습 변형(잔차 클리핑 등)은 역산이 상한을 이미 보여줘 보류.
+
+---
+
 ## 확정 수치 (이후 작업의 기준선)
 
 | 항목 | 값 | 근거 |
@@ -334,6 +358,7 @@ Task 7 직행.
 | baseline | holdout MAE **4.599 nm** (MLP 512×3, dropout 0, bare regression) | [reports/mlp_baseline.md](../reports/mlp_baseline.md) |
 | Level 1 확정 (Level 2 백본) | holdout MAE **2.346 nm** (flatten-dilated-bound 1D CNN) | [reports/level1_cnn.md](../reports/level1_cnn.md) |
 | Stage A 확정 (Stage B 디코더) | 재구성 RMSE **0.00929 (1.07σ)** — 게이트 통과, TMM 채택. λ 284–793 nm 내림차순 | [reports/stage_a.md](../reports/stage_a.md) |
+| Stage B 확정 (Task 7) | 물리 손실 β 단조 유해 / **역산 refinement 0.4877 nm** (beta0 2.3455에서 −79%, 213M 상한 0.3955) / 신뢰도 지표 ρ 0.69 | [reports/stage_b.md](../reports/stage_b.md) |
 | 층별 최소 SNR | 10.3 (layer_2) — 사각지대 없음 | eda_notes §2 |
 | 강건성 주입 노이즈 | 균등 ±0.015 기본, "기존 노이즈 위 추가분"으로 표기 | eda_notes §4 |
 
@@ -347,9 +372,9 @@ Task 7 직행.
 - [x] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지 (게이지: SiO₂ Cauchy freeze)
   — **게이트 통과, TMM 채택** ([reports/stage_a.md](../reports/stage_a.md)). 재구성
   RMSE **0.00929 (1.07σ)**, λ = 284–793 nm 내림차순 닫힌형 식별. 2026-08-11.
-- [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석
-  — 08-11 착수(브랜치 `task7-stage-b`): 디코더·physics 학습 경로·configs(β 0/30/100/300)·
-  노트북 구현 완료, **Colab 라운드 1 실행 대기**
+- [x] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석
+  — **종결** ([reports/stage_b.md](../reports/stage_b.md)). 물리 손실 β 단조 유해,
+  **물리 역산 refinement 0.4877 nm** (−79%), 신뢰도 지표 ρ 0.69. 2026-08-11.
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신
 
 백로그 외 열린 항목:
@@ -370,5 +395,11 @@ Task 7 직행.
 - [ ] 리포트 진단 수치의 재현 스크립트를 scripts/에 보존 — 기존 진단(상관·구간별
   MAE·bound 분해)은 scratchpad 산출로 유실 (08-11 리뷰 지적, 이후 실험부터 적용)
 - [ ] holdout과 분리된 best-epoch 선택용 split 도입 여부 (현재는 문서 명시로 처리)
-- [ ] 물리 손실 채널 가중 ablation (대역 오른쪽 정보량 3배 — 기본은 균등 가중)
-- [ ] layer_4 40~60 nm 민감도 저하 구간의 오차 확인 (두께 구간별 오차 분석 시)
+- [ ] ~~물리 손실 채널 가중 ablation~~ — **보류** (08-11 stage_b 결론: 물리 손실 자체가
+  유해 + 역산이 물리 상한 0.36 nm을 이미 시연 — 가중 튜닝의 기대 이득 없음)
+- [x] layer_4 40~60 nm 민감도 저하 구간의 오차 확인 — **실재 확인** (beta0에서 1.31×,
+  stage_b.md §분석 4). 2026-08-11.
+- [ ] 역산 refinement의 0.77% 오분지 꼬리 축소 (다중 초기화·잔차 큰 행 재시도) —
+  Task 8 전 선택 항목, 우선순위 중
+- [ ] split 3종(held-out 두께 값·격자 밖 합성셋) + 노이즈 강건성 평가 — 평가 규약의
+  고정 항목, refinement 포함 여부 결정 필요 (Task 8 전)
