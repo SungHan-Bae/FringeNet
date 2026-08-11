@@ -222,6 +222,34 @@
   동작한 것. 결과 불변(RNG 복원으로 동일 궤적 재계산), 손실은 재계산 ~20분 —
   대용량 모델에서 미러 지연은 정상 열화로 수용.
 
+## 2026-08-11 (화) — Task 6 완료: Stage A 캘리브레이션 게이트 통과 (strong baseline과 병렬)
+
+취합 리포트: **[reports/stage_a.md](../reports/stage_a.md)** (반복 이력·판정 상세·한계),
+게이트 수치 [reports/stage_a_gate.md](../reports/stage_a_gate.md) (스크립트 산출).
+브랜치 `task6-stage-a`. 요약과 그날의 발견만 여기 남긴다.
+
+- **판정: 게이트 통과, TMM 물리 디코더 채택.** 진단 20,000행(피팅과 분리) 재구성
+  RMSE **0.00929** (기준 0.0105 = 1.2σ, σ의 1.07배). 잔차는 두께·채널에 평평, 분포는
+  균등형 노이즈와 일치. 유일한 잔여 신호는 lag-1 자기상관 +0.127 = 매끈한 모델 오차
+  RMS ~0.0033 (σ의 38%) — 한계로 기록하고 채택.
+- **핵심 방법 발견 — 두께축 주파수 식별** (`identify_initial_grid`): 처음 시도한
+  "λ 범위 후보 16개 × 짧은 Adam 피팅" 초기화는 전 후보가 잘못된 fringe 차수 분지로
+  가서 본 피팅이 RMSE ~0.12에서 정체했다 (진단 그림에서 재구성 무늬 수 자체가 부족).
+  λ축 정렬의 비볼록성을 우회하는 해법: 전수 격자의 조건부 평균 E[R|d_j]가 두께축에서
+  f_j = 2n_j(λ)/λ로 진동 → SiO₂ 게이지로 λ_c가 채널별 **닫힌형**으로 풀린다.
+  층2·4 독립 추정 일치(중앙값 0.00 nm)·n_SiN 문헌 2.2% 근접이 자체 검증.
+  **λ = 284–793 nm 내림차순** — EDA "오른쪽 끝 신호 3배"와 정합.
+- **반복 3회**: 0.12 정체(후보 탐색) → 0.01618(주파수 식별; E1 부근 식별 실패 채널에
+  오차 집중) → 0.01254(신뢰도 마스크 보간) → **0.00929**(phase 2 채널별 공동
+  미세조정). phase 2 근거는 채널별 자유 TMM 진단 — 하한 0.0093 확인, 단일 자유도
+  절제는 효과 없음(결합 보정 필요).
+- **부수 확인**: 조건부 평균 식별은 표본 크기에 민감 — 5만 행(bin ~1.7천)은 흔들리고
+  holdout 제외 train 전체(bin ~2.4만)가 필요 (합성 실험으로 확인, 테스트 고정).
+  Si n(λ)의 E1 임계점(~370 nm) 피크가 문헌보다 뾰족하게 복원됨 — 실제 임계점 모양.
+  Si k(λ > 450 nm)는 약식별(민감도 O(k) 소멸) — 물성 주장에 쓰지 말 것.
+- 세션 유실 대비 계약이 로컬에서도 실전 작동: phase 2가 세션 종료로 step 1500에서
+  중단 → resume으로 무중단과 동일 궤적 완주.
+
 ---
 
 ## 확정 수치 (이후 작업의 기준선)
@@ -232,6 +260,7 @@
 | Stage A 게이트 | RMSE < 1.2σ ≈ 0.0105 **+** 잔차 백색성 (둘 다) | 08-09 결정 (`34b7072`) |
 | baseline | holdout MAE **4.599 nm** (MLP 512×3, dropout 0, bare regression) | [reports/mlp_baseline.md](../reports/mlp_baseline.md) |
 | Level 1 확정 (Level 2 백본) | holdout MAE **2.346 nm** (flatten-dilated-bound 1D CNN) | [reports/level1_cnn.md](../reports/level1_cnn.md) |
+| Stage A 확정 (Stage B 디코더) | 재구성 RMSE **0.00929 (1.07σ)** — 게이트 통과, TMM 채택. λ 284–793 nm 내림차순 | [reports/stage_a.md](../reports/stage_a.md) |
 | 층별 최소 SNR | 10.3 (layer_2) — 사각지대 없음 | eda_notes §2 |
 | 강건성 주입 노이즈 | 균등 ±0.015 기본, "기존 노이즈 위 추가분"으로 표기 | eda_notes §4 |
 
@@ -242,7 +271,9 @@
 - [x] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off 비교표
   — 전 축 완료 ([reports/level1_cnn.md](../reports/level1_cnn.md)). 확정:
   **flatten-dilated-bound 2.346 nm** (baseline −49%). 2026-08-11 라운드 3 종결.
-- [ ] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지 (게이지: SiO₂ Cauchy freeze)
+- [x] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지 (게이지: SiO₂ Cauchy freeze)
+  — **게이트 통과, TMM 채택** ([reports/stage_a.md](../reports/stage_a.md)). 재구성
+  RMSE **0.00929 (1.07σ)**, λ = 284–793 nm 내림차순 닫힌형 식별. 2026-08-11.
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신
 

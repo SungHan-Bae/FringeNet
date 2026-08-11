@@ -21,4 +21,5 @@
 | 리포트 | 내용 |
 |---|---|
 | [mlp_baseline.md](../reports/mlp_baseline.md) | **Task 4 baseline 확정** — MLP 대조군 + dropout ablation, holdout MAE 4.599 nm |
-| [level1_cnn.md](../reports/level1_cnn.md) | **Task 5 Level 1 구조 ablation** — CNN 5변형(셔플 대조군·flatten·dilated), **flatten-dilated 2.931 nm (−36%)**. 수용영역+위치 보존이 결합돼야 conv가 유효 |
+| [level1_cnn.md](../reports/level1_cnn.md) | **Task 5 Level 1 구조 ablation** — CNN 6변형(셔플 대조군·flatten·dilated·bound), **flatten-dilated-bound 2.346 nm (−49%)**. 수용영역+위치 보존이 결합돼야 conv가 유효, bound는 격자 끝 오차 제거 |
+| [stage_a.md](../reports/stage_a.md) | **Task 6 Stage A 캘리브레이션** — 두께축 주파수 식별(닫힌형 λ 복원) + 2-phase 피팅, 재구성 RMSE **0.00929 (1.07σ) — 게이트 통과, TMM 물리 디코더 채택**. λ = 284–793 nm 내림차순, Si E1 임계점 복원 |
