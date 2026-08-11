@@ -147,6 +147,7 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 | Airy 대조 (단층) | 해석해 r=(r₀₁+r₁₂e^{−2iδ})/(1+r₀₁r₁₂e^{−2iδ})와 일치 |
 | 미분가능성 | dR/dd가 유한차분과 일치 (autograd 검증) |
 | 흡수 기판 | 복소 n_s에서 R<1, NaN/Inf 없음 |
+| 층 순서 고정 (비대칭 2층) | 재귀 프레넬 해석해와 일치 — 적층 순서 반전을 검출 (명세 6종이 순서를 고정하지 못해 보강한 7번째) |
 
 ### 3.4 부산물 — 계측 신뢰도 지표
 
@@ -192,12 +193,16 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 ├── configs/                    # 실험 설정 — runs/와 같은 2단 구조 (§6)
 │   └── <실험>/
 │       └── <변형>.yaml         #   예: mlp_baseline/dropout0.0.yaml
+├── notebooks/                  # Colab GPU 학습 드라이버 — 라운드별 1개, 완료 후 수정 금지 (실행 로그 보존)
+│   └── <대실험>/
+│       └── roundN_<내용>.ipynb #   예: level1_cnn/round3_bound.ipynb
 ├── data/                       # 대회 데이터 — 파일은 git 미포함, 구조만 .gitkeep (§2)
 │   ├── raw/                    #   데이콘 원본 (사용자가 직접 배치)
 │   └── cache/                  #   parquet 캐시 (최초 실행 시 자동 생성)
 ├── runs/                       # 실행 산출물 — git 추적 (§6)
 │   └── <실험>/
 │       └── <변형>/             #   model.pt · train.log · metrics.json 세 가지만
+│                               #   (GitHub 100MB 한도 초과 model.pt만 예외 — Drive 미러 보관, §6)
 ├── reports/
 │   ├── <실험>.md               # 대실험별 취합 리포트 — 결과·분석·결론 (§6)
 │   ├── eda_metrics.md          # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
@@ -212,15 +217,19 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   ├── models/                 # 모델 레지스트리·팩토리 (__init__.py의 build_model)
 │   │   ├── mlp.py              #   baseline MLP — 구조 bias 없는 대조군 (Task 4 확정)
 │   │   ├── heads.py            #   공용 출력단 (ThicknessBound 등)
-│   │   └── cnn1d.py            #   (Task 5 예정)
+│   │   ├── cnn.py              #   Level 1 1D CNN — flatten·dilated·bound 플래그 (Task 5 확정)
+│   │   └── winner_skip_mlp.py  #   1등 솔루션 213M skip-MLP 충실 재현 (상한 기준선)
+│   ├── utils/seed.py           # 시드 고정 유틸
 │   ├── calibrate.py            # Stage A (Task 6 예정)
-│   ├── train.py                # baseline/k-fold 학습 (Stage B 물리 손실은 Task 7 예정)
+│   ├── train.py                # baseline/k-fold 학습 — CPU 경로 (Stage B 물리 손실은 Task 7 예정)
+│   ├── train_gpu.py            # GPU(Colab) 학습 경로 — holdout 전용, 세션 유실 대비 resume+Drive 미러
 │   └── evaluate.py             # holdout 재평가·제출 파일 생성
 └── tests/
     ├── test_tmm.py             # §3.3 물리 단위 테스트
     ├── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
     ├── test_models.py          # 모델 계약(shape)·bound·미분·재현성·팩토리
-    └── test_train.py           # 지표·제출 파일 정렬·LR 스케줄·학습 스모크
+    ├── test_train.py           # 지표·제출 파일 정렬·LR 스케줄·학습 스모크
+    └── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·완료 run 스킵
 ```
 
 ## 5. 시작하기
@@ -232,7 +241,14 @@ pip install -r requirements.txt
 pytest -q                          # 물리 단위 테스트 + 로더 테스트
 python scripts/verify_data.py      # 데이터 계약 검증 (통과 시 종료 코드 0)
 python scripts/eda.py              # EDA 그림 3종 + 측정값 표
-python -m src.train --config configs/mlp_baseline/dropout0.0.yaml  # baseline 학습
+python -m src.train --config configs/mlp_baseline/dropout0.0.yaml  # baseline 학습 (CPU)
+
+# GPU가 필요한 학습(CNN 이후)은 Colab에서 노트북 Run-All로 돌린다:
+#   notebooks/<대실험>/roundN_<내용>.ipynb  (예: level1_cnn/round3_bound.ipynb)
+# 로컬 CPU 스모크:
+python -m src.train_gpu --config configs/level1_cnn/flatten-dilated-bound.yaml \
+  --device cpu --subset 20000 --epochs 2 --run-name smoke --no-resume
+
 python -m src.evaluate --run runs/mlp_baseline/dropout0.0  # holdout 재평가 (--submission 으로 제출 csv)
 ```
 
@@ -249,7 +265,7 @@ python -m src.evaluate --run runs/mlp_baseline/dropout0.0  # holdout 재평가 (
 |---|---|---|
 | [`docs/week_N.md`](docs/) | **주차별 실험 노트** — 날짜별 진행·결과·발견·결정 + TODO 관리 | 작업할 때마다 |
 | `reports/<실험>.md` | 대실험별 취합 리포트 — 변형 비교·분석·최종 결론 | 대실험 종료 시 |
-| `runs/<실험>/<변형>/` | 실행 산출물 — `model.pt`(best 체크포인트) · `train.log`(에폭별 실시간 로그) · `metrics.json`(설정 스냅샷 + 최종 지표) | 학습 실행 시 (전부 git 추적) |
+| `runs/<실험>/<변형>/` | 실행 산출물 — `model.pt`(best 체크포인트) · `train.log`(에폭별 실시간 로그) · `metrics.json`(설정 스냅샷 + 최종 지표) | 학습 실행 시 (git 추적. 단 GitHub 100MB 한도 초과 `model.pt`는 Drive 미러 보관 — `.gitignore`에 경로 명시) |
 | `configs/<실험>/<변형>.yaml` | 실험 설정 — `experiment`·`run_name` 키 필수 | 실험 설계 시 |
 
 - 실험은 **대실험(experiment) / 변형(run)** 2단 구조. 변형 이름은 번호가 아니라
