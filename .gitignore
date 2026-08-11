@@ -6,6 +6,9 @@
 !/data/*/
 !/data/**/.gitkeep
 # runs/는 전체 추적한다 (model.pt, train.log, metrics.json — 대실험별 취합 리포트는 reports/)
+# 예외: GitHub 파일당 100MB 한도를 넘는 체크포인트는 Drive 미러에 보관하고 git에서 제외
+# (CLAUDE.md 실험 관리 구조 참조. 실사례: 213M 파라미터 winner 재현 model.pt = 813MB)
+/runs/strong_baseline/winner-repro-asis/model.pt
 
 # --- 파이썬 환경 ---
 .venv/
