@@ -1,0 +1,57 @@
+{
+  "experiment": "strong_baseline",
+  "run_name": "winner-repro-asis",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "strong_baseline",
+    "run_name": "winner-repro-asis",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "winner_skip_mlp",
+      "up_dims": [
+        2000,
+        4000,
+        7000,
+        10000
+      ],
+      "head_dim": 300
+    },
+    "train": {
+      "epochs": 100,
+      "batch_size": 2048,
+      "lr": 0.001,
+      "weight_decay": 0.0,
+      "adam_eps": 1e-06,
+      "lr_schedule": "cosine",
+      "warmup_steps": 2000,
+      "shuffle": "once",
+      "eval_mode_after_first_epoch": true,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/strong_baseline/winner-repro-asis/model.pt",
+    "best_epoch": 100,
+    "val_mae": 0.3954998850822449,
+    "val_mae_per_layer": {
+      "layer_1": 0.3283921778202057,
+      "layer_2": 0.5536766648292542,
+      "layer_3": 0.37193620204925537,
+      "layer_4": 0.32799452543258667,
+      "overall": 0.3954998850822449
+    },
+    "wall_sec": 14788.047168801
+  }
+}
