@@ -58,7 +58,9 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
     참 스펙트럼 위에 노이즈가 얹힌 것.
   - 노이즈 크기 → **σ ≈ 0.0087~0.0088**. 서로 독립인 추정 **두 가지**가 일치한다:
     (1) 2차 차분 `Var(y[i-1]-2y[i]+y[i+1]) ≈ 6σ²` — 곡률이 섞여 **상한**이라
-    무작위 표본 0.009122, 곡률이 적은 평평한 행만 보면 0.008838으로 내려간다.
+    무작위 표본 0.009122, 곡률이 적은 평평한 행만 보면 0.008838으로 내려간다
+    (verify_data.py 2만 행 표본. eda.py 10만 행 표본은 0.009120/0.008841 —
+    아래 EDA 표. 두 계열의 차이는 표본 오차다).
     (2) 음수 하한을 균등 노이즈 ±a로 본 a/√3 = **0.008728** (독립).
     음수값이 -0.0151에서 잘리고 1퍼센타일이 -0.0135인 것도 가우시안보다 유계 노이즈에 부합.
   - **주의**: 고주파 잔차 `y[i]-(y[i-1]+y[i+1])/2` 추정은 2차 차분의 -1/2배라
@@ -134,13 +136,22 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   직전 노트북을 복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다.
   **복사 전 원본이 디스크 최신인지 확인** — IDE의 옛 버퍼가 저장되면 커밋된 셀 fix를
   되돌린다 (실사례: `dbefab4`가 `38add7d`의 push 셀 fix를 덮어씀 → round3에 재이식).
+  level1_cnn/round2는 그 회귀 상태 그대로 보존 중이므로 **복사 원본으로 쓰지 말 것** —
+  필수 셀 규약 4종을 모두 충족하는 복사 원본은 strong_baseline/round1.
   GPU 학습 노트북 필수 셀 규약:
   1. Drive 마운트는 항상 `drive.mount(..., force_remount=True)` — 이전 세션의 stale
      마운트를 배제하고 최신 상태로 다시 마운트한다
   2. push 셀 PAT는 정적 소스에서 자동 로드 (env GITHUB_PAT → Colab Secrets →
      Drive `FringeNet/secrets/github_pat.txt` → 없을 때만 프롬프트) — Run-All 무정지
   3. 런타임 자동 반납의 취소 대기 sleep은 **5초** (60초 등 긴 대기 금지 — 유휴 과금)
-- 커밋 메시지: `feat|fix|refactor|test|docs|exp: ...`
+  4. **push 후 Drive 체크포인트 무결성 검증, 통과해야만 런타임 반납**:
+     `drive.flush_and_unmount()`(대기 업로드 완료 보장) → 재마운트 → **미러의 model.pt를
+     다시 로드해 holdout 재추론 → 기록된 val MAE 재현 확인**. Drive FUSE는 비동기
+     업로드라 세션이 죽으면 대용량 파일이 구버전으로 남을 수 있고(실사례: 3.4GB
+     resume.pt가 5에폭 뒤처짐), git 미추적 대형 model.pt는 Drive가 유일본이므로
+     내용 검증 없이 반납하면 안 된다.
+- 커밋 메시지: `feat|fix|refactor|test|docs|exp: ...` (GitHub 자동 머지 커밋은 예외).
+  Colab VM 커밋은 UTC로 찍힌다 — 문서의 날짜(KST)와 대조할 때는 `git log --date=local`.
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
 
@@ -152,6 +163,8 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
 4. Airy 대조: 단층 TMM ↔ 해석해 r=(r01+r12·e^{−2iδ})/(1+r01·r12·e^{−2iδ}) allclose.
 5. 미분가능성: float64에서 dR/dd를 유한차분과 비교 (rtol 1e-4).
 6. 흡수 기판: 복소 ns에서 0 ≤ R < 1, NaN/Inf 없음.
+7. 층 순서 고정 (보강): 비대칭 2층 스택을 재귀 프레넬 공식과 대조 — 1~6은 적층
+   순서를 뒤집어도 전부 통과해 순서를 고정하지 못한다 (Task 1에서 발견·보강).
 
 ## 모델·학습 스펙 요약
 
@@ -164,6 +177,10 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   셔플 대조군보다도 나쁘다. sigmoid bound는 격자 끝 오차를 지워 추가 −20%(MLP 때와
   반대 결론 — 강한 백본에서는 범위 밖 초과분이 남은 오차를 지배). Level 2 백본 =
   flatten-dilated-bound.**
+- 상한 기준선 (2026-08-11, reports/strong_baseline.md): 리더보드 1등 단일 모델
+  (213.2M skip-MLP)을 원본 프로토콜 그대로 재현 — holdout MAE **0.3955 nm**
+  (수상자 보고 ≈0.42 재현 성공). 0.66M CNN(2.346) 대비 322배 파라미터로 −83%.
+  Task 7 물리 손실의 서사는 "작은 모델 + 물리가 이 격차를 얼마나 좁히나".
 - Level 2:
   - Stage A `src/calibrate.py`: train 서브셋(~5만 행)의 (d_true, R_obs)로 forward 미지수 피팅.
     파라미터화 — λ 그리드: `lam = lam_min + cumsum(softplus(u))` (단조);
@@ -209,6 +226,10 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   - 산출물 `runs/<실험>/<변형>/` = **model.pt + train.log + metrics.json 세 가지만**
     (metrics.json이 설정 스냅샷을 겸한다 — 시작 시 기록, 완료 시 결과 포함 덮어씀.
     train.log는 에폭마다 실시간 기록). 전부 git 추적.
+    **예외: GitHub 파일당 100MB 한도를 넘는 model.pt는 git 대신 Drive 미러에 보관**하고
+    .gitignore에 경로를 명시해 제외한다 (실사례: strong_baseline/winner-repro-asis 813MB —
+    push가 pre-receive hook에서 거부된다). 로컬 분석이 필요하면 Drive에서 수동으로
+    내려받는다 (.gitignore 덕에 커밋 위험 없음).
   - 변형 이름은 번호(sub_run_1)가 아니라 **무엇이 다른지 드러나는 서술형**으로
     (예: dropout0.0, layernorm, residual-on).
   - 대실험이 끝나면 모든 변형의 결과·분석·최종 결론을 **`reports/<실험>.md`**로 취합한다.

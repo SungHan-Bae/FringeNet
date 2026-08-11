@@ -1,0 +1,125 @@
+run strong_baseline/winner-repro-asis: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] epoch   1/100  train_l1 154.7556  val_mae 153.7969  lr 1.79e-04  119.4s *
+[model] epoch   2/100  train_l1 60.4080  val_mae 34.6123  lr 3.56e-04  119.6s *
+[model] epoch   3/100  train_l1 14.5209  val_mae 7.3342  lr 5.35e-04  119.3s *
+[model] epoch   4/100  train_l1 5.8409  val_mae 5.2119  lr 7.13e-04  118.6s *
+[model] epoch   5/100  train_l1 4.8457  val_mae 4.3055  lr 8.91e-04  116.8s *
+[model] epoch   6/100  train_l1 4.3926  val_mae 4.2788  lr 1.00e-03  116.9s *
+[model] epoch   7/100  train_l1 3.5720  val_mae 3.0005  lr 9.99e-04  115.9s *
+[model] 미러에서 복원: ['resume.pt', 'train.log', 'model.pt']
+run strong_baseline/winner-repro-asis: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] resume: epoch 2까지 완료 상태에서 재개 (best 34.6123 @ ep 2)
+[model] epoch   3/100  train_l1 14.5209  val_mae 7.3342  lr 5.35e-04  125.6s *
+[model] epoch   4/100  train_l1 5.8409  val_mae 5.2119  lr 7.13e-04  124.9s *
+[model] epoch   5/100  train_l1 4.8457  val_mae 4.3055  lr 8.91e-04  124.3s *
+[model] epoch   6/100  train_l1 4.3926  val_mae 4.2788  lr 1.00e-03  124.0s *
+[model] epoch   7/100  train_l1 3.5720  val_mae 3.0005  lr 9.99e-04  123.8s *
+[model] epoch   8/100  train_l1 2.7934  val_mae 2.6892  lr 9.98e-04  123.7s *
+[model] epoch   9/100  train_l1 2.6768  val_mae 2.6234  lr 9.97e-04  123.7s *
+[model] epoch  10/100  train_l1 2.5239  val_mae 3.3500  lr 9.95e-04  123.6s
+[model] epoch  11/100  train_l1 2.3398  val_mae 2.3012  lr 9.92e-04  123.3s *
+[model] epoch  12/100  train_l1 2.2831  val_mae 2.2614  lr 9.89e-04  123.4s *
+[model] epoch  13/100  train_l1 2.1314  val_mae 2.2913  lr 9.85e-04  123.1s
+[model] epoch  14/100  train_l1 2.1477  val_mae 2.2227  lr 9.81e-04  123.3s *
+[model] epoch  15/100  train_l1 2.0121  val_mae 1.7012  lr 9.76e-04  122.8s *
+run strong_baseline/winner-repro-asis: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] resume: epoch 15까지 완료 상태에서 재개 (best 1.7012 @ ep 15)
+[model] epoch  16/100  train_l1 1.8624  val_mae 1.8223  lr 9.70e-04  122.8s
+[model] epoch  17/100  train_l1 1.7824  val_mae 1.9311  lr 9.65e-04  122.9s
+[model] epoch  18/100  train_l1 1.8737  val_mae 2.1178  lr 9.58e-04  122.9s
+[model] epoch  19/100  train_l1 1.8169  val_mae 2.1819  lr 9.51e-04  123.0s
+[model] epoch  20/100  train_l1 1.8065  val_mae 1.9989  lr 9.44e-04  122.9s
+[model] epoch  21/100  train_l1 1.7179  val_mae 1.7232  lr 9.36e-04  123.0s
+[model] epoch  22/100  train_l1 1.5478  val_mae 1.7674  lr 9.27e-04  123.1s
+[model] epoch  23/100  train_l1 1.5418  val_mae 1.3411  lr 9.19e-04  123.0s *
+[model] epoch  24/100  train_l1 1.5199  val_mae 1.4332  lr 9.09e-04  122.9s
+[model] epoch  25/100  train_l1 1.3797  val_mae 1.4957  lr 9.00e-04  122.9s
+[model] epoch  26/100  train_l1 1.4570  val_mae 1.3411  lr 8.89e-04  122.9s
+[model] epoch  27/100  train_l1 1.3542  val_mae 1.3516  lr 8.79e-04  122.9s
+[model] epoch  28/100  train_l1 1.2274  val_mae 1.2187  lr 8.68e-04  122.9s *
+[model] epoch  29/100  train_l1 1.3052  val_mae 1.4659  lr 8.56e-04  122.9s
+[model] epoch  30/100  train_l1 1.3095  val_mae 1.2059  lr 8.44e-04  122.8s *
+[model] epoch  31/100  train_l1 1.2326  val_mae 1.2432  lr 8.32e-04  122.4s
+[model] epoch  32/100  train_l1 1.2284  val_mae 1.1986  lr 8.19e-04  122.4s *
+[model] epoch  33/100  train_l1 1.1222  val_mae 1.0789  lr 8.06e-04  122.3s *
+[model] epoch  34/100  train_l1 1.0894  val_mae 1.1913  lr 7.93e-04  122.4s
+[model] epoch  35/100  train_l1 1.0503  val_mae 1.0588  lr 7.79e-04  122.4s *
+[model] epoch  36/100  train_l1 1.0615  val_mae 1.0394  lr 7.65e-04  122.4s *
+[model] epoch  37/100  train_l1 0.9732  val_mae 1.0507  lr 7.51e-04  122.4s
+[model] epoch  38/100  train_l1 1.0041  val_mae 0.8994  lr 7.37e-04  122.4s *
+[model] epoch  39/100  train_l1 0.8871  val_mae 0.9051  lr 7.22e-04  122.5s
+[model] epoch  40/100  train_l1 0.9644  val_mae 1.1071  lr 7.07e-04  122.5s
+[model] epoch  41/100  train_l1 0.9791  val_mae 1.0134  lr 6.92e-04  122.5s
+[model] epoch  42/100  train_l1 0.9404  val_mae 0.9265  lr 6.76e-04  122.6s
+[model] epoch  43/100  train_l1 0.7326  val_mae 0.8346  lr 6.60e-04  122.6s *
+[model] epoch  44/100  train_l1 0.7933  val_mae 0.9222  lr 6.45e-04  122.7s
+[model] epoch  45/100  train_l1 0.9174  val_mae 1.0055  lr 6.29e-04  122.8s
+[model] epoch  46/100  train_l1 0.8624  val_mae 0.8207  lr 6.12e-04  122.8s *
+[model] epoch  47/100  train_l1 0.7541  val_mae 0.7970  lr 5.96e-04  122.7s *
+[model] epoch  48/100  train_l1 0.8023  val_mae 0.8632  lr 5.80e-04  122.8s
+[model] epoch  49/100  train_l1 0.6876  val_mae 0.7423  lr 5.63e-04  122.9s *
+[model] epoch  50/100  train_l1 0.6862  val_mae 0.9744  lr 5.47e-04  122.8s
+[model] epoch  51/100  train_l1 0.7706  val_mae 0.8963  lr 5.30e-04  122.8s
+[model] 미러에서 복원: ['resume.pt', 'train.log', 'model.pt']
+[model] resume: epoch 50까지 완료 상태에서 재개 (best 0.7423 @ ep 49)
+[model] epoch  51/100  train_l1 0.7706  val_mae 0.8963  lr 5.30e-04  120.8s
+[model] epoch  52/100  train_l1 0.7222  val_mae 0.8826  lr 5.13e-04  122.0s
+[model] epoch  53/100  train_l1 0.7463  val_mae 0.8824  lr 4.97e-04  122.1s
+[model] epoch  54/100  train_l1 0.7029  val_mae 0.6892  lr 4.80e-04  122.2s *
+[model] epoch  55/100  train_l1 0.5475  val_mae 0.6267  lr 4.64e-04  122.1s *
+[model] epoch  56/100  train_l1 0.5087  val_mae 0.6677  lr 4.47e-04  122.1s
+[model] epoch  57/100  train_l1 0.6172  val_mae 0.7871  lr 4.30e-04  122.1s
+[model] epoch  58/100  train_l1 0.6021  val_mae 0.7284  lr 4.14e-04  121.9s
+[model] epoch  59/100  train_l1 0.5991  val_mae 0.7249  lr 3.98e-04  121.7s
+[model] epoch  60/100  train_l1 0.5844  val_mae 0.7906  lr 3.81e-04  121.6s
+[model] epoch  61/100  train_l1 0.5889  val_mae 0.6642  lr 3.65e-04  121.7s
+[model] epoch  62/100  train_l1 0.4199  val_mae 0.5914  lr 3.49e-04  121.0s *
+[model] epoch  63/100  train_l1 0.5324  val_mae 0.6442  lr 3.34e-04  121.7s
+[model] epoch  64/100  train_l1 0.5654  val_mae 0.6736  lr 3.18e-04  121.9s
+[model] epoch  65/100  train_l1 0.4864  val_mae 0.5778  lr 3.03e-04  121.8s *
+[model] epoch  66/100  train_l1 0.3649  val_mae 0.5428  lr 2.87e-04  119.5s *
+[model] epoch  67/100  train_l1 0.4624  val_mae 0.6684  lr 2.73e-04  122.0s
+[model] epoch  68/100  train_l1 0.4965  val_mae 0.6420  lr 2.58e-04  122.1s
+[model] epoch  69/100  train_l1 0.4725  val_mae 0.5979  lr 2.43e-04  122.0s
+[model] epoch  70/100  train_l1 0.4437  val_mae 0.5948  lr 2.29e-04  122.0s
+[model] epoch  71/100  train_l1 0.4248  val_mae 0.5845  lr 2.15e-04  122.0s
+[model] epoch  72/100  train_l1 0.4152  val_mae 0.5897  lr 2.02e-04  122.1s
+[model] 미러에서 복원: ['resume.pt', 'train.log', 'model.pt']
+[model] resume: epoch 70까지 완료 상태에서 재개 (best 0.5428 @ ep 66)
+[model] epoch  71/100  train_l1 0.4248  val_mae 0.5845  lr 2.15e-04  116.9s
+[model] epoch  72/100  train_l1 0.4152  val_mae 0.5897  lr 2.02e-04  117.7s
+[model] epoch  73/100  train_l1 0.3976  val_mae 0.5649  lr 1.89e-04  117.8s
+[model] epoch  74/100  train_l1 0.3831  val_mae 0.5432  lr 1.76e-04  117.8s
+[model] epoch  75/100  train_l1 0.3623  val_mae 0.5334  lr 1.63e-04  117.8s *
+[model] epoch  76/100  train_l1 0.3531  val_mae 0.5314  lr 1.51e-04  117.8s *
+[model] epoch  77/100  train_l1 0.3391  val_mae 0.5151  lr 1.40e-04  118.0s *
+[model] epoch  78/100  train_l1 0.3260  val_mae 0.4909  lr 1.28e-04  118.0s *
+[model] epoch  79/100  train_l1 0.3098  val_mae 0.4765  lr 1.17e-04  118.0s *
+[model] epoch  80/100  train_l1 0.2978  val_mae 0.4923  lr 1.07e-04  117.9s
+[model] epoch  81/100  train_l1 0.2876  val_mae 0.5042  lr 9.67e-05  118.0s
+[model] epoch  82/100  train_l1 0.2744  val_mae 0.4796  lr 8.71e-05  117.9s
+[model] epoch  83/100  train_l1 0.2614  val_mae 0.4574  lr 7.79e-05  118.0s *
+[model] epoch  84/100  train_l1 0.2500  val_mae 0.4474  lr 6.92e-05  118.0s *
+[model] epoch  85/100  train_l1 0.2416  val_mae 0.4364  lr 6.10e-05  118.0s *
+[model] epoch  86/100  train_l1 0.2307  val_mae 0.4301  lr 5.33e-05  118.1s *
+[model] epoch  87/100  train_l1 0.2201  val_mae 0.4220  lr 4.61e-05  118.1s *
+[model] epoch  88/100  train_l1 0.2092  val_mae 0.4203  lr 3.94e-05  118.0s *
+[model] epoch  89/100  train_l1 0.1996  val_mae 0.4126  lr 3.31e-05  117.9s *
+[model] epoch  90/100  train_l1 0.1920  val_mae 0.4102  lr 2.74e-05  117.8s *
+[model] epoch  91/100  train_l1 0.1857  val_mae 0.4074  lr 2.23e-05  117.9s *
+[model] epoch  92/100  train_l1 0.1793  val_mae 0.4065  lr 1.76e-05  117.9s *
+[model] epoch  93/100  train_l1 0.1734  val_mae 0.4048  lr 1.35e-05  117.9s *
+[model] epoch  94/100  train_l1 0.1683  val_mae 0.4018  lr 9.94e-06  118.0s *
+[model] epoch  95/100  train_l1 0.1638  val_mae 0.4000  lr 6.91e-06  117.9s *
+[model] epoch  96/100  train_l1 0.1603  val_mae 0.3978  lr 4.43e-06  117.9s *
+[model] epoch  97/100  train_l1 0.1576  val_mae 0.3967  lr 2.49e-06  118.0s *
+[model] epoch  98/100  train_l1 0.1554  val_mae 0.3960  lr 1.11e-06  118.1s *
+[model] 미러에서 복원: ['resume.pt', 'train.log', 'model.pt']
+[model] resume: epoch 95까지 완료 상태에서 재개 (best 0.4000 @ ep 95)
+[model] epoch  96/100  train_l1 0.1603  val_mae 0.3978  lr 4.43e-06  119.6s *
+[model] epoch  97/100  train_l1 0.1576  val_mae 0.3967  lr 2.49e-06  119.5s *
+[model] epoch  98/100  train_l1 0.1554  val_mae 0.3960  lr 1.11e-06  119.6s *
+[model] epoch  99/100  train_l1 0.1539  val_mae 0.3957  lr 2.77e-07  119.7s *
+[model] epoch 100/100  train_l1 0.1529  val_mae 0.3955  lr 0.00e+00  119.8s *
+
+[model] holdout MAE 0.3955 nm  (layer_1=0.328  layer_2=0.554  layer_3=0.372  layer_4=0.328) (best epoch 100)
