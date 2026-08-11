@@ -140,6 +140,12 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   2. push 셀 PAT는 정적 소스에서 자동 로드 (env GITHUB_PAT → Colab Secrets →
      Drive `FringeNet/secrets/github_pat.txt` → 없을 때만 프롬프트) — Run-All 무정지
   3. 런타임 자동 반납의 취소 대기 sleep은 **5초** (60초 등 긴 대기 금지 — 유휴 과금)
+  4. **push 후 Drive 체크포인트 무결성 검증, 통과해야만 런타임 반납**:
+     `drive.flush_and_unmount()`(대기 업로드 완료 보장) → 재마운트 → **미러의 model.pt를
+     다시 로드해 holdout 재추론 → 기록된 val MAE 재현 확인**. Drive FUSE는 비동기
+     업로드라 세션이 죽으면 대용량 파일이 구버전으로 남을 수 있고(실사례: 3.4GB
+     resume.pt가 5에폭 뒤처짐), git 미추적 대형 model.pt는 Drive가 유일본이므로
+     내용 검증 없이 반납하면 안 된다.
 - 커밋 메시지: `feat|fix|refactor|test|docs|exp: ...`
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
@@ -209,6 +215,10 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   - 산출물 `runs/<실험>/<변형>/` = **model.pt + train.log + metrics.json 세 가지만**
     (metrics.json이 설정 스냅샷을 겸한다 — 시작 시 기록, 완료 시 결과 포함 덮어씀.
     train.log는 에폭마다 실시간 기록). 전부 git 추적.
+    **예외: GitHub 파일당 100MB 한도를 넘는 model.pt는 git 대신 Drive 미러에 보관**하고
+    .gitignore에 경로를 명시해 제외한다 (실사례: strong_baseline/winner-repro-asis 813MB —
+    push가 pre-receive hook에서 거부된다). 로컬 분석이 필요하면 Drive에서 수동으로
+    내려받는다 (.gitignore 덕에 커밋 위험 없음).
   - 변형 이름은 번호(sub_run_1)가 아니라 **무엇이 다른지 드러나는 서술형**으로
     (예: dropout0.0, layernorm, residual-on).
   - 대실험이 끝나면 모든 변형의 결과·분석·최종 결론을 **`reports/<실험>.md`**로 취합한다.
