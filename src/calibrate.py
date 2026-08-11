@@ -297,6 +297,18 @@ def identify_initial_grid(
     lam_grid = 0.5 * (lam2 + lam4)
     n_sin = 0.5 * (freqs[0] + freqs[2]) * lam_grid / 2.0
 
+    # 신뢰도 마스크: 층 2·4의 독립 λ 추정이 어긋나는 채널은 주파수 추정 실패로 보고
+    # (실데이터에서 Si E1 임계점 부근 fringe 대비 저하로 소수 채널이 크게 튐 —
+    # 그대로 두면 λ 그리드에 꺾임이 남아 그 채널들의 재구성 오차가 σ의 10배를 넘는다)
+    # λ·n_SiN을 이웃 신뢰 채널에서 선형 보간한다. λ는 채널축에서 매끈하다는 물리
+    # 가정(분광기 그리드)이 근거다.
+    bad = np.abs(lam2 - lam4) > 5.0
+    n_bad = int(bad.sum())
+    if 0 < n_bad <= n_ch - 2:
+        ch = np.arange(n_ch, dtype=np.float64)
+        lam_grid[bad] = np.interp(ch[bad], ch[~bad], lam_grid[~bad])
+        n_sin[bad] = np.interp(ch[bad], ch[~bad], n_sin[~bad])
+
     # 단조 강제: 추정 오차로 국소 요철이 있으면 등화(iso) 대신 누적 최솟값/최댓값으로
     # 살짝 보정한다 (본 피팅의 단조 파라미터화가 요구하는 초기값 조건).
     direction = -1.0 if lam_grid[0] > lam_grid[-1] else 1.0
@@ -316,6 +328,7 @@ def identify_initial_grid(
             np.median(np.abs(n_sin - si3n4_n(lam_grid)) / si3n4_n(lam_grid))
         ),
         "monotone_fixups": int(fix.sum()),
+        "unreliable_channels": n_bad,
     }
     log_line(
         run_dir,
@@ -324,7 +337,7 @@ def identify_initial_grid(
         f"{diagnostics['lam24_dev_median']:.2f} nm (최대 {diagnostics['lam24_dev_max']:.2f}) / "
         f"n_SiN {diagnostics['n_sin_range'][0]:.3f}–{diagnostics['n_sin_range'][1]:.3f} "
         f"(Luke 대비 중앙 상대편차 {diagnostics['n_sin_vs_luke_reldev_median']:.3%}) / "
-        f"단조 보정 {diagnostics['monotone_fixups']}채널",
+        f"불신 채널 보간 {n_bad} / 단조 보정 {diagnostics['monotone_fixups']}채널",
     )
     return {"lam_grid": lam_grid, "n_sin_samples": (lam_grid, n_sin), "diagnostics": diagnostics}
 
