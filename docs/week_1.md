@@ -221,6 +221,16 @@
   버전이 남아 5에폭 뒤에서 재개됐다. resume은 "미러의 최신 완료본" 기준으로 설계대로
   동작한 것. 결과 불변(RNG 복원으로 동일 궤적 재계산), 손실은 재계산 ~20분 —
   대용량 모델에서 미러 지연은 정상 열화로 수용.
+  완화책으로 resume.pt 미러 간격 옵션 `mirror_resume_every`(기본 5) 도입 (`1033c2d`,
+  `b1e418d`) — 로컬 저장은 매 에폭 유지, Drive 업로드 부하만 1/5.
+- **발견 — GitHub 파일당 100MB 한도**: 813MB model.pt push가 pre-receive에서 거부.
+  .gitignore 제외 + 산출물 계약 예외(Drive 미러 보관) + **push 후 Drive 사본 재추론
+  무결성 검증 규약**(노트북 규약 4번) 신설 (`2a599ae`, PR #3).
+- **라운드 1 완료 — 재현 성공 (`64afce1`)**: holdout MAE **0.3955 nm** (보고 0.42와
+  같은 수준, −6%). best ep 100/100, 세션 5회 resume으로 완주 (wall 4.1h). Drive 사본
+  무결성 검증 통과 (재추론 0.3955 = 기록). 층별 서열(L2 최약)은 우리 모델들과 동일 —
+  EDA 민감도 구조 그대로. **0.66M(2.346) vs 213M(0.3955) 격차 확정 — Task 7의 서사
+  기준선.** 취합: [reports/strong_baseline.md](../reports/strong_baseline.md).
 
 ---
 
@@ -248,9 +258,9 @@
 
 백로그 외 열린 항목:
 
-- [ ] **strong baseline (1등 솔루션 원본 재현) — 진행 중 (08-11 라운드 1 준비 완료,
-  Colab 학습 대기)**: 단일 모델 0.42 nm 재현 확인 → `reports/strong_baseline.md`.
-  축소 재현에서 원본 재현으로 방향 변경, 에폭 연장(100ep) 항목을 흡수.
+- [x] **strong baseline (1등 솔루션 원본 재현)** — **재현 성공, holdout MAE 0.3955 nm**
+  (보고치 ≈0.42와 같은 수준). 취합: [reports/strong_baseline.md](../reports/strong_baseline.md).
+  축소 재현에서 원본 재현으로 방향 변경, 에폭 연장(100ep) 항목을 흡수. 2026-08-11 종결.
 - [x] ~~에폭 연장 실험~~ — strong baseline이 원본 100ep 프로토콜로 흡수 (별도 실험 불필요)
 - [ ] holdout과 분리된 best-epoch 선택용 split 도입 여부 (현재는 문서 명시로 처리)
 - [ ] 물리 손실 채널 가중 ablation (대역 오른쪽 정보량 3배 — 기본은 균등 가중)

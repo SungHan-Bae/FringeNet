@@ -22,3 +22,4 @@
 |---|---|
 | [mlp_baseline.md](../reports/mlp_baseline.md) | **Task 4 baseline 확정** — MLP 대조군 + dropout ablation, holdout MAE 4.599 nm |
 | [level1_cnn.md](../reports/level1_cnn.md) | **Task 5 Level 1 구조 ablation** — CNN 5변형(셔플 대조군·flatten·dilated), **flatten-dilated 2.931 nm (−36%)**. 수용영역+위치 보존이 결합돼야 conv가 유효 |
+| [strong_baseline.md](../reports/strong_baseline.md) | **1등 단일 모델 원본 충실 재현** — 213M skip-MLP, **0.3955 nm** (보고 0.42 재현 성공). 0.66M vs 213M 격차 확정 — Task 7 물리 손실의 상한 기준선 |
