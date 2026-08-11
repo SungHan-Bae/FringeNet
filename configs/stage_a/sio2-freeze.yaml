@@ -1,0 +1,29 @@
+# stage_a — SiO₂ Cauchy를 문헌값(Malitson 1965 fit)에 freeze한 기본 게이지 (CLAUDE.md 필수).
+#
+# phase 0: 두께축 주파수 식별(identify_initial_grid)이 λ 그리드·n_SiN(λ)을 채널별
+#   닫힌형으로 추정한다 (Adam 후보 탐색은 fringe 차수 분지 문제로 폐기 — week_1 08-11).
+# phase 1: 본 피팅 — λ 그리드(단조)·SiN Cauchy·Si n,k knot 곡선(k ≥ 0) 공동 미세조정.
+# 판정 게이트: (a) 재구성 RMSE < 1.2σ ≈ 0.0105 — 피팅이 즉시 보고,
+#             (c) 잔차 백색성 — scripts/diagnose_calibration.py 별도 판정.
+seed: 42
+experiment: stage_a
+run_name: sio2-freeze
+
+data:
+  val_frac: 0.1        # 프로젝트 공통 holdout 제외 (train.py와 동일 분할·시드)
+  fit_rows: 50000      # 피팅 표본 (~5만 행, CLAUDE.md Stage A 스펙)
+  diag_rows: 20000     # best 선택·게이트 진단용 분리 표본
+
+model:
+  n_si_knots: 24       # Si n·k 곡선 제어점 수 — 식별된 λ 대역(~284–793 nm)이 Si의
+                       # E1 구조(~365 nm)를 포함해 16보다 촘촘하게 둔다
+
+fit:                   # phase 1 — 본 피팅
+  steps: 3000
+  batch_size: 4096
+  lr: 1.0e-2           # raw 재파라미터화 공간의 균일 보폭 (calibrate.py 참조;
+                       # 합성 복원 실험에서 3e-3은 수렴 미달, 1e-2가 안정 수렴)
+  lr_schedule: cosine
+  warmup_steps: 100
+  eval_every: 100
+  eval_batch: 8192
