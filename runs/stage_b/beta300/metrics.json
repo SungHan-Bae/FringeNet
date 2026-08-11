@@ -1,0 +1,83 @@
+{
+  "experiment": "stage_b",
+  "run_name": "beta300",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "stage_b",
+    "run_name": "beta300",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        64,
+        128,
+        200,
+        280
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "dilations": [
+        1,
+        2,
+        4,
+        4,
+        2
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "head": "flatten",
+      "output_bound": true,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 30,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 1000,
+      "num_folds": 0,
+      "physics": {
+        "decoder_run": "runs/stage_a/sio2-freeze-refine",
+        "beta": 300.0,
+        "beta_warmup_steps": 3000
+      }
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/stage_b/beta300/model.pt",
+    "best_epoch": 30,
+    "val_mae": 3.621830463409424,
+    "val_mae_per_layer": {
+      "layer_1": 2.5819549560546875,
+      "layer_2": 4.650999069213867,
+      "layer_3": 3.846766471862793,
+      "layer_4": 3.4076011180877686,
+      "overall": 3.621830463409424
+    },
+    "val_phys_l1": 0.028686542108803125,
+    "wall_sec": 546.0844353260004
+  }
+}

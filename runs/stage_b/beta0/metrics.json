@@ -1,0 +1,78 @@
+{
+  "experiment": "stage_b",
+  "run_name": "beta0",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "stage_b",
+    "run_name": "beta0",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        64,
+        128,
+        200,
+        280
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "dilations": [
+        1,
+        2,
+        4,
+        4,
+        2
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "head": "flatten",
+      "output_bound": true,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 30,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 1000,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/stage_b/beta0/model.pt",
+    "best_epoch": 29,
+    "val_mae": 2.345541000366211,
+    "val_mae_per_layer": {
+      "layer_1": 1.59433114528656,
+      "layer_2": 2.9611282348632812,
+      "layer_3": 2.730405330657959,
+      "layer_4": 2.096298933029175,
+      "overall": 2.345541000366211
+    },
+    "val_phys_l1": null,
+    "wall_sec": 365.491594268
+  }
+}
