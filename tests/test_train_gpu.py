@@ -177,8 +177,10 @@ def test_resume_restores_from_mirror_on_fresh_vm(device: str, tmp_path: Path) ->
     run_dir = tmp_path / "run"
     mirror = tmp_path / "mirror"
     run_dir.mkdir()
+    # 매 에폭 미러(K=1)의 복구 의미론을 검증하는 테스트 — 기본값(5)이면 3에폭짜리
+    # 실행에서 resume.pt가 미러에 아예 안 가므로 K를 명시한다
     with pytest.raises(RuntimeError, match="중단"):
-        _train(run_dir, cfg, device, mirror_dir=mirror, _abort_after_epoch=2)
+        _train(run_dir, cfg, device, mirror_dir=mirror, mirror_resume_every=1, _abort_after_epoch=2)
     # 미러에 에폭 단위 백업이 남아 있어야 한다
     assert (mirror / "resume.pt").exists()
     assert (mirror / "train.log").exists()
@@ -187,7 +189,7 @@ def test_resume_restores_from_mirror_on_fresh_vm(device: str, tmp_path: Path) ->
     # 세션 유실로 VM 디스크가 날아간 상황: run_dir를 비우고 미러만으로 재개
     shutil.rmtree(run_dir)
     run_dir.mkdir()
-    resumed = _train(run_dir, cfg, device, mirror_dir=mirror)
+    resumed = _train(run_dir, cfg, device, mirror_dir=mirror, mirror_resume_every=1)
 
     assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
     assert np.allclose(resumed["val_pred"], full["val_pred"], atol=1e-5)

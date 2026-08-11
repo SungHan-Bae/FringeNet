@@ -17,7 +17,7 @@ src/train.py는 baseline(Task 4)을 만든 CPU 검증 경로 그대로 보존하
   재실행 시 자동 감지해 다음 에폭부터 재개하며, RNG까지 복원하므로 중단 없이
   돌린 실행과 (같은 기종·cudnn deterministic 하에) 동일한 결과를 낸다.
 - **mirror_dir**(예: Google Drive)를 주면 train.log를 매 에폭, resume.pt를
-  mirror_resume_every 에폭마다(기본 1), model.pt를 best 갱신 에폭마다 미러에 복사한다.
+  mirror_resume_every 에폭마다(기본 5), model.pt를 best 갱신 에폭마다 미러에 복사한다.
   새 VM에서 재실행하면 미러에서 상태를 복원해 이어 달린다. 저장·복사는
   원자적(임시파일→교체)이다. 대형 모델은 resume.pt가 수 GB라 Drive 비동기 업로드가
   에폭 속도를 못 따라갈 수 있다 — 그때 mirror_resume_every를 올려 업로드량을 줄인다
@@ -126,7 +126,7 @@ def train_one_model_gpu(
     device: torch.device,
     mirror_dir: Path | None = None,
     resume: bool = True,
-    mirror_resume_every: int = 1,
+    mirror_resume_every: int = 5,
     _abort_after_epoch: int | None = None,
 ) -> dict[str, Any]:
     """모델 하나를 device에서 학습하고 best(val MAE) 체크포인트를 저장한다.
@@ -408,7 +408,7 @@ def run_config(
     subset: int | None = None,
     resume: bool = True,
     mirror_dir: str | Path | None = None,
-    mirror_resume_every: int = 1,
+    mirror_resume_every: int = 5,
     runs_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """config 하나를 GPU(가능하면)에서 학습하고 metrics dict를 돌려준다.
@@ -545,7 +545,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--mirror-resume-every",
         type=int,
-        default=1,
+        default=5,
         help="resume.pt 미러 복사 간격(에폭) — 대형 모델의 Drive 업로드 밀림 완화용",
     )
     parser.add_argument(
