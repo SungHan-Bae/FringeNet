@@ -1,7 +1,8 @@
 # stage_a — SiO₂ Cauchy를 문헌값(Malitson 1965 fit)에 freeze한 기본 게이지 (CLAUDE.md 필수).
 #
-# 학습 대상: λ 그리드(단조, 방향은 후보 탐색이 결정), SiN Cauchy(초기값 Luke 2015),
-# Si 기판 n·k knot 곡선(초기값 Aspnes & Studna 1983, k ≥ 0).
+# phase 0: 두께축 주파수 식별(identify_initial_grid)이 λ 그리드·n_SiN(λ)을 채널별
+#   닫힌형으로 추정한다 (Adam 후보 탐색은 fringe 차수 분지 문제로 폐기 — week_1 08-11).
+# phase 1: 본 피팅 — λ 그리드(단조)·SiN Cauchy·Si n,k knot 곡선(k ≥ 0) 공동 미세조정.
 # 판정 게이트: (a) 재구성 RMSE < 1.2σ ≈ 0.0105 — 피팅이 즉시 보고,
 #             (c) 잔차 백색성 — scripts/diagnose_calibration.py 별도 판정.
 seed: 42
@@ -14,14 +15,8 @@ data:
   diag_rows: 20000     # best 선택·게이트 진단용 분리 표본
 
 model:
-  n_si_knots: 16       # Si n·k 곡선 제어점 수 (채널축 균등)
-
-search:                # phase 0 — 초기 λ 범위 후보 탐색 (오름/내림 각각, 결정론적)
-  candidates: [[300, 700], [350, 750], [400, 800], [450, 850], [500, 900],
-               [600, 1000], [400, 1000], [350, 900]]
-  rows: 1024
-  steps: 120
-  lr: 1.0e-2
+  n_si_knots: 24       # Si n·k 곡선 제어점 수 — 식별된 λ 대역(~284–793 nm)이 Si의
+                       # E1 구조(~365 nm)를 포함해 16보다 촘촘하게 둔다
 
 fit:                   # phase 1 — 본 피팅
   steps: 3000

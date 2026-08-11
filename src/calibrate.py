@@ -1,14 +1,17 @@
 """Stage A 캘리브레이션 — train (d_true, R_obs) 서브셋으로 TMM forward 미지수를 피팅한다.
 
 무엇을 학습하나 (CLAUDE.md Level 2 Stage A 스펙):
-  - λ 그리드: lam = lam_min + cumsum(softplus(·)) — 채널 순서대로 단조. 파장축이
-    비식별화라 오름/내림 방향도 모른다 → ``descending`` 플래그로 두 방향을 모두
-    후보 탐색에 넣는다 (EDA의 "오른쪽 끝 신호 3배"는 짧은 λ가 오른쪽일 가능성을
-    시사하지만 단정하지 않는다).
+  - λ 그리드: lam = lam_min + cumsum(softplus(·)) — 채널 순서대로 단조 (방향 자유).
   - SiN(layer 1·3): Cauchy n(λ) = A + B/λ² + C/λ⁴ (λ[μm], k=0 가정) — 학습.
   - SiO₂(layer 2·4): 같은 Cauchy — **문헌값(Malitson 1965 fit)에 freeze (게이지 고정)**.
     delta = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이라 SiO₂를 고정해야 λ가 식별된다.
   - Si 기판: n(λ), k(λ) 곡선 — 채널축 knot 조각별 선형 보간, k ≥ 0 (softplus).
+
+초기화 (phase 0): 두께축 주파수 식별 `identify_initial_grid` — λ축 fringe 정렬은
+경사하강에 비볼록이라(잘못된 fringe 차수 분지에서 RMSE ~0.12 정체) 그쪽을 우회한다.
+전수 격자 데이터의 조건부 평균 E[R|d_j]가 두께축에서 f_j = 2n_j(λ)/λ로 진동하는
+성질로 λ 그리드와 n_SiN(λ)을 채널별 닫힌형으로 추정한 뒤, 본 피팅은 그 근방에서
+전 파라미터를 공동 미세조정한다.
 
 산출물: runs/stage_a/<run_name>/{model.pt, train.log, metrics.json}
 (+ 진행 중 resume.pt — 완료 시 삭제). 판정 게이트 (a) RMSE는 여기서 즉시 보고하고,
@@ -21,7 +24,7 @@ eval 블록마다 resume.pt(+RNG) 저장·미러, 재실행 시 완료 run 스�
 사용:
     python -m src.calibrate --config configs/stage_a/sio2-freeze.yaml
     python -m src.calibrate --config ... --fit-rows 2000 --steps 40 \
-        --lam-init 400,800 --run-name smoke   # 스모크 (후보 탐색 생략)
+        --lam-init 400,800 --run-name smoke   # 스모크 (주파수 식별 생략)
 """
 
 from __future__ import annotations
@@ -85,11 +88,26 @@ class CalibratedStack(nn.Module):
         n_si_knots: int = 16,
         lam_init: tuple[float, float] = (400.0, 800.0),
         descending: bool = False,
+        lam_grid: np.ndarray | None = None,
+        sin_init_samples: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> None:
         super().__init__()
-        lam_lo, lam_hi = float(lam_init[0]), float(lam_init[1])
-        if not 0.0 < lam_lo < lam_hi:
-            raise ValueError(f"lam_init은 0 < min < max 여야 한다 (받은 값: {lam_init})")
+        if lam_grid is not None:
+            # 명시적 초기 그리드 (채널 순서, 예: 주파수 식별 결과) — lam_init/descending 대체.
+            lam_ch = np.asarray(lam_grid, dtype=np.float64)
+            if lam_ch.shape != (n_channels,):
+                raise ValueError(f"lam_grid는 ({n_channels},) 여야 한다: {lam_ch.shape}")
+            descending = bool(lam_ch[0] > lam_ch[-1])
+            base = lam_ch[::-1].copy() if descending else lam_ch
+            if not (base[0] > 0 and np.all(np.diff(base) > 0)):
+                raise ValueError("lam_grid는 양수·강단조여야 한다")
+            lam_lo, lam_hi = float(base[0]), float(base[-1])
+        else:
+            lam_lo, lam_hi = float(lam_init[0]), float(lam_init[1])
+            if not 0.0 < lam_lo < lam_hi:
+                raise ValueError(f"lam_init은 0 < min < max 여야 한다 (받은 값: {lam_init})")
+            base = np.linspace(lam_lo, lam_hi, n_channels)
+            lam_ch = base[::-1].copy() if descending else base
         if n_channels < 2:
             raise ValueError(f"n_channels는 2 이상이어야 한다 (받은 값: {n_channels})")
         self.n_channels = int(n_channels)
@@ -98,32 +116,30 @@ class CalibratedStack(nn.Module):
         self.descending = bool(descending)
         f64 = torch.float64
 
-        # 채널 순서의 초기 λ (descending이면 채널 0이 λ_max).
-        lam0 = np.linspace(lam_lo, lam_hi, n_channels)
-        step0 = (lam_hi - lam_lo) / (n_channels - 1)
-
-        # λ 그리드 — 단조 보장: lam_min + cumsum(softplus(·)).
-        self.register_buffer("lam_min_init", softplus_inverse(torch.tensor(lam_lo, dtype=f64)))
+        # λ 그리드 — 단조 보장: lam_min + cumsum(softplus(·)). base는 오름차순 초기값.
+        self.register_buffer("lam_min_init", softplus_inverse(torch.tensor(base[0], dtype=f64)))
         self.raw_lam_min = nn.Parameter(torch.zeros((), dtype=f64))
-        self.register_buffer(
-            "dlam_init", softplus_inverse(torch.full((n_channels - 1,), step0, dtype=f64))
-        )
+        self.register_buffer("dlam_init", softplus_inverse(torch.from_numpy(np.diff(base)).to(f64)))
         self.raw_dlam = nn.Parameter(torch.zeros(n_channels - 1, dtype=f64))
 
-        # SiN Cauchy — 학습 (초기값: Luke 2015 Sellmeier를 초기 그리드 위에서 Cauchy 근사).
-        sin_init = torch.from_numpy(fit_cauchy(lam0, si3n4_n(lam0)))
+        # SiN Cauchy — 학습. 초기값: 주파수 식별의 (λ, n) 표본이 있으면 그것을,
+        # 없으면 Luke 2015 Sellmeier를 초기 그리드 위에서 Cauchy로 근사.
+        if sin_init_samples is not None:
+            sin_init = torch.from_numpy(fit_cauchy(*sin_init_samples))
+        else:
+            sin_init = torch.from_numpy(fit_cauchy(base, si3n4_n(base)))
         self.register_buffer("sin_init", sin_init)
         self.register_buffer("sin_scale", torch.clamp(0.5 * sin_init.abs(), min=1e-5))
         self.raw_sin = nn.Parameter(torch.zeros(3, dtype=f64))
 
         # SiO₂ Cauchy — freeze (게이지 고정: n과 λ는 동시 식별 불가 — CLAUDE.md).
-        self.register_buffer("sio2_cauchy", torch.from_numpy(fit_cauchy(lam0, sio2_n(lam0))))
+        self.register_buffer("sio2_cauchy", torch.from_numpy(fit_cauchy(base, sio2_n(base))))
 
-        # Si 기판 n·k — 채널축 knot 보간. knot 0은 채널 0이므로 descending이면 λ_max 쪽.
+        # Si 기판 n·k — 채널축 knot 보간. knot_lam은 채널 순서 초기 λ에서 표집.
         self.register_buffer("interp", linear_interp_matrix(n_channels, n_si_knots))
-        knot_lam = np.linspace(lam_lo, lam_hi, n_si_knots)
-        if descending:
-            knot_lam = knot_lam[::-1].copy()
+        knot_lam = np.interp(
+            np.linspace(0.0, n_channels - 1.0, n_si_knots), np.arange(n_channels), lam_ch
+        )
         n_si, k_si = si_nk(knot_lam)
         self.register_buffer("si_n_init", torch.from_numpy(n_si))
         self.raw_si_n = nn.Parameter(torch.zeros(n_si_knots, dtype=f64))
@@ -204,68 +220,113 @@ def _eval_rmse(model: CalibratedStack, d: Tensor, r_obs: Tensor, batch_size: int
     return float(np.sqrt(sq_sum / r_obs.numel()))
 
 
-def search_lam_init(
-    x_search: np.ndarray,
-    d_search: np.ndarray,
-    cfg: dict[str, Any],
-    run_dir: Path,
-    device: torch.device,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """초기 λ 범위 후보(오름/내림 × 범위)를 짧은 full-batch 피팅으로 훑는다.
+def identify_initial_grid(
+    x: np.ndarray, d: np.ndarray, run_dir: Path, *, f_range: tuple[float, float] = (0.003, 0.022)
+) -> dict[str, Any]:
+    """두께축 주파수 식별 — 채널별 λ와 SiN n(λ) 초기 추정 (닫힌형, 결정론).
 
-    fringe 위상 정렬 때문에 손실 지형에 λ 스케일 방향의 국소최소가 많다 — 잘못된
-    초기 범위에서 출발하면 본 피팅이 엉뚱한 fringe 차수에 안착할 수 있어, 후보별
-    짧은 피팅의 최종 RMSE로 출발점을 고른다. 고정 행·full-batch·고정 스텝이라
-    결정론적이고, 재실행 시 같은 결과가 나온다 (RNG 미사용).
+    타깃이 10 nm 전수 격자라 층 j로 조건화한 평균 g_c(d) = E[R_c | d_j = d](30점)를
+    만들 수 있고, 이 곡선은 두께축에서 기본 주파수 f_j(c) = 2·n_j(λ_c)/λ_c [cycles/nm]
+    로 진동한다 (특성행렬 M_j가 δ→δ+π에서 부호만 바뀌므로 R은 δ_j에 π 주기).
+    SiO₂(층 2·4)는 게이지 고정으로 n(λ)가 알려져 있어 f₂, f₄에서 λ_c가 채널별로
+    바로 풀린다 — λ축 fringe 정렬의 비볼록성을 완전히 우회한다. 층 2·4의 독립 추정
+    일치도와 SiN 추정(f₁·λ/2)의 문헌 근접성이 자체 검증이 된다.
+
+    Adam 기반 초기 λ 범위 후보 탐색은 이 방법으로 대체했다 — 후보 전부가
+    RMSE ~0.12에서 정체하는 잘못된 fringe 차수 분지에 안착했다 (2026-08-11,
+    docs/week_1.md).
 
     Args:
-        x_search: (M, W) float32 — R_obs 표본.
-        d_search: (M, 4) — 두께 [nm].
-        cfg: 전체 config (search/model 섹션 사용).
-        run_dir: 후보별 결과를 train.log에 기록.
-        device: 계산 디바이스.
+        x: (N, W) float32 — R_obs. **표본이 클수록 좋다** — 조건부 평균이 전수 격자의
+            정확한 주변화에 가까워야 다른 층의 변동이 지워진다 (5만 행 무작위 표본은
+            bin당 ~1.7천 행이라 주파수 추정이 눈에 띄게 흔들린다 — 합성 실험 확인).
+            main은 holdout 제외 train 전체(~73만 행, bin당 ~2.4만 행)를 넘긴다.
+        d: (N, 4) — 두께 [nm] (10 nm 격자).
+        run_dir: 진단 수치를 train.log에 기록.
+        f_range: 탐색할 주파수 구간 [cycles/nm].
 
     Returns:
-        (선택된 {"lam_init": [lo, hi], "descending": bool, "rmse": float}, 전 후보 결과).
+        {"lam_grid": (W,) 채널 순서 λ [nm], "n_sin_samples": ((W,) λ, (W,) n),
+         "diagnostics": {...}}
     """
-    search_cfg = cfg["search"]
-    steps = int(search_cfg["steps"])
-    lr = float(search_cfg["lr"])
-    x_t = torch.from_numpy(x_search).to(device=device, dtype=torch.float64)
-    d_t = torch.from_numpy(d_search).to(device=device, dtype=torch.float64)
+    n_ch = x.shape[1]
+    grid_vals = np.unique(d.reshape(-1))
+    d64 = d.astype(np.float64)
 
-    results: list[dict[str, Any]] = []
-    for lam_lo, lam_hi in search_cfg["candidates"]:
-        for descending in (False, True):
-            model = CalibratedStack(
-                n_channels=x_search.shape[1],
-                n_si_knots=int(cfg["model"]["n_si_knots"]),
-                lam_init=(float(lam_lo), float(lam_hi)),
-                descending=descending,
-            ).to(device)
-            opt = torch.optim.Adam(model.parameters(), lr=lr)
-            for _ in range(steps):
-                loss = mse_loss(model(d_t), x_t)
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-            rmse = _eval_rmse(model, d_t, x_t, batch_size=len(d_t))
-            row = {
-                "lam_init": [float(lam_lo), float(lam_hi)],
-                "descending": descending,
-                "rmse": rmse,
-            }
-            results.append(row)
-            arrow = "↓" if descending else "↑"
-            log_line(run_dir, f"[search] λ [{lam_lo:g}, {lam_hi:g}] {arrow}: rmse {rmse:.5f}")
+    # 층별 조건부 평균 g[j, v, c] = E[R_c | d_j = grid_vals[v]].
+    g = np.zeros((4, len(grid_vals), n_ch), dtype=np.float64)
+    for j in range(4):
+        for v, val in enumerate(grid_vals):
+            rows = d64[:, j] == val
+            if not rows.any():
+                raise ValueError(f"layer_{j + 1} = {val} nm 행이 없다 — 표본이 격자를 못 덮음")
+            g[j, v] = x[rows].mean(axis=0, dtype=np.float64)
 
-    best = min(results, key=lambda r: r["rmse"])
+    # 주파수 추정: 각 f 후보의 투영행렬을 미리 만들고 (채널·층 공용),
+    # 잔차 최소 f를 고른다. 기저 = [1, d, cos, sin, cos2, sin2] (완만한 배경 + 2배음).
+    d_c = grid_vals - grid_vals.mean()
+    f_grid = np.linspace(f_range[0], f_range[1], 1200)
+    freqs = np.zeros((4, n_ch))
+    for j in range(4):
+        sig = g[j] - g[j].mean(axis=0, keepdims=True)  # (V, W)
+        best_res = np.full(n_ch, np.inf)
+        for f in f_grid:
+            w = 2.0 * np.pi * f * d_c
+            basis = np.stack(
+                [np.ones_like(d_c), d_c, np.cos(w), np.sin(w), np.cos(2 * w), np.sin(2 * w)],
+                axis=1,
+            )
+            proj = basis @ np.linalg.pinv(basis)
+            res = ((sig - proj @ sig) ** 2).sum(axis=0)
+            better = res < best_res
+            best_res[better] = res[better]
+            freqs[j, better] = f
+
+    # λ_c 풀기: 2·n_sio2(λ)/λ = f 는 λ에 단조 감소 → 이분법 (층 2·4 각각).
+    def solve_lam(f_arr: np.ndarray) -> np.ndarray:
+        lo = np.full_like(f_arr, 100.0)
+        hi = np.full_like(f_arr, 2000.0)
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            above = 2.0 * sio2_n(mid) / mid > f_arr
+            lo[above] = mid[above]
+            hi[~above] = mid[~above]
+        return 0.5 * (lo + hi)
+
+    lam2, lam4 = solve_lam(freqs[1]), solve_lam(freqs[3])
+    lam_grid = 0.5 * (lam2 + lam4)
+    n_sin = 0.5 * (freqs[0] + freqs[2]) * lam_grid / 2.0
+
+    # 단조 강제: 추정 오차로 국소 요철이 있으면 등화(iso) 대신 누적 최솟값/최댓값으로
+    # 살짝 보정한다 (본 피팅의 단조 파라미터화가 요구하는 초기값 조건).
+    direction = -1.0 if lam_grid[0] > lam_grid[-1] else 1.0
+    mono = np.minimum.accumulate(lam_grid) if direction < 0 else np.maximum.accumulate(lam_grid)
+    fix = mono != lam_grid
+    if np.any(np.diff(mono) * direction <= 0):
+        mono = mono + direction * np.arange(n_ch) * 1e-6  # 동률 제거 (강단조)
+    lam_grid = mono
+
+    diagnostics = {
+        "lam24_dev_median": float(np.median(np.abs(lam2 - lam4))),
+        "lam24_dev_max": float(np.abs(lam2 - lam4).max()),
+        "lam_range": [float(lam_grid.min()), float(lam_grid.max())],
+        "descending": bool(lam_grid[0] > lam_grid[-1]),
+        "n_sin_range": [float(n_sin.min()), float(n_sin.max())],
+        "n_sin_vs_luke_reldev_median": float(
+            np.median(np.abs(n_sin - si3n4_n(lam_grid)) / si3n4_n(lam_grid))
+        ),
+        "monotone_fixups": int(fix.sum()),
+    }
     log_line(
         run_dir,
-        f"[search] 선택: λ {best['lam_init']} {'내림' if best['descending'] else '오름'}차순"
-        f" (rmse {best['rmse']:.5f})",
+        f"[freq-id] λ {diagnostics['lam_range'][0]:.1f}–{diagnostics['lam_range'][1]:.1f} nm "
+        f"{'내림' if diagnostics['descending'] else '오름'}차순 / 층2·4 λ 편차 중앙값 "
+        f"{diagnostics['lam24_dev_median']:.2f} nm (최대 {diagnostics['lam24_dev_max']:.2f}) / "
+        f"n_SiN {diagnostics['n_sin_range'][0]:.3f}–{diagnostics['n_sin_range'][1]:.3f} "
+        f"(Luke 대비 중앙 상대편차 {diagnostics['n_sin_vs_luke_reldev_median']:.3%}) / "
+        f"단조 보정 {diagnostics['monotone_fixups']}채널",
     )
-    return best, results
+    return {"lam_grid": lam_grid, "n_sin_samples": (lam_grid, n_sin), "diagnostics": diagnostics}
 
 
 def fit_calibration(
@@ -276,8 +337,10 @@ def fit_calibration(
     cfg: dict[str, Any],
     run_dir: Path,
     *,
-    lam_init: tuple[float, float],
-    descending: bool,
+    lam_init: tuple[float, float] = (400.0, 800.0),
+    descending: bool = False,
+    lam_grid: np.ndarray | None = None,
+    sin_init_samples: tuple[np.ndarray, np.ndarray] | None = None,
     device: torch.device | None = None,
     mirror_dir: Path | None = None,
     resume: bool = True,
@@ -293,8 +356,10 @@ def fit_calibration(
         x_val / d_val: best 선택·게이트 (a) RMSE용 분리 표본.
         cfg: 전체 config (fit/model/seed 사용).
         run_dir: 산출물 디렉토리 (train.log / model.pt / resume.pt).
-        lam_init: 초기 λ 범위 (후보 탐색 결과 또는 CLI 지정).
-        descending: λ 채널 방향.
+        lam_init: 초기 λ 범위 (lam_grid가 없을 때 균등 그리드로 사용).
+        descending: λ 채널 방향 (lam_grid가 없을 때).
+        lam_grid: 채널별 초기 λ (주파수 식별 결과) — 주면 lam_init/descending 대체.
+        sin_init_samples: SiN Cauchy 초기값용 (λ, n) 표본 — 주파수 식별 결과.
         mirror_dir: 지정 시 산출물을 매 eval 블록 복사 (Colab Drive 백업).
         resume: False면 resume.pt를 무시하고 처음부터.
         _abort_after_eval: 테스트 전용 — N번째 eval 블록 직후 RuntimeError로 중단.
@@ -318,6 +383,8 @@ def fit_calibration(
         n_si_knots=int(cfg["model"]["n_si_knots"]),
         lam_init=lam_init,
         descending=descending,
+        lam_grid=lam_grid,
+        sin_init_samples=sin_init_samples,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(fit_cfg["lr"]))
     scheduler = build_lr_scheduler(
@@ -523,26 +590,45 @@ def main(argv: list[str] | None = None) -> None:
     pick = rng.choice(train_idx, size=n_fit + n_diag, replace=False)
     x_fit, d_fit = x[pick[:n_fit]], y[pick[:n_fit]]
     x_diag, d_diag = x[pick[n_fit:]], y[pick[n_fit:]]
-    del x, y
     log_line(
         run_dir,
         f"run {experiment}/{cfg['run_name']}: fit {n_fit:,} + diag {n_diag:,} 행"
         f" (holdout 제외 train에서 표집) / device={device.type}",
     )
 
-    # 초기 λ 선택 — CLI 지정 > 이전 실행의 선택(재개) > 후보 탐색.
-    search_results: list[dict[str, Any]] | None = None
+    # 초기화 — CLI 지정 λ 범위 > 이전 실행의 주파수 식별 결과(재개) > 주파수 식별.
+    init_kwargs: dict[str, Any]
+    init_record: dict[str, Any]
     if args.lam_init is not None:
         lo, hi = (float(v) for v in args.lam_init.split(","))
-        selected = {"lam_init": [lo, hi], "descending": bool(args.descending), "rmse": None}
-        log_line(run_dir, f"[search] CLI 지정 λ {selected['lam_init']} — 후보 탐색 생략")
-    elif resume and prev is not None and "lam_init_selected" in prev:
-        selected = prev["lam_init_selected"]
-        search_results = prev.get("search")
-        log_line(run_dir, f"[search] 이전 실행의 선택 재사용: {selected}")
+        init_kwargs = {"lam_init": (lo, hi), "descending": bool(args.descending)}
+        init_record = {"mode": "cli", "lam_init": [lo, hi], "descending": bool(args.descending)}
+        log_line(run_dir, f"[freq-id] CLI 지정 λ {[lo, hi]} — 주파수 식별 생략")
+    elif resume and prev is not None and prev.get("init", {}).get("mode") == "freq-id":
+        init_record = prev["init"]
+        init_kwargs = {
+            "lam_grid": np.asarray(init_record["lam_grid"], dtype=np.float64),
+            "sin_init_samples": (
+                np.asarray(init_record["lam_grid"], dtype=np.float64),
+                np.asarray(init_record["n_sin"], dtype=np.float64),
+            ),
+        }
+        log_line(run_dir, "[freq-id] 이전 실행의 식별 결과 재사용")
     else:
-        rows = int(cfg["search"]["rows"])
-        selected, search_results = search_lam_init(x_fit[:rows], d_fit[:rows], cfg, run_dir, device)
+        # 식별은 조건부 평균의 정확도가 생명이라 fit 서브셋이 아니라 holdout 제외
+        # train 전체를 쓴다 (identify_initial_grid docstring 참조).
+        ident = identify_initial_grid(x[train_idx], y[train_idx], run_dir)
+        init_kwargs = {
+            "lam_grid": ident["lam_grid"],
+            "sin_init_samples": ident["n_sin_samples"],
+        }
+        init_record = {
+            "mode": "freq-id",
+            "lam_grid": [float(v) for v in ident["lam_grid"]],
+            "n_sin": [float(v) for v in ident["n_sin_samples"][1]],
+            "diagnostics": ident["diagnostics"],
+        }
+    del x, y
 
     metrics: dict[str, Any] = {
         "experiment": experiment,
@@ -550,10 +636,9 @@ def main(argv: list[str] | None = None) -> None:
         "seed": seed,
         "rows": {"fit": n_fit, "diag": n_diag},
         "config": cfg,
-        "lam_init_selected": selected,
-        "search": search_results,
+        "init": init_record,
     }
-    # 시작 시점 설정·선택 스냅샷 (중단돼도 남고, 재개 시 lam_init_selected를 재사용한다).
+    # 시작 시점 설정·식별 스냅샷 (중단돼도 남고, 재개 시 init을 재사용한다).
     metrics_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
 
     result = fit_calibration(
@@ -563,11 +648,10 @@ def main(argv: list[str] | None = None) -> None:
         d_diag,
         cfg,
         run_dir,
-        lam_init=tuple(selected["lam_init"]),
-        descending=bool(selected["descending"]),
         device=device,
         mirror_dir=None if args.mirror_dir is None else Path(args.mirror_dir),
         resume=resume,
+        **init_kwargs,
     )
     metrics["result"] = result
     metrics_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2))

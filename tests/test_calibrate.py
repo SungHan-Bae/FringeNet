@@ -12,7 +12,12 @@ import numpy as np
 import pytest
 import torch
 
-from src.calibrate import CalibratedStack, fit_calibration, load_calibrated_stack
+from src.calibrate import (
+    CalibratedStack,
+    fit_calibration,
+    identify_initial_grid,
+    load_calibrated_stack,
+)
 from src.physics.dispersion import (
     cauchy_n,
     fit_cauchy,
@@ -134,6 +139,15 @@ def test_si_k_nonnegative_and_sign_convention() -> None:
     assert torch.all(n_layers.real > 1.0)
 
 
+def test_stack_accepts_explicit_lam_grid() -> None:
+    grid = np.linspace(700.0, 300.0, 32)  # 채널 내림차순
+    model = CalibratedStack(n_channels=32, n_si_knots=5, lam_grid=grid)
+    assert model.descending
+    assert np.allclose(model.lam().detach().numpy(), grid)
+    with pytest.raises(ValueError, match="단조"):
+        CalibratedStack(n_channels=32, n_si_knots=5, lam_grid=np.ones(32))
+
+
 def test_forward_shapes_and_physical_range() -> None:
     model = _small_stack()
     d = torch.rand(16, 4, dtype=torch.float64) * 290 + 10
@@ -181,6 +195,34 @@ def _fit_cfg(steps: int = 60, eval_every: int = 20) -> dict:
             "eval_batch": 256,
         },
     }
+
+
+def test_identify_initial_grid_recovers_synthetic(tmp_path: Path) -> None:
+    """주파수 식별이 합성 데이터의 λ 그리드·n_SiN을 닫힌형으로 복원하는지 검증.
+
+    조건부 평균이 정확한 주변화가 되도록 실데이터처럼 **전수 격자**로 생성한다
+    (15값 20 nm 격자 × 4층 = 50,625행 — 무작위 표본은 bin 노이즈로 추정이 흔들린다).
+    """
+    truth_grid = np.linspace(750.0, 310.0, 32)  # 내림차순
+    truth = CalibratedStack(n_channels=32, n_si_knots=5, lam_grid=truth_grid)
+    vals = np.arange(20.0, 320.0, 20.0)  # 15개 값, Nyquist 1/(2·20) > f_max 0.022 유지
+    mesh = np.stack(np.meshgrid(vals, vals, vals, vals, indexing="ij"), axis=-1).reshape(-1, 4)
+    d = torch.from_numpy(mesh).to(torch.float64)
+    r = np.empty((len(d), 32), dtype=np.float32)
+    with torch.no_grad():
+        for s in range(0, len(d), 8192):
+            r[s : s + 8192] = truth(d[s : s + 8192]).numpy()
+        n_sin_truth = truth.spectra()[1][0].real.numpy()
+
+    ident = identify_initial_grid(r, mesh.astype(np.float32), tmp_path)
+    lam_est = ident["lam_grid"]
+    assert ident["diagnostics"]["descending"]
+    assert np.all(np.diff(lam_est) < 0)
+    # λ 복원: 주파수 그리드 해상도(~0.5–3 nm) + 조화 근사 오차 허용
+    assert float(np.median(np.abs(lam_est - truth_grid))) < 3.0
+    assert float(np.abs(lam_est - truth_grid).max()) < 10.0
+    # n_SiN 복원 (f₁·λ/2)
+    assert float(np.abs(ident["n_sin_samples"][1] - n_sin_truth).max()) < 0.05
 
 
 def test_fit_recovers_synthetic_truth(tmp_path: Path) -> None:
