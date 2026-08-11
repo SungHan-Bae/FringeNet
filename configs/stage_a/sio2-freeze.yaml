@@ -1,0 +1,34 @@
+# stage_a — SiO₂ Cauchy를 문헌값(Malitson 1965 fit)에 freeze한 기본 게이지 (CLAUDE.md 필수).
+#
+# 학습 대상: λ 그리드(단조, 방향은 후보 탐색이 결정), SiN Cauchy(초기값 Luke 2015),
+# Si 기판 n·k knot 곡선(초기값 Aspnes & Studna 1983, k ≥ 0).
+# 판정 게이트: (a) 재구성 RMSE < 1.2σ ≈ 0.0105 — 피팅이 즉시 보고,
+#             (c) 잔차 백색성 — scripts/diagnose_calibration.py 별도 판정.
+seed: 42
+experiment: stage_a
+run_name: sio2-freeze
+
+data:
+  val_frac: 0.1        # 프로젝트 공통 holdout 제외 (train.py와 동일 분할·시드)
+  fit_rows: 50000      # 피팅 표본 (~5만 행, CLAUDE.md Stage A 스펙)
+  diag_rows: 20000     # best 선택·게이트 진단용 분리 표본
+
+model:
+  n_si_knots: 16       # Si n·k 곡선 제어점 수 (채널축 균등)
+
+search:                # phase 0 — 초기 λ 범위 후보 탐색 (오름/내림 각각, 결정론적)
+  candidates: [[300, 700], [350, 750], [400, 800], [450, 850], [500, 900],
+               [600, 1000], [400, 1000], [350, 900]]
+  rows: 1024
+  steps: 120
+  lr: 1.0e-2
+
+fit:                   # phase 1 — 본 피팅
+  steps: 3000
+  batch_size: 4096
+  lr: 1.0e-2           # raw 재파라미터화 공간의 균일 보폭 (calibrate.py 참조;
+                       # 합성 복원 실험에서 3e-3은 수렴 미달, 1e-2가 안정 수렴)
+  lr_schedule: cosine
+  warmup_steps: 100
+  eval_every: 100
+  eval_batch: 8192
