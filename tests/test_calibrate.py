@@ -148,6 +148,33 @@ def test_stack_accepts_explicit_lam_grid() -> None:
         CalibratedStack(n_channels=32, n_si_knots=5, lam_grid=np.ones(32))
 
 
+def test_sin_knot_mode_and_curve_inits() -> None:
+    """n_sin_knots + curve_inits — phase 2(채널별 미세조정) 계약.
+
+    초기 상태에서 spectra()가 준 곡선을 그대로 재현해야 하고(연속 워밍스타트),
+    학습 가능한 파라미터에 SiN knot이 포함되며, 체크포인트 왕복이 성립해야 한다.
+    """
+    w = 32
+    grid = np.linspace(700.0, 300.0, w)
+    curves = {
+        "n_sin": np.linspace(2.2, 2.0, w),
+        "n_si": np.linspace(6.0, 3.7, w),
+        "k_si": np.linspace(3.0, 0.01, w),
+    }
+    model = CalibratedStack(
+        n_channels=w, n_si_knots=w, n_sin_knots=w, lam_grid=grid, curve_inits=curves
+    )
+    with torch.no_grad():
+        lam, n_layers, ns = model.spectra()
+    assert np.allclose(lam.numpy(), grid)
+    assert np.allclose(n_layers[0].real.numpy(), curves["n_sin"])
+    assert np.allclose(ns.real.numpy(), curves["n_si"])
+    assert np.allclose(-ns.imag.numpy(), curves["k_si"], atol=1e-9)
+    trainable = {name for name, p in model.named_parameters() if p.requires_grad}
+    assert trainable == {"raw_lam_min", "raw_dlam", "raw_sin", "raw_si_n", "raw_si_k"}
+    assert model.raw_sin.shape == (w,)  # knot 모드 — Cauchy(3)가 아니라 채널별
+
+
 def test_forward_shapes_and_physical_range() -> None:
     model = _small_stack()
     d = torch.rand(16, 4, dtype=torch.float64) * 290 + 10

@@ -67,6 +67,7 @@ _LAM_MIN_SCALE = 100.0  # raw 1 ≈ λ_min 100 nm 이동
 _DLAM_SCALE = 0.3  # 채널 간격(softplus 전 raw)의 보폭
 _SI_N_SCALE = 0.5  # Si n knot 보폭
 _SI_K_SCALE = 1.0  # Si k knot(softplus 전 raw) 보폭 — k가 작을 땐 곱셈적 변화
+_SIN_KNOT_SCALE = 0.2  # SiN n knot 보폭 (knot 모드일 때)
 
 
 class CalibratedStack(nn.Module):
@@ -86,12 +87,15 @@ class CalibratedStack(nn.Module):
         self,
         n_channels: int = 226,
         n_si_knots: int = 16,
+        n_sin_knots: int | None = None,
         lam_init: tuple[float, float] = (400.0, 800.0),
         descending: bool = False,
         lam_grid: np.ndarray | None = None,
         sin_init_samples: tuple[np.ndarray, np.ndarray] | None = None,
+        curve_inits: dict[str, np.ndarray] | None = None,
     ) -> None:
         super().__init__()
+        curve_inits = curve_inits or {}
         if lam_grid is not None:
             # 명시적 초기 그리드 (채널 순서, 예: 주파수 식별 결과) — lam_init/descending 대체.
             lam_ch = np.asarray(lam_grid, dtype=np.float64)
@@ -112,9 +116,12 @@ class CalibratedStack(nn.Module):
             raise ValueError(f"n_channels는 2 이상이어야 한다 (받은 값: {n_channels})")
         self.n_channels = int(n_channels)
         self.n_si_knots = int(n_si_knots)
+        self.n_sin_knots = None if n_sin_knots is None else int(n_sin_knots)
         self.lam_init = (lam_lo, lam_hi)
         self.descending = bool(descending)
         f64 = torch.float64
+        knot_pos = np.linspace(0.0, n_channels - 1.0, n_si_knots)
+        ch_idx = np.arange(n_channels, dtype=np.float64)
 
         # λ 그리드 — 단조 보장: lam_min + cumsum(softplus(·)). base는 오름차순 초기값.
         self.register_buffer("lam_min_init", softplus_inverse(torch.tensor(base[0], dtype=f64)))
@@ -122,25 +129,47 @@ class CalibratedStack(nn.Module):
         self.register_buffer("dlam_init", softplus_inverse(torch.from_numpy(np.diff(base)).to(f64)))
         self.raw_dlam = nn.Parameter(torch.zeros(n_channels - 1, dtype=f64))
 
-        # SiN Cauchy — 학습. 초기값: 주파수 식별의 (λ, n) 표본이 있으면 그것을,
-        # 없으면 Luke 2015 Sellmeier를 초기 그리드 위에서 Cauchy로 근사.
-        if sin_init_samples is not None:
-            sin_init = torch.from_numpy(fit_cauchy(*sin_init_samples))
+        # SiN n(λ) — 학습. n_sin_knots가 None이면 Cauchy(3계수), 아니면 채널축 knot 곡선
+        # (n_sin_knots == n_channels 이면 채널별 자유 — phase 2 미세조정용).
+        # Cauchy 초기값: 주파수 식별의 (λ, n) 표본 > Luke 2015 Sellmeier 근사.
+        if self.n_sin_knots is None:
+            if sin_init_samples is not None:
+                sin_init = torch.from_numpy(fit_cauchy(*sin_init_samples))
+            else:
+                sin_init = torch.from_numpy(fit_cauchy(base, si3n4_n(base)))
+            self.register_buffer("sin_init", sin_init)
+            self.register_buffer("sin_scale", torch.clamp(0.5 * sin_init.abs(), min=1e-5))
+            self.raw_sin = nn.Parameter(torch.zeros(3, dtype=f64))
         else:
-            sin_init = torch.from_numpy(fit_cauchy(base, si3n4_n(base)))
-        self.register_buffer("sin_init", sin_init)
-        self.register_buffer("sin_scale", torch.clamp(0.5 * sin_init.abs(), min=1e-5))
-        self.raw_sin = nn.Parameter(torch.zeros(3, dtype=f64))
+            sin_curve = curve_inits.get("n_sin")
+            if sin_curve is None:
+                sin_curve = si3n4_n(lam_ch)
+            sin_knot_pos = np.linspace(0.0, n_channels - 1.0, self.n_sin_knots)
+            self.register_buffer("sin_interp", linear_interp_matrix(n_channels, self.n_sin_knots))
+            self.register_buffer(
+                "sin_init",
+                torch.from_numpy(np.interp(sin_knot_pos, ch_idx, np.asarray(sin_curve))),
+            )
+            self.raw_sin = nn.Parameter(torch.zeros(self.n_sin_knots, dtype=f64))
 
         # SiO₂ Cauchy — freeze (게이지 고정: n과 λ는 동시 식별 불가 — CLAUDE.md).
         self.register_buffer("sio2_cauchy", torch.from_numpy(fit_cauchy(base, sio2_n(base))))
 
-        # Si 기판 n·k — 채널축 knot 보간. knot_lam은 채널 순서 초기 λ에서 표집.
+        # Si 기판 n·k — 채널축 knot 보간. 초기값: 명시 곡선(curve_inits) > 문헌 테이블.
         self.register_buffer("interp", linear_interp_matrix(n_channels, n_si_knots))
-        knot_lam = np.interp(
-            np.linspace(0.0, n_channels - 1.0, n_si_knots), np.arange(n_channels), lam_ch
+        knot_lam = np.interp(knot_pos, ch_idx, lam_ch)
+        n_si_lit, k_si_lit = si_nk(knot_lam)
+        n_si_curve, k_si_curve = curve_inits.get("n_si"), curve_inits.get("k_si")
+        n_si = (
+            np.interp(knot_pos, ch_idx, np.asarray(n_si_curve))
+            if n_si_curve is not None
+            else n_si_lit
         )
-        n_si, k_si = si_nk(knot_lam)
+        k_si = (
+            np.interp(knot_pos, ch_idx, np.asarray(k_si_curve))
+            if k_si_curve is not None
+            else k_si_lit
+        )
         self.register_buffer("si_n_init", torch.from_numpy(n_si))
         self.raw_si_n = nn.Parameter(torch.zeros(n_si_knots, dtype=f64))
         self.register_buffer(
@@ -154,6 +183,7 @@ class CalibratedStack(nn.Module):
         return {
             "n_channels": self.n_channels,
             "n_si_knots": self.n_si_knots,
+            "n_sin_knots": self.n_sin_knots,
             "lam_init": list(self.lam_init),
             "descending": self.descending,
         }
@@ -172,7 +202,10 @@ class CalibratedStack(nn.Module):
             (lam (W,) float64, n_layers (4, W) complex128, ns (W,) complex128).
         """
         lam = self.lam()
-        n_sin = cauchy_n(lam, self.sin_init + self.sin_scale * self.raw_sin)
+        if self.n_sin_knots is None:
+            n_sin = cauchy_n(lam, self.sin_init + self.sin_scale * self.raw_sin)
+        else:
+            n_sin = self.sin_interp @ (self.sin_init + _SIN_KNOT_SCALE * self.raw_sin)
         n_sio2 = cauchy_n(lam, self.sio2_cauchy)
         stack_r = torch.stack([n_sin, n_sio2, n_sin, n_sio2])
         n_layers = torch.complex(stack_r, torch.zeros_like(stack_r))  # 층은 k=0 가정
@@ -190,11 +223,14 @@ class CalibratedStack(nn.Module):
 def load_calibrated_stack(path: Path | str) -> tuple[CalibratedStack, dict[str, Any]]:
     """model.pt에서 캘리브레이션 모델을 복원한다. 반환 (model, 체크포인트 dict)."""
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    mc = ckpt["model_cfg"]
+    n_sin_knots = mc.get("n_sin_knots")
     model = CalibratedStack(
-        n_channels=int(ckpt["model_cfg"]["n_channels"]),
-        n_si_knots=int(ckpt["model_cfg"]["n_si_knots"]),
-        lam_init=tuple(ckpt["model_cfg"]["lam_init"]),
-        descending=bool(ckpt["model_cfg"]["descending"]),
+        n_channels=int(mc["n_channels"]),
+        n_si_knots=int(mc["n_si_knots"]),
+        n_sin_knots=None if n_sin_knots is None else int(n_sin_knots),
+        lam_init=tuple(mc["lam_init"]),
+        descending=bool(mc["descending"]),
     )
     model.load_state_dict(ckpt["state_dict"])
     return model, ckpt
@@ -203,7 +239,13 @@ def load_calibrated_stack(path: Path | str) -> tuple[CalibratedStack, dict[str, 
 def _fingerprint(cfg: dict[str, Any], model_cfg: dict[str, Any], n_fit: int) -> str:
     """resume 호환성 판별용 설정 지문 — 다른 설정의 resume.pt를 이어받지 않도록."""
     return json.dumps(
-        {"model": model_cfg, "fit": cfg["fit"], "seed": cfg["seed"], "n_fit": n_fit},
+        {
+            "model": model_cfg,
+            "model_yaml": cfg["model"],
+            "fit": cfg["fit"],
+            "seed": cfg["seed"],
+            "n_fit": n_fit,
+        },
         sort_keys=True,
         ensure_ascii=False,
         default=str,
@@ -354,6 +396,7 @@ def fit_calibration(
     descending: bool = False,
     lam_grid: np.ndarray | None = None,
     sin_init_samples: tuple[np.ndarray, np.ndarray] | None = None,
+    curve_inits: dict[str, np.ndarray] | None = None,
     device: torch.device | None = None,
     mirror_dir: Path | None = None,
     resume: bool = True,
@@ -391,13 +434,16 @@ def fit_calibration(
         raise ValueError(f"steps({steps_total})·eval_every({eval_every})는 1 이상이어야 한다")
     device = device or torch.device("cpu")
 
+    n_sin_knots = cfg["model"].get("n_sin_knots")
     model = CalibratedStack(
         n_channels=x_fit.shape[1],
         n_si_knots=int(cfg["model"]["n_si_knots"]),
+        n_sin_knots=None if n_sin_knots is None else int(n_sin_knots),
         lam_init=lam_init,
         descending=descending,
         lam_grid=lam_grid,
         sin_init_samples=sin_init_samples,
+        curve_inits=curve_inits,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(fit_cfg["lr"]))
     scheduler = build_lr_scheduler(
@@ -609,10 +655,38 @@ def main(argv: list[str] | None = None) -> None:
         f" (holdout 제외 train에서 표집) / device={device.type}",
     )
 
-    # 초기화 — CLI 지정 λ 범위 > 이전 실행의 주파수 식별 결과(재개) > 주파수 식별.
+    # 초기화 — 이전 run 곡선(phase 2 미세조정) > CLI 지정 λ 범위 > 이전 실행의
+    # 주파수 식별 결과(재개) > 주파수 식별.
     init_kwargs: dict[str, Any]
     init_record: dict[str, Any]
-    if args.lam_init is not None:
+    init_from = cfg["model"].get("init_from_run")
+    if init_from is not None:
+        src_run = Path(init_from)
+        if not src_run.is_absolute():
+            src_run = REPO_ROOT / src_run
+        prior, prior_ckpt = load_calibrated_stack(src_run / "model.pt")
+        with torch.no_grad():
+            lam_p, n_layers_p, ns_p = prior.spectra()
+        init_kwargs = {
+            "lam_grid": lam_p.numpy(),
+            "curve_inits": {
+                "n_sin": n_layers_p[0].real.numpy(),
+                "n_si": ns_p.real.numpy(),
+                "k_si": (-ns_p.imag).numpy(),
+            },
+        }
+        init_record = {
+            "mode": "from-run",
+            "run": str(init_from),
+            "src_step": int(prior_ckpt["step"]),
+            "src_val_rmse": float(prior_ckpt["val_rmse"]),
+        }
+        log_line(
+            run_dir,
+            f"[init] {init_from} (step {prior_ckpt['step']},"
+            f" val_rmse {prior_ckpt['val_rmse']:.5f}) 곡선에서 초기화",
+        )
+    elif args.lam_init is not None:
         lo, hi = (float(v) for v in args.lam_init.split(","))
         init_kwargs = {"lam_init": (lo, hi), "descending": bool(args.descending)}
         init_record = {"mode": "cli", "lam_init": [lo, hi], "descending": bool(args.descending)}
