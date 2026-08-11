@@ -1,0 +1,44 @@
+# stage_b — beta100: 물리 손실 중간 가중 (β 로그 스윕 30/100/300의 중심).
+#
+# β 스케일 근거: 손실 두 항의 크기 — d-MAE는 학습 후반 ~2 nm, 물리 잔차 L1(R)은
+# 노이즈 바닥 ~0.008 (균등 ±0.015의 E|ε| = 0.0075 + 디코더 오차) 위에서 움직이는
+# ~0.01 규모 → β ≈ 200 부근에서 두 항이 균형. 30/100/300으로 그 주변을 로그 간격
+# 스윕한다. 대조군(beta0) 외 조작 변인은 β 하나.
+#
+# beta_warmup_steps 3000 ≈ 2.1 에폭 (steps/epoch = ceil(729k/512) = 1424).
+# R(d)는 d에 fringe 주기(~λ/2n ≈ 100 nm대)로 비볼록이라, 예측이 참값 근방
+# (오차 << fringe 주기)에 들어오기 전에 물리 항을 켜면 잘못된 fringe 차수 분지로
+# 끌 수 있다 — 지도 항이 먼저 자리를 잡게 워밍업한다.
+seed: 42
+experiment: stage_b
+run_name: beta100
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000
+  num_folds: 0
+  physics:
+    decoder_run: runs/stage_a/sio2-freeze-refine
+    beta: 100.0
+    beta_warmup_steps: 3000

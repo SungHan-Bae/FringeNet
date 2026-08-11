@@ -1,0 +1,34 @@
+# stage_b — beta30: 물리 손실 β 로그 스윕 30/100/300의 한 점. 설계 근거는 beta100.yaml 헤더 참조.
+seed: 42
+experiment: stage_b
+run_name: beta30
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000
+  num_folds: 0
+  physics:
+    decoder_run: runs/stage_a/sio2-freeze-refine
+    beta: 30.0
+    beta_warmup_steps: 3000

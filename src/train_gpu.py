@@ -57,10 +57,35 @@ from torch.nn.functional import l1_loss
 from src.data.dataset import REPO_ROOT, prepare_train_arrays
 from src.evaluate import format_mae, mae_per_layer
 from src.models import build_model
+from src.physics.decoder import TMMDecoder, load_tmm_decoder
 from src.train import RUNS_DIR, build_lr_scheduler, log_line
 from src.utils.seed import set_seed
 
 RESUME_NAME = "resume.pt"
+
+
+def physics_beta_at(step: int, beta: float, warmup_steps: int) -> float:
+    """물리 손실 가중 β의 워밍업 스케줄 — warmup_steps 동안 0 → β 선형 증가.
+
+    step은 1부터 세는 전역 스텝. epoch·steps_per_epoch에서 결정되므로
+    resume 후에도 무중단 실행과 같은 β 궤적이 된다.
+    """
+    if warmup_steps <= 0:
+        return beta
+    return beta * min(1.0, step / warmup_steps)
+
+
+@torch.no_grad()
+def _val_physics_l1(
+    decoder: TMMDecoder, val_pred: np.ndarray, x_v: Tensor, batch_size: int = 8192
+) -> float:
+    """holdout 물리 잔차 mean |R_dec(d_hat) − R_obs| — 신뢰도 지표 분석의 원자료."""
+    d = torch.from_numpy(val_pred).to(x_v.device)
+    total = 0.0
+    for start in range(0, len(d), batch_size):
+        r = decoder(d[start : start + batch_size])
+        total += float((r - x_v[start : start + batch_size]).abs().sum())
+    return total / x_v.numel()
 
 
 def resolve_device(device: str | None = None) -> torch.device:
@@ -155,7 +180,7 @@ def train_one_model_gpu(
 
     Returns:
         {"tag", "seed", "ckpt_path", "best_epoch", "val_mae", "val_mae_per_layer",
-         "val_pred" (M, 4) np.ndarray, "wall_sec"}
+         "val_phys_l1" (physics off면 None), "val_pred" (M, 4) np.ndarray, "wall_sec"}
     """
     train_cfg = cfg["train"]
     epochs = int(train_cfg["epochs"])
@@ -178,6 +203,33 @@ def train_one_model_gpu(
     if shuffle_mode not in ("epoch", "once"):
         raise ValueError(f'shuffle은 "epoch" | "once" 여야 한다 (받은 값: {shuffle_mode!r})')
     eval_after_first = bool(train_cfg.get("eval_mode_after_first_epoch", False))
+
+    # Stage B 물리 손실 (CLAUDE.md Level 2): L = MAE(d_hat, d) + β_t·L1(R_dec(d_hat), R_obs).
+    #   physics.decoder_run: Stage A 산출물 디렉토리 (동결 TMM 디코더 출처)
+    #   physics.beta: 물리 항 가중. 0이면 항을 아예 끈다 — 블록 생략과 완전히 같은 경로
+    #     (디코더도 로드하지 않음)라 대조군과의 등가성이 성립한다.
+    #   physics.beta_warmup_steps: 0 → β 선형 워밍업 스텝 수 (physics_beta_at 참조)
+    physics_cfg = train_cfg.get("physics")
+    decoder: TMMDecoder | None = None
+    beta = 0.0
+    beta_warmup_steps = 0
+    if physics_cfg is not None:
+        beta = float(physics_cfg["beta"])
+        if beta < 0.0:
+            raise ValueError(f"physics.beta는 0 이상이어야 한다 (받은 값: {beta})")
+        beta_warmup_steps = int(physics_cfg.get("beta_warmup_steps", 0))
+        if beta > 0.0:
+            decoder_run = Path(str(physics_cfg["decoder_run"]))
+            if not decoder_run.is_absolute():
+                decoder_run = REPO_ROOT / decoder_run
+            decoder, dec_meta = load_tmm_decoder(decoder_run)
+            decoder = decoder.to(device)
+            log_line(
+                run_dir,
+                f"[{tag}] 물리 디코더: {physics_cfg['decoder_run']}"
+                f" (calib step {dec_meta['step']}, val_rmse {dec_meta['val_rmse']:.5f})"
+                f" / beta {beta:g}, warmup {beta_warmup_steps} steps",
+            )
 
     set_seed(seed)
 
@@ -225,6 +277,7 @@ def train_one_model_gpu(
     best_epoch = -1
     best_metrics: dict[str, float] = {}
     best_pred: np.ndarray | None = None
+    best_phys: float | None = None  # best 에폭의 holdout 물리 잔차 (physics off면 None)
     start_epoch = 1
     wall_prev = 0.0
 
@@ -264,6 +317,8 @@ def train_one_model_gpu(
                     best_state = {k: v.detach().to("cpu", copy=True) for k, v in best_state.items()}
                 best_epoch = state["best_epoch"]
                 best_metrics = state["best_metrics"]
+                # .get: physics 도입 전 resume.pt와의 호환 (physics off run은 항상 None)
+                best_phys = state.get("best_phys")
                 best_pred = (
                     state["best_pred"].cpu().numpy() if state["best_pred"] is not None else None
                 )
@@ -296,18 +351,27 @@ def train_one_model_gpu(
         else:
             perm = torch.randperm(n, device=device)
         loss_sum = 0.0
+        phys_sum = 0.0
+        global_step = (epoch - 1) * steps_per_epoch
         for start in range(0, n, batch_size):
             idx = perm[start : start + batch_size]
-            loss = l1_loss(model(x_t[idx]), y_t[idx])
+            global_step += 1
+            pred = model(x_t[idx])
+            loss = l1_loss(pred, y_t[idx])
+            loss_sum += loss.item() * len(idx)  # train_l1은 d 항만 — physics 유무와 비교 가능
+            if decoder is not None:
+                phys = l1_loss(decoder(pred), x_t[idx])
+                phys_sum += phys.item() * len(idx)
+                loss = loss + physics_beta_at(global_step, beta, beta_warmup_steps) * phys
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
-            loss_sum += loss.item() * len(idx)
 
         val_pred = predict_on_device(model, x_v)
         val_metrics = mae_per_layer(val_pred, y_val)
+        val_phys = _val_physics_l1(decoder, val_pred, x_v) if decoder is not None else None
         row = {
             "epoch": epoch,
             "train_l1": loss_sum / n,
@@ -325,12 +389,17 @@ def train_one_model_gpu(
             best_epoch = epoch
             best_metrics = val_metrics
             best_pred = val_pred
+            best_phys = val_phys
             marker = " *"
             save_best_checkpoint(best_state, best_epoch, best_mae)  # 갱신 즉시 저장
+        phys_note = (
+            f"phys_l1 {phys_sum / n:.4f}  val_phys {val_phys:.4f}  " if decoder is not None else ""
+        )
         log_line(
             run_dir,
             f"[{tag}] epoch {epoch:3d}/{epochs}  train_l1 {row['train_l1']:.4f}  "
-            f"val_mae {row['val_mae']:.4f}  lr {row['lr']:.2e}  {row['sec']:.1f}s{marker}",
+            f"val_mae {row['val_mae']:.4f}  {phys_note}lr {row['lr']:.2e}"
+            f"  {row['sec']:.1f}s{marker}",
         )
 
         _atomic_save(
@@ -344,6 +413,7 @@ def train_one_model_gpu(
                 "best_state": best_state,
                 "best_epoch": best_epoch,
                 "best_metrics": best_metrics,
+                "best_phys": best_phys,
                 "best_pred": torch.from_numpy(best_pred) if best_pred is not None else None,
                 "torch_rng": torch.get_rng_state(),
                 "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
@@ -382,6 +452,7 @@ def train_one_model_gpu(
         "best_epoch": best_epoch,
         "val_mae": best_mae,
         "val_mae_per_layer": best_metrics,
+        "val_phys_l1": best_phys,  # best 에폭의 holdout 물리 잔차 (physics off면 None)
         "val_pred": best_pred,
         "wall_sec": wall_prev + time.perf_counter() - t_start,
     }

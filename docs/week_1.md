@@ -296,6 +296,35 @@
 
 ---
 
+## 2026-08-11 (화) — Task 7 착수: Stage B 물리 손실 구현 (브랜치 `task7-stage-b`)
+
+구현 완료, Colab 라운드 1 실행 대기. lr 공정성 스윕(TODO)은 사용자 결정으로 생략하고
+Task 7 직행.
+
+- **`src/physics/decoder.py`** — `TMMDecoder`: Stage A 체크포인트에서 (λ, n_layers, n_s)를
+  뽑아 **buffer로 동결**한 미분가능 d→R 디코더. 파라미터 0개(옵티마이저에 안 잡힘),
+  grad는 d로만. 학습 계약대로 complex64 기본 (complex128 대비 최대 오차 < 1e-4 테스트).
+- **`src/train_gpu.py` physics 경로** — config `train.physics: {decoder_run, beta,
+  beta_warmup_steps}`로 `L = MAE(d̂,d) + β_t·L1(R_dec(d̂), R_obs)`. β는 전역 스텝 기준
+  선형 워밍업(에폭에서 결정 → resume 불변). `train_l1`은 d 항만 기록(β 간 비교 가능),
+  에폭마다 holdout 물리 잔차 `val_phys` 기록 → best 에폭 값이 metrics `val_phys_l1`로
+  남는다(신뢰도 지표 분석의 원자료). physics 블록 없는 기존 config는 동작·fingerprint
+  불변, beta=0은 디코더도 안 로드하는 동일 경로(대조군 등가성 테스트로 고정).
+- **워밍업의 물리적 근거**: R(d)는 d에 fringe 주기(~λ/2n ≈ 100 nm대)로 비볼록 —
+  예측 오차가 주기보다 클 때 물리 항을 켜면 잘못된 fringe 차수 분지로 끈다.
+  지도 항이 먼저 자리 잡게 3000스텝(~2.1에폭) 워밍업.
+- **configs/stage_b/**: β ∈ {0, 30, 100, 300} 4-run, 조작 변인 β 하나 (백본 = Level 1
+  확정 flatten-dilated-bound, 시드·프로토콜 동일 → beta0은 2.346 재현이어야 함).
+  β 스케일 근거: d-MAE ~2 nm vs 물리 잔차 L1 ~0.01 → β≈200에서 두 항 균형, 로그 스윕.
+- 테스트 10건 추가(tests/test_stage_b.py): 디코더 일치·동결·미분가능성, ckpt 왕복,
+  워밍업 스케줄, physics 스모크, 대조군 등가성, **physics 경로 resume = 무중단** 계약.
+  실데이터 CPU 스모크(subset 2000, 1ep)로 디코더 로드→학습→metrics까지 end-to-end 확인.
+- 노트북 `notebooks/stage_b/round1_beta-ablation.ipynb` (복사 원본 strong_baseline/round1,
+  필수 셀 규약 4종 유지). **셀 1·7이 main이 아니라 `task7-stage-b` 브랜치로 동기화·push**
+  하도록 변경 — 브랜치 규칙 준수. 예상 비용 T4 기준 4 runs 2~4시간.
+
+---
+
 ## 확정 수치 (이후 작업의 기준선)
 
 | 항목 | 값 | 근거 |
@@ -319,6 +348,8 @@
   — **게이트 통과, TMM 채택** ([reports/stage_a.md](../reports/stage_a.md)). 재구성
   RMSE **0.00929 (1.07σ)**, λ = 284–793 nm 내림차순 닫힌형 식별. 2026-08-11.
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석
+  — 08-11 착수(브랜치 `task7-stage-b`): 디코더·physics 학습 경로·configs(β 0/30/100/300)·
+  노트북 구현 완료, **Colab 라운드 1 실행 대기**
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신
 
 백로그 외 열린 항목:
@@ -332,7 +363,8 @@
 - [ ] CNN 에폭 연장 — flatten 계열 best가 29~30/30으로 수렴 직전 (level1_cnn.md §5).
   30ep 초과 시 절대 성능 개선 여지 미판정
 - [ ] CNN lr 공정성 확인 — lr 1e-3은 MLP 기준 선택. subset lr 스윕(3e-4/1e-3/3e-3)
-  미실행 (08-10 열린 확인 사항의 승격 — Task 7 전 판단)
+  미실행 (08-10 열린 확인 사항의 승격 — Task 7 전 판단 → **08-11 사용자 결정으로
+  Task 7 직행, 보류**)
 - [ ] winner 특이점 수정 변형(정상 train 모드, shuffle 매 에폭) — 재현 성공으로 후보
   활성화. 우선순위 낮음 (strong_baseline.md 분석 4)
 - [ ] 리포트 진단 수치의 재현 스크립트를 scripts/에 보존 — 기존 진단(상관·구간별
