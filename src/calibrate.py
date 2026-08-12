@@ -447,12 +447,18 @@ def fit_calibration(
     lam_grid: np.ndarray | None = None,
     sin_init_samples: tuple[np.ndarray, np.ndarray] | None = None,
     curve_inits: dict[str, np.ndarray] | None = None,
+    init_state: dict[str, Tensor] | None = None,
     device: torch.device | None = None,
     mirror_dir: Path | None = None,
     resume: bool = True,
     _abort_after_eval: int | None = None,
 ) -> dict[str, Any]:
-    """본 피팅 — 미니배치 Adam으로 CalibratedStack을 (d_true, R_obs)에 맞춘다.
+    """본 피팅 — CalibratedStack을 (d_true, R_obs)에 맞춘다.
+
+    옵티마이저 (fit.optimizer): "adam"(기본) = 미니배치 Adam,
+    "lbfgs" = 전배치 L-BFGS(strong Wolfe 라인서치, 청크 누적 closure).
+    L-BFGS는 라인서치·곡률 이력이 결정론적 손실을 전제하므로 미니배치 없이
+    fit 표본 전체로 평가한다 — Adam 수렴 해의 폴리시(warm start) 용도.
 
     세션 유실 대비: best(val RMSE) 갱신 즉시 model.pt 저장, eval 블록마다
     resume.pt(+RNG·배치 generator) 저장·미러. 재개 시 무중단 실행과 동일 결과.
@@ -466,6 +472,8 @@ def fit_calibration(
         descending: λ 채널 방향 (lam_grid가 없을 때).
         lam_grid: 채널별 초기 λ (주파수 식별 결과) — 주면 lam_init/descending 대체.
         sin_init_samples: SiN Cauchy 초기값용 (λ, n) 표본 — 주파수 식별 결과.
+        init_state: 같은 구조의 이전 run state_dict — 정밀 워름스타트 (파라미터·버퍼
+            전부 복사, curve_inits보다 정확). 구조가 다르면 load_state_dict가 실패한다.
         mirror_dir: 지정 시 산출물을 매 eval 블록 복사 (Colab Drive 백업).
         resume: False면 resume.pt를 무시하고 처음부터.
         _abort_after_eval: 테스트 전용 — N번째 eval 블록 직후 RuntimeError로 중단.
@@ -495,8 +503,31 @@ def fit_calibration(
         sin_init_samples=sin_init_samples,
         curve_inits=curve_inits,
         si_param=str(cfg["model"].get("si_param", "knot")),
-    ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(fit_cfg["lr"]))
+    )
+    if init_state is not None:
+        model.load_state_dict(init_state)
+    model = model.to(device)
+    opt_name = str(fit_cfg.get("optimizer", "adam"))
+    if opt_name == "lbfgs":
+        if str(fit_cfg.get("lr_schedule", "cosine")) != "none":
+            raise ValueError(
+                'optimizer=lbfgs는 lr_schedule: "none"과 함께 써야 한다 (라인서치가 보폭을 정한다)'
+            )
+        optimizer: torch.optim.Optimizer = torch.optim.LBFGS(
+            model.parameters(),
+            lr=float(fit_cfg["lr"]),
+            max_iter=1,  # 외부 루프가 스텝을 관리한다 (eval·체크포인트 주기와 맞물리게)
+            # max_eval 기본값은 max_iter*5//4 — max_iter=1이면 1이 되어 초기 평가가
+            # 예산을 다 쓰고 라인서치 예산(max_ls)이 0이 된다 → t=0 반환, 파라미터가
+            # 전혀 안 움직이는 조용한 정체 (실측 재현·수정 2026-08-12). 명시 필수.
+            max_eval=32,
+            history_size=int(fit_cfg.get("history_size", 20)),
+            line_search_fn="strong_wolfe",
+        )
+    elif opt_name == "adam":
+        optimizer = torch.optim.Adam(model.parameters(), lr=float(fit_cfg["lr"]))
+    else:
+        raise ValueError(f'fit.optimizer는 "adam"|"lbfgs" 중 하나여야 한다 (받은 값: {opt_name})')
     scheduler = build_lr_scheduler(
         optimizer,
         schedule=str(fit_cfg.get("lr_schedule", "cosine")),
@@ -565,17 +596,39 @@ def fit_calibration(
                 f" (best {best_rmse:.5f} @ step {best_step})",
             )
 
+    n_pix = float(n) * float(x_fit_t.shape[1])
+
+    def full_batch_closure() -> Tensor:
+        """전배치 MSE — L-BFGS 라인서치용 결정론 closure (청크 누적으로 메모리 상한 유지)."""
+        optimizer.zero_grad()
+        total = torch.zeros((), dtype=torch.float64, device=device)
+        for s in range(0, n, batch_size):
+            chunk = (
+                mse_loss(
+                    model(d_fit_t[s : s + batch_size]),
+                    x_fit_t[s : s + batch_size],
+                    reduction="sum",
+                )
+                / n_pix
+            )
+            chunk.backward()
+            total += chunk.detach()
+        return total
+
     t_start = time.perf_counter()
     loss_sum = 0.0
     loss_cnt = 0
     eval_block = 0
     t_block = time.perf_counter()
     for step in range(done_steps + 1, steps_total + 1):
-        idx = torch.randint(0, n, (batch_size,), generator=gen)
-        loss = mse_loss(model(d_fit_t[idx]), x_fit_t[idx])
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if opt_name == "lbfgs":
+            loss = optimizer.step(full_batch_closure)
+        else:
+            idx = torch.randint(0, n, (batch_size,), generator=gen)
+            loss = mse_loss(model(d_fit_t[idx]), x_fit_t[idx])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
         if scheduler is not None:
             scheduler.step()
         loss_sum += loss.item()
@@ -718,16 +771,28 @@ def main(argv: list[str] | None = None) -> None:
         prior, prior_ckpt = load_calibrated_stack(src_run / "model.pt")
         with torch.no_grad():
             lam_p, n_layers_p, ns_p = prior.spectra()
-        init_kwargs = {
-            "lam_grid": lam_p.numpy(),
-            "curve_inits": {
-                "n_sin": n_layers_p[0].real.numpy(),
-                "n_si": ns_p.real.numpy(),
-                "k_si": (-ns_p.imag).numpy(),
-            },
-        }
+        n_sin_knots_cfg = cfg["model"].get("n_sin_knots")
+        same_structure = (
+            prior.model_cfg["si_param"] == str(cfg["model"].get("si_param", "knot"))
+            and prior.model_cfg["n_sin_knots"]
+            == (None if n_sin_knots_cfg is None else int(n_sin_knots_cfg))
+            and prior.model_cfg["n_si_knots"] == int(cfg["model"]["n_si_knots"])
+        )
+        if same_structure:
+            # 같은 구조 — state_dict 정밀 워름스타트 (파라미터·버퍼 전부, 예: L-BFGS 폴리시).
+            init_kwargs = {"lam_grid": lam_p.numpy(), "init_state": prior.state_dict()}
+        else:
+            # 구조가 다르면 물리량(곡선)으로 이식 (예: phase 2 — Cauchy → 채널별 knot).
+            init_kwargs = {
+                "lam_grid": lam_p.numpy(),
+                "curve_inits": {
+                    "n_sin": n_layers_p[0].real.numpy(),
+                    "n_si": ns_p.real.numpy(),
+                    "k_si": (-ns_p.imag).numpy(),
+                },
+            }
         init_record = {
-            "mode": "from-run",
+            "mode": "from-run-state" if same_structure else "from-run",
             "run": str(init_from),
             "src_step": int(prior_ckpt["step"]),
             "src_val_rmse": float(prior_ckpt["val_rmse"]),
@@ -735,7 +800,8 @@ def main(argv: list[str] | None = None) -> None:
         log_line(
             run_dir,
             f"[init] {init_from} (step {prior_ckpt['step']},"
-            f" val_rmse {prior_ckpt['val_rmse']:.5f}) 곡선에서 초기화",
+            f" val_rmse {prior_ckpt['val_rmse']:.5f}) "
+            f"{'state_dict' if same_structure else '곡선'}에서 초기화",
         )
     elif args.lam_init is not None:
         lo, hi = (float(v) for v in args.lam_init.split(","))

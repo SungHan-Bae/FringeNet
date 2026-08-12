@@ -17,6 +17,9 @@
 
 사용법:
     python scripts/diagnose_calibration.py --run runs/stage_a/sio2-freeze
+    python scripts/diagnose_calibration.py --run runs/stage_a/sio2-freeze-adachi --tag adachi
+    # --tag는 산출물 이름에 _<tag>를 붙인다 — 채택 디코더의 게이트 기록(무태그)을
+    # 덮어쓰지 않고 변형 실험을 별도 문서로 남기기 위함.
 """
 
 from __future__ import annotations
@@ -135,7 +138,7 @@ def whiteness_metrics(eps: np.ndarray, d: np.ndarray) -> dict[str, Any]:
     }
 
 
-def figure_dispersion(model: torch.nn.Module, run_name: str) -> dict[str, Any]:
+def figure_dispersion(model: torch.nn.Module, run_name: str, out_path: Path) -> dict[str, Any]:
     """학습된 λ 그리드와 n(λ) 곡선을 문헌값과 겹쳐 그린다 (육안 확인 기록 — CLAUDE.md)."""
     with torch.no_grad():
         lam_t, n_layers, ns = model.spectra()
@@ -240,9 +243,7 @@ def figure_dispersion(model: torch.nn.Module, run_name: str) -> dict[str, Any]:
     _title(ax, "Si substrate k(λ)", "solid = calibrated (softplus ≥ 0), dashed = literature")
 
     fig.suptitle(f"Stage A dispersion curves — {run_name}", y=0.99, fontsize=12)
-    fig.savefig(
-        FIG_DIR / "fig_stage_a1_dispersion.png", dpi=150, bbox_inches="tight", facecolor=SURFACE
-    )
+    fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=SURFACE)
     plt.close(fig)
     return {
         "lam_min": float(lam.min()),
@@ -262,6 +263,7 @@ def figure_residuals(
     model: torch.nn.Module,
     wm: dict[str, Any],
     run_name: str,
+    out_path: Path,
 ) -> None:
     """잔차 백색성 4패널 — 채널 프로파일 / 두께 bin / 분포 / 예시 행 재구성."""
     w = eps.shape[1]
@@ -389,16 +391,20 @@ def figure_residuals(
     _title(ax, "Reconstruction examples", "gray = R_obs, color = R_TMM(d_true); worst +0.55")
 
     fig.suptitle(f"Stage A residual whiteness — {run_name}", y=0.99, fontsize=12)
-    fig.savefig(
-        FIG_DIR / "fig_stage_a2_residuals.png", dpi=150, bbox_inches="tight", facecolor=SURFACE
-    )
+    fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=SURFACE)
     plt.close(fig)
 
 
 def write_gate_report(
-    run_name: str, ckpt: dict[str, Any], wm: dict[str, Any], disp: dict[str, Any], n_diag: int
+    run_name: str,
+    ckpt: dict[str, Any],
+    wm: dict[str, Any],
+    disp: dict[str, Any],
+    n_diag: int,
+    gate_path: Path,
+    suffix: str,
 ) -> None:
-    """게이트 수치 표를 reports/stage_a_gate.md 에 쓴다 (스크립트 산출, 덮어씀)."""
+    """게이트 수치 표를 gate_path 에 쓴다 (스크립트 산출, 덮어씀)."""
     gate_a = wm["rmse"] < GATE_A_RMSE
 
     def mark(ok: bool) -> str:  # noqa: FBT001 — 표기 전용
@@ -452,20 +458,29 @@ def write_gate_report(
         "|---|---|---|",
         *(f"| {name} | {val} | {mark(ok)} |" for name, ok, val in c_checks),
         "",
-        "그림: `figures/fig_stage_a1_dispersion.png` (분산 곡선 육안 확인), "
-        "`figures/fig_stage_a2_residuals.png` (백색성 4패널)",
+        f"그림: `figures/fig_stage_a1_dispersion{suffix}.png` (분산 곡선 육안 확인), "
+        f"`figures/fig_stage_a2_residuals{suffix}.png` (백색성 4패널)",
         "",
     ]
-    GATE_PATH.write_text("\n".join(lines), encoding="utf-8")
+    gate_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage A 게이트 진단")
     parser.add_argument("--run", default="runs/stage_a/sio2-freeze", help="run 디렉토리")
+    parser.add_argument(
+        "--tag",
+        default="",
+        help="산출물 이름 접미사 (_<tag>) — 채택 디코더의 무태그 게이트 기록 보호용",
+    )
     args = parser.parse_args()
     run_dir = Path(args.run)
     if not run_dir.is_absolute():
         run_dir = REPO_ROOT / run_dir
+    suffix = f"_{args.tag}" if args.tag else ""
+    fig1_path = FIG_DIR / f"fig_stage_a1_dispersion{suffix}.png"
+    fig2_path = FIG_DIR / f"fig_stage_a2_residuals{suffix}.png"
+    gate_path = GATE_PATH.with_name(f"stage_a_gate{suffix}.md")
 
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     model, ckpt = load_calibrated_stack(run_dir / "model.pt")
@@ -478,9 +493,9 @@ def main() -> int:
 
     eps = compute_residuals(model, x_diag, d_diag)
     wm = whiteness_metrics(eps, d_diag.astype(np.float64))
-    disp = figure_dispersion(model, run_name)
-    figure_residuals(eps, x_diag, d_diag, model, wm, run_name)
-    write_gate_report(run_name, ckpt, wm, disp, len(x_diag))
+    disp = figure_dispersion(model, run_name, fig1_path)
+    figure_residuals(eps, x_diag, d_diag, model, wm, run_name, fig2_path)
+    write_gate_report(run_name, ckpt, wm, disp, len(x_diag), gate_path, suffix)
 
     print(
         f"게이트 (a) RMSE {wm['rmse']:.5f} vs {GATE_A_RMSE}: "
@@ -491,10 +506,7 @@ def main() -> int:
         f"채널비 {wm['channel_rmse_ratio']:.3f} / rho1 {wm['rho1']:+.4f} / "
         f"RMSE/σ_hf {wm['rmse_over_sigma_hf']:.3f}"
     )
-    print(
-        f"산출물: {GATE_PATH}, {FIG_DIR}/fig_stage_a1_dispersion.png, "
-        f"{FIG_DIR}/fig_stage_a2_residuals.png"
-    )
+    print(f"산출물: {gate_path}, {fig1_path}, {fig2_path}")
     return 0
 
 

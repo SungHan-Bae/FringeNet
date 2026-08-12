@@ -268,6 +268,83 @@ def test_adachi_fit_and_checkpoint_roundtrip(tmp_path: Path) -> None:
     assert rmse == pytest.approx(result["best_val_rmse"], rel=1e-6)
 
 
+def _lbfgs_cfg(steps: int = 12) -> dict:
+    cfg = _fit_cfg(steps=steps, eval_every=4)
+    cfg["fit"].update({"optimizer": "lbfgs", "lr": 1.0, "lr_schedule": "none", "warmup_steps": 0})
+    return cfg
+
+
+def test_lbfgs_full_batch_mode(tmp_path: Path) -> None:
+    """전배치 L-BFGS 모드 — 참 해 근방(작은 섭동) 시작이면 노이즈 없는 합성 문제를
+    빠르게 조여야 한다. (from-scratch는 계약이 아니다 — fringe 차수 비볼록 구간은
+    라인서치가 못 뚫는다. L-BFGS는 수렴한 Adam 해의 폴리시 용도.)"""
+    truth, r_obs, d = _synthetic_problem(seed=7)
+    start = _small_stack()
+    start.load_state_dict(truth.state_dict())
+    _perturb(start, scale=0.05, seed=1)
+    with torch.no_grad():
+        init_pred = start(torch.from_numpy(d[192:]).to(torch.float64))
+    init_rmse = float(((init_pred.numpy() - r_obs[192:].astype(np.float64)) ** 2).mean() ** 0.5)
+    result = fit_calibration(
+        r_obs[:192],
+        d[:192],
+        r_obs[192:],
+        d[192:],
+        _lbfgs_cfg(),
+        tmp_path,
+        lam_grid=truth.lam().detach().numpy(),
+        init_state=start.state_dict(),
+    )
+    assert result["best_val_rmse"] < 0.05 * init_rmse
+
+    with pytest.raises(ValueError, match="lr_schedule"):
+        bad = _lbfgs_cfg()
+        bad["fit"]["lr_schedule"] = "cosine"
+        fit_calibration(
+            r_obs[:192],
+            d[:192],
+            r_obs[192:],
+            d[192:],
+            bad,
+            tmp_path / "bad",
+            lam_init=(400.0, 800.0),
+            descending=False,
+        )
+
+
+def test_lbfgs_warm_start_from_state(tmp_path: Path) -> None:
+    """init_state 워름스타트 — Adam 해에서 시작한 L-BFGS 폴리시가 해를 악화시키지 않는다."""
+    _, r_obs, d = _synthetic_problem(seed=9)
+    adam_dir = tmp_path / "adam"
+    adam_dir.mkdir()
+    adam = fit_calibration(
+        r_obs[:192],
+        d[:192],
+        r_obs[192:],
+        d[192:],
+        _fit_cfg(steps=120, eval_every=40),
+        adam_dir,
+        lam_init=(400.0, 800.0),
+        descending=False,
+    )
+    prior, _ = load_calibrated_stack(adam_dir / "model.pt")
+    polish_dir = tmp_path / "polish"
+    polish_dir.mkdir()
+    polish = fit_calibration(
+        r_obs[:192],
+        d[:192],
+        r_obs[192:],
+        d[192:],
+        _lbfgs_cfg(steps=8),
+        polish_dir,
+        lam_grid=prior.lam().detach().numpy(),
+        init_state=prior.state_dict(),
+    )
+    # 워름스타트가 실제로 이식됐다면 폴리시 best는 Adam best 이하 (라인서치는
+    # 충분감소를 요구하므로 발산으로 악화될 수 없다).
+    assert polish["best_val_rmse"] <= adam["best_val_rmse"] * (1 + 1e-9)
+
+
 # ---------------------------------------------------------------------------
 # fit_calibration — 합성 복원·체크포인트·resume 계약
 # ---------------------------------------------------------------------------

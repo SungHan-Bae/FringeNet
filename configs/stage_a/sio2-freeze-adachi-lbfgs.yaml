@@ -1,0 +1,31 @@
+# stage_a — sio2-freeze-adachi의 L-BFGS 폴리시: Adam 수렴 해(0.01442)에서 워름스타트해
+# 전배치 L-BFGS(strong Wolfe)로 미세조정. 목적은 성능이 아니라 **판별**이다 —
+# Adachi 모델족의 정체가 옵티마이저 한계(Adam 미수렴)인지 모델족 한계인지 분리:
+#   - L-BFGS가 거의 못 내리면 → 0.0144는 모델족 한계 (사전 예측의 "미수렴 반론" 차단)
+#   - 크게 내리면 (예: 게이트 방향) → Adam 미수렴 판명, 예측 평가 수정
+# L-BFGS는 라인서치·곡률 이력이 결정론 손실을 전제하므로 미니배치 없이 fit 5만 행
+# 전체를 청크 누적으로 평가한다 (스텝당 라인서치 포함 전배치 수회 평가).
+seed: 42
+experiment: stage_a
+run_name: sio2-freeze-adachi-lbfgs
+
+data:
+  val_frac: 0.1
+  fit_rows: 50000      # seed 동일 → adachi run과 같은 fit/diag 표본 (워름스타트 정합)
+  diag_rows: 20000
+
+model:
+  si_param: adachi
+  n_si_knots: 24       # adachi 모드에서는 미사용 (설정 지문·구조 스냅샷에만 남는다)
+  init_from_run: runs/stage_a/sio2-freeze-adachi   # 같은 구조 → state_dict 워름스타트
+
+fit:
+  optimizer: lbfgs
+  steps: 60            # L-BFGS 외부 반복 (반복당 전배치 라인서치 포함, ~25s 예상)
+  history_size: 20
+  batch_size: 4096     # 전배치 평가의 청크 크기 (메모리 상한)
+  lr: 1.0              # strong Wolfe 라인서치가 실보폭을 정한다
+  lr_schedule: none
+  warmup_steps: 0
+  eval_every: 1        # 스텝이 비싸므로 매 스텝 평가·저장
+  eval_batch: 8192
