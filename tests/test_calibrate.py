@@ -1,340 +1,265 @@
-"""Stage A 캘리브레이션(src/calibrate.py·src/physics/dispersion.py) 단위 테스트.
+"""Stage A 캘리브레이션의 단위 테스트 — 파라미터화 계약과 식별 복원.
 
-대회 데이터·GPU 없이 전부 돈다 — 합성 데이터는 CalibratedStack 자신(참 파라미터로
-섭동한 사본)으로 생성한다. 채널 수를 줄인 작은 스택으로 빠르게 검증한다.
+대회 데이터·GPU 없이 전부 돈다. 합성 데이터는 `PhysicalStack` 자신(참 파라미터로
+설정)이 만들고, 그것을 되찾을 수 있는지 확인한다.
+
+여기서 지키려는 계약:
+  1. **게이지 고정** — SiO₂ n(λ)는 어떤 파라미터를 흔들어도 문헌값에서 움직이지 않는다.
+     이게 깨지면 λ와 n이 동시에 자유로워져 해가 하나로 정해지지 않는다.
+  2. **자유도가 선언한 것만 움직인다** — `free`에 없는 파라미터는 초기값에 고정.
+  3. **물리 제약** — λ 강단조·양수, k_Si > 0, 0 ≤ R < 1.
+  4. **주파수 식별의 닫힌형 복원** — 전수 격자 합성 데이터에서 참 λ를 되찾는다.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
 from src.calibrate import (
-    CalibratedStack,
-    fit_calibration,
-    identify_initial_grid,
-    load_calibrated_stack,
+    GATE_A_RMSE,
+    NOISE_BOUND,
+    NOISE_SIGMA,
+    PARAM_NAMES,
+    PhysicalStack,
+    fit_lam_coefficients,
+    residual_stats,
 )
-from src.physics.dispersion import (
-    cauchy_n,
-    fit_cauchy,
-    linear_interp_matrix,
-    si3n4_n,
-    si_nk,
-    sio2_n,
-    softplus_inverse,
-)
+from src.physics.freq_id import identify_wavelength_grid
 
-# ---------------------------------------------------------------------------
-# dispersion — 문헌값·유틸
-# ---------------------------------------------------------------------------
+DTYPE = torch.float64
+# 테스트용 λ 계수 — 실데이터 식별 결과와 같은 형태 (1/λ가 채널에 거의 선형).
+LAM_COEFFS = (0.00126322, 1.799421, -0.008633)
 
 
-def test_sio2_literature_value() -> None:
-    # fused silica의 n_d (587.6 nm) = 1.4585 — Malitson 1965의 대표값.
-    assert sio2_n(np.array([587.6]))[0] == pytest.approx(1.4585, abs=2e-3)
-
-
-def test_si3n4_plausible_range() -> None:
-    lam = np.linspace(400.0, 800.0, 50)
-    n = si3n4_n(lam)
-    assert np.all((n > 1.9) & (n < 2.2))
-    assert np.all(np.diff(n) < 0)  # 정상 분산: λ↑ → n↓
-
-
-def test_si_table_plausible() -> None:
-    lam = np.linspace(400.0, 900.0, 60)
-    n, k = si_nk(lam)
-    assert np.all(np.diff(n) <= 0)  # 가시광에서 단조 감소
-    assert np.all(k >= 0)
-    assert 3.8 < si_nk(np.array([600.0]))[0][0] < 4.1
-
-
-def test_fit_cauchy_reproduces_sellmeier() -> None:
-    lam = np.linspace(400.0, 800.0, 226)
-    coeffs = fit_cauchy(lam, sio2_n(lam))
-    fitted = cauchy_n(torch.from_numpy(lam), torch.from_numpy(coeffs)).numpy()
-    assert np.max(np.abs(fitted - sio2_n(lam))) < 2e-4
-
-
-def test_linear_interp_matrix() -> None:
-    p = linear_interp_matrix(5, 3)
-    assert p.shape == (5, 3)
-    assert torch.allclose(p.sum(dim=1), torch.ones(5, dtype=torch.float64))
-    assert torch.all(p >= 0)
-    knots = torch.tensor([1.0, 3.0, 2.0], dtype=torch.float64)
-    curve = p @ knots
-    # 끝점·knot 위치는 knot값 그대로, 중간은 선형 보간.
-    assert curve[0] == pytest.approx(1.0)
-    assert curve[2] == pytest.approx(3.0)
-    assert curve[4] == pytest.approx(2.0)
-    assert curve[1] == pytest.approx(2.0)  # (1+3)/2
-
-
-def test_softplus_inverse_roundtrip() -> None:
-    y = torch.tensor([1e-4, 0.5, 1.77, 400.0, 1000.0], dtype=torch.float64)
-    assert torch.allclose(torch.nn.functional.softplus(softplus_inverse(y)), y, rtol=1e-12)
-
-
-# ---------------------------------------------------------------------------
-# CalibratedStack — 파라미터화 계약
-# ---------------------------------------------------------------------------
-
-
-def _small_stack(**kwargs: object) -> CalibratedStack:
-    defaults: dict = {"n_channels": 32, "n_si_knots": 5, "lam_init": (400.0, 800.0)}
+def _stack(free: tuple[str, ...] = (), **kwargs: object) -> PhysicalStack:
+    defaults: dict = {"n_channels": 32, "lam_coeffs": LAM_COEFFS, "free": free}
     defaults.update(kwargs)
-    return CalibratedStack(**defaults)
+    return PhysicalStack(**defaults)  # type: ignore[arg-type]
 
 
-def _perturb(model: CalibratedStack, scale: float = 1.0, seed: int = 0) -> None:
-    """raw 파라미터를 무작위로 흔든다 (제약이 섭동 후에도 유지되는지 검증용)."""
+def _perturb(model: PhysicalStack, scale: float = 1.0, seed: int = 0) -> None:
+    """자유 파라미터를 무작위로 흔든다 (계약이 섭동 후에도 유지되는지 보기 위해)."""
     gen = torch.Generator().manual_seed(seed)
     with torch.no_grad():
-        for p in model.parameters():
-            p.add_(scale * torch.randn(p.shape, generator=gen, dtype=p.dtype))
+        model.theta.add_(scale * torch.randn(model.theta.shape, generator=gen, dtype=DTYPE))
 
 
-def test_lam_grid_monotone_after_perturbation() -> None:
-    for descending in (False, True):
-        model = _small_stack(descending=descending)
-        _perturb(model, scale=2.0)
-        lam = model.lam()
-        assert lam.shape == (32,)
-        assert torch.all(lam > 0)
-        diffs = lam.diff()
-        assert torch.all(diffs < 0) if descending else torch.all(diffs > 0)
+# ---------------------------------------------------------------------------
+# 게이트 상수 — 노이즈 측정값에서 유도된 값이라 고정한다
+# ---------------------------------------------------------------------------
 
 
-def test_gauge_sio2_frozen() -> None:
-    model = _small_stack()
-    trainable = {name for name, p in model.named_parameters() if p.requires_grad}
-    assert trainable == {"raw_lam_min", "raw_dlam", "raw_sin", "raw_si_n", "raw_si_k"}
-
-    # 최적화 스텝을 밟아도 SiO₂ Cauchy(buffer)는 변하지 않고 SiN은 움직인다.
-    sio2_before = model.sio2_cauchy.clone()
-    _, n_layers_before, _ = model.spectra()
-    opt = torch.optim.Adam(model.parameters(), lr=1e-2)
-    d = torch.rand(8, 4, dtype=torch.float64) * 290 + 10
-    for _ in range(3):
-        loss = model(d).mean()
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-    assert torch.equal(model.sio2_cauchy, sio2_before)
-    _, n_layers_after, _ = model.spectra()
-    assert not torch.allclose(n_layers_after[0], n_layers_before[0])  # SiN(layer 1) 갱신
-    # λ가 움직이므로 SiO₂ 채널값은 변할 수 있으나, 함수 자체(계수)는 고정이 계약이다.
+def test_gate_constants_are_derived_from_measured_noise() -> None:
+    """σ는 측정값(scripts/measure_noise.py), 임계는 1.2σ, 상한은 유계 노이즈 관측값."""
+    assert pytest.approx(0.008658) == NOISE_SIGMA
+    assert pytest.approx(1.2 * NOISE_SIGMA) == GATE_A_RMSE
+    # 균등분포 가정의 폭 σ√3 ≈ 0.015 와 관측 최소값 −0.015117 사이에 있어야 한다.
+    assert NOISE_SIGMA * np.sqrt(3.0) <= NOISE_BOUND <= 0.016
 
 
-def test_si_k_nonnegative_and_sign_convention() -> None:
-    model = _small_stack()
-    _perturb(model, scale=3.0, seed=7)
-    _, n_layers, ns = model.spectra()
-    assert torch.all(ns.imag <= 0)  # n − i·k, k ≥ 0 (tmm.py 부호 관례)
-    assert torch.all(n_layers.imag == 0)  # 층은 k=0 가정
-    assert torch.all(n_layers.real > 1.0)
+# ---------------------------------------------------------------------------
+# λ 3계수 적합
+# ---------------------------------------------------------------------------
 
 
-def test_stack_accepts_explicit_lam_grid() -> None:
-    grid = np.linspace(700.0, 300.0, 32)  # 채널 내림차순
-    model = CalibratedStack(n_channels=32, n_si_knots=5, lam_grid=grid)
-    assert model.descending
-    assert np.allclose(model.lam().detach().numpy(), grid)
-    with pytest.raises(ValueError, match="단조"):
-        CalibratedStack(n_channels=32, n_si_knots=5, lam_grid=np.ones(32))
+def test_fit_lam_coefficients_recovers_smooth_curve() -> None:
+    """1/λ이 채널의 2차 다항식인 그리드에서 계수를 정확히 되찾는다."""
+    u = np.linspace(0.0, 1.0, 226)
+    nu0, r1, r2 = LAM_COEFFS
+    lam = 1.0 / (nu0 * (1.0 + r1 * u + r2 * u**2))
+    got = fit_lam_coefficients(lam)
+    assert got == pytest.approx(LAM_COEFFS, rel=1e-9)
 
 
-def test_sin_knot_mode_and_curve_inits() -> None:
-    """n_sin_knots + curve_inits — phase 2(채널별 미세조정) 계약.
+def test_fit_lam_coefficients_is_robust_to_outliers() -> None:
+    """식별 실패 채널이 섞여도 강건 적합이 계수를 지켜야 한다."""
+    u = np.linspace(0.0, 1.0, 226)
+    nu0, r1, r2 = LAM_COEFFS
+    lam = 1.0 / (nu0 * (1.0 + r1 * u + r2 * u**2))
+    corrupted = lam.copy()
+    corrupted[[10, 50, 51, 120, 200]] *= 1.35  # 35% 튀는 채널 5개
+    got = fit_lam_coefficients(corrupted)
+    assert got == pytest.approx(LAM_COEFFS, rel=2e-3)
 
-    초기 상태에서 spectra()가 준 곡선을 그대로 재현해야 하고(연속 워밍스타트),
-    학습 가능한 파라미터에 SiN knot이 포함되며, 체크포인트 왕복이 성립해야 한다.
+
+# ---------------------------------------------------------------------------
+# PhysicalStack — 파라미터화 계약
+# ---------------------------------------------------------------------------
+
+
+def test_gauge_sio2_is_frozen_under_any_perturbation() -> None:
+    """SiO₂ n(λ)는 λ가 움직여도 **문헌 곡선 위에** 있어야 한다 (게이지 고정).
+
+    λ가 바뀌면 평가 지점이 바뀌니 값 자체는 변한다. 검증할 것은 "그 λ에서의
+    Malitson 값"과 일치하는지다 — 즉 SiO₂에 자유도가 없다는 것.
     """
-    w = 32
-    grid = np.linspace(700.0, 300.0, w)
-    curves = {
-        "n_sin": np.linspace(2.2, 2.0, w),
-        "n_si": np.linspace(6.0, 3.7, w),
-        "k_si": np.linspace(3.0, 0.01, w),
-    }
-    model = CalibratedStack(
-        n_channels=w, n_si_knots=w, n_sin_knots=w, lam_grid=grid, curve_inits=curves
-    )
+    from src.physics.dispersion import sio2_n
+
+    model = _stack(free=("lam_nu0", "lam_r1", "sin_b1"))
+    _perturb(model, scale=2.0)
     with torch.no_grad():
-        lam, n_layers, ns = model.spectra()
-    assert np.allclose(lam.numpy(), grid)
-    assert np.allclose(n_layers[0].real.numpy(), curves["n_sin"])
-    assert np.allclose(ns.real.numpy(), curves["n_si"])
-    assert np.allclose(-ns.imag.numpy(), curves["k_si"], atol=1e-9)
-    trainable = {name for name, p in model.named_parameters() if p.requires_grad}
-    assert trainable == {"raw_lam_min", "raw_dlam", "raw_sin", "raw_si_n", "raw_si_k"}
-    assert model.raw_sin.shape == (w,)  # knot 모드 — Cauchy(3)가 아니라 채널별
+        lam, n_layers, _ = model.spectra()
+    assert np.allclose(n_layers[1].real.numpy(), sio2_n(lam.numpy()), atol=1e-12)
+    assert np.allclose(n_layers[3].real.numpy(), sio2_n(lam.numpy()), atol=1e-12)
 
 
-def test_forward_shapes_and_physical_range() -> None:
-    model = _small_stack()
-    d = torch.rand(16, 4, dtype=torch.float64) * 290 + 10
-    r = model(d)
-    assert r.shape == (16, 32)
-    assert r.dtype == torch.float64
-    assert torch.all((r >= 0) & (r <= 1))  # 무흡수층 + 흡수 기판 → 0 ≤ R ≤ 1
-    grad = torch.autograd.grad(r.sum(), model.raw_lam_min)[0]
-    assert torch.isfinite(grad)
+def test_frozen_parameters_do_not_move() -> None:
+    """`free`에 없는 파라미터는 섭동 후에도 초기값이어야 한다."""
+    model = _stack(free=("sin_b1",))
+    before = model.physical_values()
+    _perturb(model, scale=3.0)
+    after = model.physical_values()
+    assert after["sin_b1"] != pytest.approx(before["sin_b1"])
+    for name in PARAM_NAMES:
+        if name != "sin_b1":
+            assert after[name] == pytest.approx(before[name])
+
+
+def test_lam_grid_is_positive_and_strictly_monotone() -> None:
+    """λ는 양수·강단조여야 한다 (분광기 격자 분산)."""
+    model = _stack(free=("lam_nu0", "lam_r1", "lam_r2"))
+    for seed in range(5):
+        _perturb(model, scale=1.0, seed=seed)
+        with torch.no_grad():
+            lam = model.lam().numpy()
+        assert (lam > 0).all()
+        assert np.all(np.diff(lam) < 0) or np.all(np.diff(lam) > 0)
+
+
+def test_si_k_positive_and_sign_convention() -> None:
+    """k_Si > 0 이고 기판 굴절률은 n − i·k 관례를 따라야 한다."""
+    model = _stack(free=("si_klog", "si_de"))
+    _perturb(model, scale=2.0)
+    with torch.no_grad():
+        _, _, ns = model.spectra()
+    assert (ns.imag < 0).all()  # n − i·k, k > 0
+    assert ((-ns.imag) > 0).all()
+
+
+def test_forward_shape_and_physical_range() -> None:
+    """R: (B, W) 이고 0 ≤ R < 1 이어야 한다."""
+    model = _stack(free=("sin_b1",))
+    d = torch.tensor([[10.0, 300.0, 150.0, 20.0], [100.0, 100.0, 100.0, 100.0]], dtype=DTYPE)
+    with torch.no_grad():
+        r = model(d)
+    assert r.shape == (2, 32)
+    assert r.dtype == DTYPE
+    assert (r >= 0).all() and (r < 1).all()
+
+
+def test_unknown_free_parameter_raises() -> None:
+    """오타를 조용히 무시하지 않는다 (자유도를 잘못 세면 판정이 무의미해진다)."""
+    with pytest.raises(ValueError, match="모르는 자유 파라미터"):
+        _stack(free=("sin_b9",))
+
+
+def test_model_cfg_round_trips() -> None:
+    """model_cfg만으로 같은 구조를 복원할 수 있어야 한다 (체크포인트 계약)."""
+    model = _stack(free=("lam_nu0", "sin_b1"), si_source="Si_nk_Green-2008.yml")
+    clone = PhysicalStack(**model.model_cfg)
+    with torch.no_grad():
+        clone.theta.copy_(model.theta)
+        assert torch.allclose(clone.lam(), model.lam())
+    assert clone.free == model.free
+    assert clone.si_source == model.si_source
+
+
+def test_coarse_si_source_differs_from_literature_table() -> None:
+    """대조군(`coarse`)이 실제로 다른 Si 곡선을 써야 한다 — ablation의 전제."""
+    lit = _stack(si_source="Si_nk_Aspnes.yml")
+    coarse = _stack(si_source="coarse")
+    with torch.no_grad():
+        n_lit = lit.spectra()[2].real.numpy()
+        n_coarse = coarse.spectra()[2].real.numpy()
+    assert np.abs(n_lit - n_coarse).max() > 0.1
 
 
 # ---------------------------------------------------------------------------
-# fit_calibration — 합성 복원·체크포인트·resume 계약
+# 잔차 통계 — 유계 노이즈 위반 판정
 # ---------------------------------------------------------------------------
 
 
-def _synthetic_problem(
-    n_rows: int = 256, seed: int = 0
-) -> tuple[CalibratedStack, np.ndarray, np.ndarray]:
-    """참 스택(문헌 초기값에서 섭동)과 그로부터 생성한 (R_obs, d) 표본."""
-    truth = _small_stack()
+def test_residual_stats_counts_bounded_noise_violations() -> None:
+    """상한을 넘는 관측을 정확히 센다 (게이트 (b)의 핵심 계산)."""
+    model = _stack()
+    d = torch.tensor([[100.0, 100.0, 100.0, 100.0]], dtype=DTYPE).repeat(4, 1)
     with torch.no_grad():
-        truth.raw_lam_min.add_(0.15)  # λ 전체 +15 nm 이동
-        truth.raw_sin.add_(torch.tensor([0.6, 0.3, 0.1], dtype=torch.float64))
-        truth.raw_si_n.add_(0.5)
-        truth.raw_si_k.add_(0.4)
-    gen = torch.Generator().manual_seed(seed)
-    d = (torch.rand(n_rows, 4, generator=gen, dtype=torch.float64) * 290 + 10).round()
-    with torch.no_grad():
-        r = truth(d)
-    return truth, r.numpy().astype(np.float32), d.numpy().astype(np.float32)
+        clean = model(d).numpy()
+    obs = clean.copy()
+    obs[0, 0] += NOISE_BOUND * 2.0  # 확실한 위반 1건
+    obs[1, 1] += NOISE_BOUND * 0.5  # 상한 이내
+    stats = residual_stats(model, obs.astype(np.float32), d.numpy())
+    assert stats["n_obs"] == obs.size
+    assert stats["violation_rate"] == pytest.approx(1.0 / obs.size)
+    assert stats["max_abs_residual"] > NOISE_BOUND
+
+    channels = np.array([1, 2, 3])  # 위반 채널(0)을 제외하면 0%
+    masked = residual_stats(model, obs.astype(np.float32), d.numpy(), channels=channels)
+    assert masked["violation_rate"] == 0.0
 
 
-def _fit_cfg(steps: int = 60, eval_every: int = 20) -> dict:
-    return {
-        "seed": 0,
-        "model": {"n_si_knots": 5},
-        "fit": {
-            "steps": steps,
-            "batch_size": 128,
-            "lr": 1.0e-2,
-            "lr_schedule": "cosine",
-            "warmup_steps": 5,
-            "eval_every": eval_every,
-            "eval_batch": 256,
-        },
-    }
+# ---------------------------------------------------------------------------
+# 두께축 주파수 식별 — 닫힌형 복원
+# ---------------------------------------------------------------------------
 
 
-def test_identify_initial_grid_recovers_synthetic(tmp_path: Path) -> None:
-    """주파수 식별이 합성 데이터의 λ 그리드·n_SiN을 닫힌형으로 복원하는지 검증.
+def test_identify_wavelength_grid_recovers_synthetic_lambda() -> None:
+    """전수 격자 합성 데이터에서 참 λ 그리드를 닫힌형으로 되찾는지 검증.
 
     조건부 평균이 정확한 주변화가 되도록 실데이터처럼 **전수 격자**로 생성한다
     (15값 20 nm 격자 × 4층 = 50,625행 — 무작위 표본은 bin 노이즈로 추정이 흔들린다).
+    Nyquist: 1/(2·20 nm) = 0.025 > f_max 0.022 를 지킨다.
     """
-    truth_grid = np.linspace(750.0, 310.0, 32)  # 내림차순
-    truth = CalibratedStack(n_channels=32, n_si_knots=5, lam_grid=truth_grid)
-    vals = np.arange(20.0, 320.0, 20.0)  # 15개 값, Nyquist 1/(2·20) > f_max 0.022 유지
-    mesh = np.stack(np.meshgrid(vals, vals, vals, vals, indexing="ij"), axis=-1).reshape(-1, 4)
-    d = torch.from_numpy(mesh).to(torch.float64)
-    r = np.empty((len(d), 32), dtype=np.float32)
+    n_ch = 32
+    u = np.linspace(0.0, 1.0, n_ch)
+    nu0, r1, r2 = LAM_COEFFS
+    truth_grid = 1.0 / (nu0 * (1.0 + r1 * u + r2 * u**2))  # 내림차순 792→284 nm
+    truth = PhysicalStack(n_channels=n_ch, lam_coeffs=LAM_COEFFS)
+
+    vals = np.arange(20.0, 320.0, 20.0)
+    mesh = np.stack(np.meshgrid(*([vals] * 4), indexing="ij"), axis=-1).reshape(-1, 4)
+    d = torch.from_numpy(mesh).to(DTYPE)
+    r = np.empty((len(d), n_ch), dtype=np.float32)
     with torch.no_grad():
         for s in range(0, len(d), 8192):
             r[s : s + 8192] = truth(d[s : s + 8192]).numpy()
         n_sin_truth = truth.spectra()[1][0].real.numpy()
 
-    ident = identify_initial_grid(r, mesh.astype(np.float32), tmp_path)
+    ident = identify_wavelength_grid(r, mesh)
     lam_est = ident["lam_grid"]
-    assert ident["diagnostics"]["descending"]
+    diag = ident["diagnostics"]
+
+    assert diag["descending"]
     assert np.all(np.diff(lam_est) < 0)
-    # λ 복원: 주파수 그리드 해상도(~0.5–3 nm) + 조화 근사 오차 허용
+    # λ 복원: 주파수 격자 해상도(~0.5–3 nm) + 조화 근사 오차 허용
     assert float(np.median(np.abs(lam_est - truth_grid))) < 3.0
     assert float(np.abs(lam_est - truth_grid).max()) < 10.0
     # n_SiN 복원 (f₁·λ/2)
     assert float(np.abs(ident["n_sin_samples"][1] - n_sin_truth).max()) < 0.05
+    # 자체 검증 수치: 같은 물리량의 층별 독립 추정이 일치해야 한다
+    assert diag["lam24_dev_median"] < 3.0
+    assert diag["n_sin13_dev_median"] < 0.02
 
 
-def test_fit_recovers_synthetic_truth(tmp_path: Path) -> None:
-    truth, r_obs, d = _synthetic_problem()
-    init_rmse_model = _small_stack()
-    with torch.no_grad():
-        init_pred = init_rmse_model(torch.from_numpy(d).to(torch.float64))
-    init_rmse = float(((init_pred.numpy() - r_obs.astype(np.float64)) ** 2).mean() ** 0.5)
+def test_identify_wavelength_grid_rejects_incomplete_grid() -> None:
+    """격자를 덮지 못한 표본은 조용히 통과시키지 않는다 (조건부 평균이 무의미해진다).
 
-    result = fit_calibration(
-        r_obs[:192],
-        d[:192],
-        r_obs[192:],
-        d[192:],
-        _fit_cfg(steps=800, eval_every=200),
-        tmp_path,
-        lam_init=(400.0, 800.0),
-        descending=False,
-    )
-    # 노이즈 없는 합성 문제 — 초기 대비 큰 폭으로 내려가야 학습이 실제로 작동하는 것
-    # (실측: 800스텝에 ~240× 감소. 여유를 두고 20×를 요구한다).
-    assert result["best_val_rmse"] < 0.05 * init_rmse
-
-    model, ckpt = load_calibrated_stack(tmp_path / "model.pt")
-    assert ckpt["val_rmse"] == pytest.approx(result["best_val_rmse"])
-    with torch.no_grad():
-        pred = model(torch.from_numpy(d[192:]).to(torch.float64))
-    rmse = float(((pred.numpy() - r_obs[192:].astype(np.float64)) ** 2).mean() ** 0.5)
-    assert rmse == pytest.approx(result["best_val_rmse"], rel=1e-6)  # 체크포인트 왕복 일치
+    layer_1이 100 nm만 갖는데 다른 층이 200 nm를 가지면, 조건 E[R | d₁ = 200]의
+    표본이 비어 주변화가 성립하지 않는다 — 그걸 잡아야 한다.
+    """
+    d = np.full((16, 4), 100.0)
+    d[:, 1] = 200.0  # 격자값 {100, 200} 중 layer_1은 100을 못 가진다
+    x = np.zeros((16, 8), dtype=np.float32)
+    with pytest.raises(ValueError, match="행이 없다"):
+        identify_wavelength_grid(x, d)
 
 
-def test_resume_after_interrupt_matches_uninterrupted(tmp_path: Path) -> None:
-    _, r_obs, d = _synthetic_problem(seed=3)
-    cfg = _fit_cfg(steps=60, eval_every=20)
-    kwargs: dict = {"lam_init": (400.0, 800.0), "descending": False}
-
-    full_dir = tmp_path / "full"
-    full_dir.mkdir()
-    full = fit_calibration(r_obs[:192], d[:192], r_obs[192:], d[192:], cfg, full_dir, **kwargs)
-
-    part_dir = tmp_path / "interrupted"
-    part_dir.mkdir()
-    with pytest.raises(RuntimeError, match="중단"):
-        fit_calibration(
-            r_obs[:192],
-            d[:192],
-            r_obs[192:],
-            d[192:],
-            cfg,
-            part_dir,
-            _abort_after_eval=1,
-            **kwargs,
-        )
-    assert (part_dir / "resume.pt").exists()
-    assert (part_dir / "model.pt").exists()  # best는 갱신 즉시 저장 — 중단 시점에도 존재
-    resumed = fit_calibration(r_obs[:192], d[:192], r_obs[192:], d[192:], cfg, part_dir, **kwargs)
-
-    assert resumed["best_step"] == full["best_step"]
-    assert resumed["best_val_rmse"] == pytest.approx(full["best_val_rmse"], abs=1e-12)
-    full_model, _ = load_calibrated_stack(full_dir / "model.pt")
-    part_model, _ = load_calibrated_stack(part_dir / "model.pt")
-    for (name, a), (_, b) in zip(
-        full_model.state_dict().items(), part_model.state_dict().items(), strict=True
-    ):
-        assert torch.allclose(a, b, atol=1e-12), name
-    assert not (part_dir / "resume.pt").exists()  # 완료 시 재개 상태는 정리된다
-    assert "resume" in (part_dir / "train.log").read_text()
-
-
-def test_resume_rejects_mismatched_config(tmp_path: Path) -> None:
-    _, r_obs, d = _synthetic_problem(seed=5)
-    cfg = _fit_cfg(steps=40, eval_every=20)
-    kwargs: dict = {"lam_init": (400.0, 800.0), "descending": False}
-    with pytest.raises(RuntimeError, match="중단"):
-        fit_calibration(
-            r_obs[:192],
-            d[:192],
-            r_obs[192:],
-            d[192:],
-            cfg,
-            tmp_path,
-            _abort_after_eval=1,
-            **kwargs,
-        )
-    other = _fit_cfg(steps=40, eval_every=20)
-    other["fit"]["lr"] = 9.9e-3
-    with pytest.raises(ValueError, match="resume"):
-        fit_calibration(r_obs[:192], d[:192], r_obs[192:], d[192:], other, tmp_path, **kwargs)
+def test_identify_wavelength_grid_reports_total_failure() -> None:
+    """전 채널 식별이 실패하면 numpy 오류가 아니라 원인을 말하는 예외를 던진다."""
+    vals = np.arange(20.0, 320.0, 20.0)
+    mesh = np.stack(np.meshgrid(*([vals] * 4), indexing="ij"), axis=-1).reshape(-1, 4)
+    flat = np.zeros((len(mesh), 8), dtype=np.float32)  # 무늬가 전혀 없는 스펙트럼
+    with pytest.raises(ValueError, match="모든 채널의 주파수 식별이 실패"):
+        identify_wavelength_grid(flat, mesh)

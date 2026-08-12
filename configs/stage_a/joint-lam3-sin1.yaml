@@ -1,0 +1,16 @@
+# stage_a — 사다리 2단: λ 3계수를 추가로 해방해 공동 LM 피팅.
+#
+# λ가 주파수 식별의 자체 흔들림(0.445 nm)보다 적게 움직이면, 독립적인 두 방법(두께축
+# 주파수 식별 vs 전체 TMM 최소제곱)이 같은 답에 도달한 것 — 캘리브레이션 신뢰의 직접
+# 근거다. 출발점이 이미 맞는 fringe 차수 분지에 있으므로 λ 해방에 비볼록 위험이 없다.
+seed: 42
+experiment: stage_a
+run_name: joint-lam3-sin1
+
+data:
+  fit_rows: 8000        # 자유도 1~7개에 관측 180만 개 — 표본 수는 병목이 아니다
+  diag_rows: 20000      # 전 run 공통 진단 표본 (load_split이 상수로 고정)
+
+model:
+  si_source: Si_nk_Aspnes.yml
+  free: [lam_nu0, lam_r1, lam_r2, sin_b1]

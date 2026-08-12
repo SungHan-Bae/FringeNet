@@ -1,0 +1,18 @@
+# stage_a — 사다리 0단(대조군): Si 표를 거친 19점 + λ축 선형 보간으로 바꾼다.
+#
+# `lam-frozen-sin1`과 **Si 표·보간만** 다르다 → 문헌 실측표와 에너지축 스플라인의
+# 기여를 분리해 잰다. 거친 표는 E1 봉우리를 6.767 → 6.479로 깎고 단파장 n을 최대
+# 0.43 틀리며, 그 결과 두께 역해 MAE가 0.663 → 1.104 nm로 나빠진다.
+#
+# **이 설정을 실사용하지 말 것** — 측정용 대조군이다.
+seed: 42
+experiment: stage_a
+run_name: lam-frozen-sin1-coarsesi
+
+data:
+  fit_rows: 8000        # 자유도 1~7개에 관측 180만 개 — 표본 수는 병목이 아니다
+  diag_rows: 20000      # 전 run 공통 진단 표본 (load_split이 상수로 고정)
+
+model:
+  si_source: coarse
+  free: [sin_b1]

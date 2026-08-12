@@ -1,0 +1,17 @@
+# stage_a — 사다리 3단(최종): 물리적으로 의미 있는 손잡이를 전부(7개) 해방.
+#
+# 추가분: SiN C₁(공명 위치 = 밴드갭 = 조성), Si 에너지축 시프트 ΔE(온도·응력·도핑),
+# Si k 스케일. 어느 손잡이가 개선을 만드는지가 잔여 계통오차의 정체를 가리킨다.
+#
+# **Stage B 물리 디코더로 채택된 설정.**
+seed: 42
+experiment: stage_a
+run_name: joint-lam3-sin2-si2
+
+data:
+  fit_rows: 8000        # 자유도 1~7개에 관측 180만 개 — 표본 수는 병목이 아니다
+  diag_rows: 20000      # 전 run 공통 진단 표본 (load_split이 상수로 고정)
+
+model:
+  si_source: Si_nk_Aspnes.yml
+  free: [lam_nu0, lam_r1, lam_r2, sin_b1, sin_c1, si_de, si_klog]

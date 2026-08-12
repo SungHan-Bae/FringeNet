@@ -1,0 +1,20 @@
+# stage_a — 검정용: 채널 홀드아웃.
+#
+# 226채널 중 20개를 균등 간격으로 **피팅에서 제외**하고 그 채널의 R을 예측한다.
+# λ와 물성이 매끈한 함수여야만 가능한 일이다 — 채널별 자유 파라미터를 쓰는 모델은
+# 그 채널에 배정된 값이 없어 원리적으로 불가능하다. 물리 파라미터화가 내용을 가진다는
+# 직접 증거이자, 채널 방향 과적합이 없다는 확인이다.
+#
+# 나머지 설정은 joint-lam3-sin2-si2와 동일.
+seed: 42
+experiment: stage_a
+run_name: holdout-channels
+
+data:
+  fit_rows: 8000        # 자유도 1~7개에 관측 180만 개 — 표본 수는 병목이 아니다
+  diag_rows: 20000      # 전 run 공통 진단 표본 (load_split이 상수로 고정)
+
+model:
+  si_source: Si_nk_Aspnes.yml
+  holdout_channels: 20   # 균등 간격 20채널을 피팅에서 제외 → 예측력 검정
+  free: [lam_nu0, lam_r1, lam_r2, sin_b1, sin_c1, si_de, si_klog]
