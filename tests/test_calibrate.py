@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from torch.nn.functional import softplus
 
 from src.calibrate import (
     CalibratedStack,
@@ -19,6 +20,8 @@ from src.calibrate import (
     load_calibrated_stack,
 )
 from src.physics.dispersion import (
+    adachi_si_init,
+    adachi_si_nk,
     cauchy_n,
     fit_cauchy,
     linear_interp_matrix,
@@ -184,6 +187,85 @@ def test_forward_shapes_and_physical_range() -> None:
     assert torch.all((r >= 0) & (r <= 1))  # 무흡수층 + 흡수 기판 → 0 ≤ R ≤ 1
     grad = torch.autograd.grad(r.sum(), model.raw_lam_min)[0]
     assert torch.isfinite(grad)
+
+
+# ---------------------------------------------------------------------------
+# Adachi MDF — sio2-freeze-adachi 변형의 Si 파라미터화 계약
+# ---------------------------------------------------------------------------
+
+
+def test_adachi_init_matches_literature_table() -> None:
+    """프리핏 초기 곡선(adachi_si_init.json)이 캘리브레이션 대역에서 문헌 테이블에 근접.
+
+    이 테스트 없이 본 피팅을 돌리면 'MDF 구현 버그'와 '모델족의 표현 한계'를 구별할
+    수 없다. 허용치는 프리핏 실측(n 중앙 1.6%/최대 8.6%, k 중앙 0.18 dex)에 여유를 둔 값.
+    """
+    params = torch.from_numpy(adachi_si_init())
+    lam = torch.linspace(284.0, 793.0, 200, dtype=torch.float64)
+    n_pred, k_pred = adachi_si_nk(lam, params)
+    n_tab, k_tab = si_nk(lam.numpy())
+    n_rel = np.abs(n_pred.numpy() - n_tab) / n_tab
+    assert float(np.median(n_rel)) < 0.03
+    assert float(n_rel.max()) < 0.12
+    k_dev = np.abs(np.log10(k_pred.numpy() + 1e-4) - np.log10(k_tab + 1e-4))
+    assert float(np.median(k_dev)) < 0.25
+
+
+def test_adachi_nk_nonnegative_finite_under_perturbation() -> None:
+    """계수를 크게 흔들어도 (softplus 양수 유지) n > 0, k ≥ 0, NaN/Inf 없음."""
+    gen = torch.Generator().manual_seed(0)
+    base = softplus_inverse(torch.from_numpy(adachi_si_init()))
+    lam = torch.linspace(250.0, 1100.0, 500, dtype=torch.float64)
+    for _ in range(20):
+        raw = base + torch.randn(base.shape, generator=gen, dtype=torch.float64)
+        n, k = adachi_si_nk(lam, softplus(raw))
+        assert torch.all(torch.isfinite(n)) and torch.all(torch.isfinite(k))
+        assert torch.all(n > 0) and torch.all(k >= 0)
+
+
+def test_adachi_stack_contract() -> None:
+    """adachi 모드 — 학습 파라미터 집합·부호 관례·미분 흐름."""
+    model = _small_stack(si_param="adachi")
+    trainable = {name for name, p in model.named_parameters() if p.requires_grad}
+    assert trainable == {"raw_lam_min", "raw_dlam", "raw_sin", "raw_adachi"}
+    _perturb(model, scale=1.0, seed=3)
+    _, n_layers, ns = model.spectra()
+    assert torch.all(ns.imag <= 0)  # n − i·k (tmm.py 부호 관례, k ≥ 0)
+    assert torch.all(n_layers.imag == 0)
+    d = torch.rand(8, 4, dtype=torch.float64) * 290 + 10
+    r = model(d)
+    assert torch.all((r >= 0) & (r <= 1))
+    grad = torch.autograd.grad(r.sum(), model.raw_adachi)[0]
+    assert torch.all(torch.isfinite(grad))
+    assert float(grad.abs().sum()) > 0  # 13계수 전부에 경사가 흐른다
+
+    with pytest.raises(ValueError, match="si_param"):
+        _small_stack(si_param="typo")
+    with pytest.raises(ValueError, match="curve_inits"):
+        _small_stack(si_param="adachi", curve_inits={"n_si": np.full(32, 4.0)})
+
+
+def test_adachi_fit_and_checkpoint_roundtrip(tmp_path: Path) -> None:
+    """adachi 모드로 fit_calibration이 돌고, 체크포인트 왕복이 성립하는지."""
+    _, r_obs, d = _synthetic_problem(seed=11)
+    cfg = _fit_cfg(steps=40, eval_every=20)
+    cfg["model"]["si_param"] = "adachi"
+    result = fit_calibration(
+        r_obs[:192],
+        d[:192],
+        r_obs[192:],
+        d[192:],
+        cfg,
+        tmp_path,
+        lam_init=(400.0, 800.0),
+        descending=False,
+    )
+    model, ckpt = load_calibrated_stack(tmp_path / "model.pt")
+    assert model.si_param == "adachi"
+    with torch.no_grad():
+        pred = model(torch.from_numpy(d[192:]).to(torch.float64))
+    rmse = float(((pred.numpy() - r_obs[192:].astype(np.float64)) ** 2).mean() ** 0.5)
+    assert rmse == pytest.approx(result["best_val_rmse"], rel=1e-6)
 
 
 # ---------------------------------------------------------------------------

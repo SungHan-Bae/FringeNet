@@ -14,11 +14,18 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch import Tensor
 
 __all__ = [
+    "ADACHI_SI_PARAM_NAMES",
+    "adachi_si_eps",
+    "adachi_si_init",
+    "adachi_si_nk",
     "cauchy_n",
     "fit_cauchy",
     "linear_interp_matrix",
@@ -27,6 +34,9 @@ __all__ = [
     "sio2_n",
     "softplus_inverse",
 ]
+
+# 광자 에너지 변환: E[eV] = _EV_NM / λ[nm].
+_EV_NM = 1239.84198
 
 # Sellmeier: n²(λ) = 1 + Σ_i B_i λ² / (λ² − C_i),  λ[μm].
 _SIO2_SELLMEIER_B = (0.6961663, 0.4079426, 0.8974794)  # Malitson 1965
@@ -125,6 +135,97 @@ def linear_interp_matrix(n_points: int, n_knots: int) -> Tensor:
     p[rows, left] = 1.0 - frac
     p[rows, left + 1] = frac
     return p
+
+
+# --- Adachi 모델 유전함수(MDF) — Si 기판의 매끈한 물리 파라미터화 ------------------
+#
+# 함수형 출처: Adachi, Phys. Rev. B 38, 12966 (1988) / J. Appl. Phys. 66, 3224 (1989).
+# 유료 원문 대신 식형을 재수록한 Petrik, Physica B 453, 2 (2014) §3.4를 참조했다.
+# 대역 284–793 nm(1.56–4.37 eV)에 유효한 항만 취한다:
+#   ε(E) = ε∞ + ε_E1(2D M0 임계점) + ε_E1x(여기자, 이산계열 1차항)
+#          + ε_E0'(DHO — Adachi의 Si E0' 삼중항, E1 부근의 넓은 흡수 담당)
+#          + ε_E2(DHO) + i·ε₂_ind(간접갭 흡수 — 장파장 k의 지배항)
+# 근사(문서화된 한계):
+#   - 간접갭 항은 ε₂만 모델링 (Adachi 1989와 동일). ε₁ 기여는 대역 내 ε₁(~15–40)
+#     대비 미미해 ε∞·임계점 항이 흡수한다 → 이 항만 KK 비일관.
+#   - 고에너지 컷오프 없음 — 대역 밖(E > 4.4 eV)에서는 평가하지 않는 계약.
+# 진폭·broadening ≥ 0 (softplus)이면 모든 항의 Im ε ≥ 0 → k ≥ 0이 구조적으로 보장.
+#
+# 계수 초기값(adachi_si_init.json)은 Adachi 논문 테이블 전사가 아니라
+# scripts/fit_adachi_init.py 가 위 함수형을 본 파일의 Aspnes & Studna 테이블에
+# 결정론적으로 프리핏한 산출물이다 — 원문 테이블 접근 불가 + 수치는 스크립트
+# 산출물이어야 한다는 프로젝트 규약(CLAUDE.md) 때문. 어차피 초기값 용도라
+# 캘리브레이션이 학습으로 갱신한다.
+
+ADACHI_SI_PARAM_NAMES = (
+    "eps_inf",
+    "D",
+    "Eg",
+    "B1",
+    "B1x",
+    "Gamma1",
+    "E1",
+    "C0",
+    "gamma0",
+    "E0p",
+    "C",
+    "gamma",
+    "E2",
+)
+
+
+def adachi_si_eps(e_ev: Tensor, params: Tensor) -> Tensor:
+    """Adachi MDF — 결정질 Si의 복소 유전함수 ε(E). 물리 관례 ε = ε₁ + i·ε₂ (ε₂ ≥ 0).
+
+    Args:
+        e_ev: (W,) float — 광자 에너지 [eV].
+        params: (13,) float — ADACHI_SI_PARAM_NAMES 순서의 value 공간 계수 (전부 > 0).
+            에너지(Eg, E1, E0p, E2)·broadening(Gamma1, gamma0, gamma) [eV],
+            진폭(B1, B1x[eV], C0, C, D)·ε∞ 무차원.
+
+    Returns:
+        eps: (W,) complex — e_ev와 같은 실수 dtype의 복소 대응 dtype.
+    """
+    eps_inf, d_ind, eg, b1, b1x, gam1, e1, c0, gam0, e0p, c2, gam2, e2 = (
+        params[i] for i in range(13)
+    )
+    # E1 — 2D M0 임계점: −B1·χ⁻²·ln(1−χ²), χ = (E + iΓ)/E1.
+    chi1 = (e_ev + 1j * gam1) / e1
+    chi1_sq = chi1 * chi1
+    eps_e1 = -b1 * torch.log(1.0 - chi1_sq) / chi1_sq
+    # E1 여기자 — 이산 계열(∝ n⁻³)의 1차항, E1 임계점과 broadening 공유.
+    eps_e1x = b1x / (e1 - e_ev - 1j * gam1)
+    # E0' — DHO: E1과 겹치는 삼중항, 넓은 broadening으로 E1 주변 흡수를 담당.
+    chi0 = e_ev / e0p
+    eps_e0p = c0 / (1.0 - chi0 * chi0 - 1j * chi0 * gam0)
+    # E2 — 감쇠 조화 진동자(DHO): C / (1 − χ² − i·χ·γ), χ = E/E2.
+    chi2 = e_ev / e2
+    eps_e2 = c2 / (1.0 - chi2 * chi2 - 1j * chi2 * gam2)
+    # 간접갭 — ε₂ = (D/E²)·(E − Eg)², E > Eg (ε₁ 기여는 무시: 상단 주석).
+    eps2_ind = d_ind * torch.clamp(e_ev - eg, min=0.0) ** 2 / e_ev**2
+    return eps_inf + eps_e1 + eps_e1x + eps_e0p + eps_e2 + 1j * eps2_ind
+
+
+def adachi_si_nk(lam_nm: Tensor, params: Tensor) -> tuple[Tensor, Tensor]:
+    """Adachi MDF의 (n, k). λ·계수 모두로 미분가능.
+
+    Args:
+        lam_nm: (W,) float — 파장 [nm].
+        params: (10,) — adachi_si_eps와 동일.
+
+    Returns:
+        (n, k): 각 (W,) float — ε₂ ≥ 0이므로 주가지 sqrt에서 n ≥ 0, k ≥ 0.
+    """
+    nk = torch.sqrt(adachi_si_eps(_EV_NM / lam_nm, params))
+    return nk.real, nk.imag
+
+
+def adachi_si_init() -> np.ndarray:
+    """프리핏된 Adachi Si 초기 계수 (value 공간) — scripts/fit_adachi_init.py 산출물."""
+    obj = json.loads((Path(__file__).with_name("adachi_si_init.json")).read_text())
+    if obj["names"] != list(ADACHI_SI_PARAM_NAMES):
+        raise ValueError("adachi_si_init.json의 계수 순서가 코드와 다르다 — 프리핏 재실행 필요")
+    return np.asarray(obj["values"], dtype=np.float64)
 
 
 def softplus_inverse(y: Tensor) -> Tensor:

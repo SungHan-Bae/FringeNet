@@ -6,6 +6,8 @@
   - SiO₂(layer 2·4): 같은 Cauchy — **문헌값(Malitson 1965 fit)에 freeze (게이지 고정)**.
     delta = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이라 SiO₂를 고정해야 λ가 식별된다.
   - Si 기판: n(λ), k(λ) 곡선 — 채널축 knot 조각별 선형 보간, k ≥ 0 (softplus).
+    (si_param: adachi 선택 시 knot 대신 Adachi MDF 13계수 — n·k가 학습된 λ의
+    매끈한 물리 함수가 된다. sio2-freeze-adachi 변형 참조.)
 
 초기화 (phase 0): 두께축 주파수 식별 `identify_initial_grid` — λ축 fringe 정렬은
 경사하강에 비볼록이라(잘못된 fringe 차수 분지에서 RMSE ~0.12 정체) 그쪽을 우회한다.
@@ -44,6 +46,9 @@ from torch.nn.functional import mse_loss, softplus
 
 from src.data.dataset import REPO_ROOT, prepare_train_arrays
 from src.physics.dispersion import (
+    ADACHI_SI_PARAM_NAMES,
+    adachi_si_init,
+    adachi_si_nk,
     cauchy_n,
     fit_cauchy,
     linear_interp_matrix,
@@ -69,6 +74,24 @@ _SI_N_SCALE = 0.5  # Si n knot 보폭
 _SI_K_SCALE = 1.0  # Si k knot(softplus 전 raw) 보폭 — k가 작을 땐 곱셈적 변화
 _SIN_KNOT_SCALE = 0.2  # SiN n knot 보폭 (knot 모드일 때)
 
+# Adachi 계수의 raw(softplus 전) 보폭 — 임계점 에너지는 가장 확실한 물성이라 느리게,
+# 진폭·broadening은 상대적으로 자유롭게 움직인다.
+_ADACHI_SCALE_BY_NAME = {
+    "eps_inf": 0.3,
+    "D": 0.3,
+    "Eg": 0.02,
+    "B1": 0.3,
+    "B1x": 0.3,
+    "Gamma1": 0.1,
+    "E1": 0.02,
+    "C0": 0.3,
+    "gamma0": 0.1,
+    "E0p": 0.02,
+    "C": 0.3,
+    "gamma": 0.1,
+    "E2": 0.02,
+}
+
 
 class CalibratedStack(nn.Module):
     """캘리브레이션 대상 forward 모델의 미지수 전부를 담는 모듈.
@@ -81,6 +104,8 @@ class CalibratedStack(nn.Module):
         n_si_knots: Si n·k 곡선의 knot 수 (채널축 균등 배치, 조각별 선형 보간).
         lam_init: 초기 가정 λ 범위 (min, max) [nm] — 실제 그리드는 학습된다.
         descending: True면 채널 0이 λ_max (λ가 채널 순서로 감소).
+        si_param: Si 기판 파라미터화 — "knot"(채널축 knot 보간, 기본) 또는
+            "adachi"(Adachi MDF ~13계수 — n·k가 학습된 λ의 매끈한 물리 함수가 된다).
     """
 
     def __init__(
@@ -93,9 +118,14 @@ class CalibratedStack(nn.Module):
         lam_grid: np.ndarray | None = None,
         sin_init_samples: tuple[np.ndarray, np.ndarray] | None = None,
         curve_inits: dict[str, np.ndarray] | None = None,
+        si_param: str = "knot",
     ) -> None:
         super().__init__()
         curve_inits = curve_inits or {}
+        if si_param not in ("knot", "adachi"):
+            raise ValueError(f'si_param은 "knot"|"adachi" 중 하나여야 한다 (받은 값: {si_param})')
+        if si_param == "adachi" and not {"n_si", "k_si"}.isdisjoint(curve_inits):
+            raise ValueError("adachi 모드는 Si curve_inits를 받지 않는다 (계수는 프리핏 JSON에서)")
         if lam_grid is not None:
             # 명시적 초기 그리드 (채널 순서, 예: 주파수 식별 결과) — lam_init/descending 대체.
             lam_ch = np.asarray(lam_grid, dtype=np.float64)
@@ -119,6 +149,7 @@ class CalibratedStack(nn.Module):
         self.n_sin_knots = None if n_sin_knots is None else int(n_sin_knots)
         self.lam_init = (lam_lo, lam_hi)
         self.descending = bool(descending)
+        self.si_param = str(si_param)
         f64 = torch.float64
         knot_pos = np.linspace(0.0, n_channels - 1.0, n_si_knots)
         ch_idx = np.arange(n_channels, dtype=np.float64)
@@ -155,27 +186,38 @@ class CalibratedStack(nn.Module):
         # SiO₂ Cauchy — freeze (게이지 고정: n과 λ는 동시 식별 불가 — CLAUDE.md).
         self.register_buffer("sio2_cauchy", torch.from_numpy(fit_cauchy(base, sio2_n(base))))
 
-        # Si 기판 n·k — 채널축 knot 보간. 초기값: 명시 곡선(curve_inits) > 문헌 테이블.
-        self.register_buffer("interp", linear_interp_matrix(n_channels, n_si_knots))
-        knot_lam = np.interp(knot_pos, ch_idx, lam_ch)
-        n_si_lit, k_si_lit = si_nk(knot_lam)
-        n_si_curve, k_si_curve = curve_inits.get("n_si"), curve_inits.get("k_si")
-        n_si = (
-            np.interp(knot_pos, ch_idx, np.asarray(n_si_curve))
-            if n_si_curve is not None
-            else n_si_lit
-        )
-        k_si = (
-            np.interp(knot_pos, ch_idx, np.asarray(k_si_curve))
-            if k_si_curve is not None
-            else k_si_lit
-        )
-        self.register_buffer("si_n_init", torch.from_numpy(n_si))
-        self.raw_si_n = nn.Parameter(torch.zeros(n_si_knots, dtype=f64))
-        self.register_buffer(
-            "si_k_init", softplus_inverse(torch.from_numpy(np.clip(k_si, 1e-4, None)))
-        )
-        self.raw_si_k = nn.Parameter(torch.zeros(n_si_knots, dtype=f64))
+        # Si 기판 n·k — knot 모드: 채널축 knot 보간 (초기값: curve_inits > 문헌 테이블),
+        # adachi 모드: MDF 계수 (초기값: 프리핏 JSON — scripts/fit_adachi_init.py 산출).
+        if self.si_param == "adachi":
+            self.register_buffer(
+                "adachi_init", softplus_inverse(torch.from_numpy(adachi_si_init()))
+            )
+            self.register_buffer(
+                "adachi_scale",
+                torch.tensor([_ADACHI_SCALE_BY_NAME[m] for m in ADACHI_SI_PARAM_NAMES], dtype=f64),
+            )
+            self.raw_adachi = nn.Parameter(torch.zeros(len(ADACHI_SI_PARAM_NAMES), dtype=f64))
+        else:
+            self.register_buffer("interp", linear_interp_matrix(n_channels, n_si_knots))
+            knot_lam = np.interp(knot_pos, ch_idx, lam_ch)
+            n_si_lit, k_si_lit = si_nk(knot_lam)
+            n_si_curve, k_si_curve = curve_inits.get("n_si"), curve_inits.get("k_si")
+            n_si = (
+                np.interp(knot_pos, ch_idx, np.asarray(n_si_curve))
+                if n_si_curve is not None
+                else n_si_lit
+            )
+            k_si = (
+                np.interp(knot_pos, ch_idx, np.asarray(k_si_curve))
+                if k_si_curve is not None
+                else k_si_lit
+            )
+            self.register_buffer("si_n_init", torch.from_numpy(n_si))
+            self.raw_si_n = nn.Parameter(torch.zeros(n_si_knots, dtype=f64))
+            self.register_buffer(
+                "si_k_init", softplus_inverse(torch.from_numpy(np.clip(k_si, 1e-4, None)))
+            )
+            self.raw_si_k = nn.Parameter(torch.zeros(n_si_knots, dtype=f64))
 
     @property
     def model_cfg(self) -> dict[str, Any]:
@@ -186,6 +228,7 @@ class CalibratedStack(nn.Module):
             "n_sin_knots": self.n_sin_knots,
             "lam_init": list(self.lam_init),
             "descending": self.descending,
+            "si_param": self.si_param,
         }
 
     def lam(self) -> Tensor:
@@ -209,8 +252,14 @@ class CalibratedStack(nn.Module):
         n_sio2 = cauchy_n(lam, self.sio2_cauchy)
         stack_r = torch.stack([n_sin, n_sio2, n_sin, n_sio2])
         n_layers = torch.complex(stack_r, torch.zeros_like(stack_r))  # 층은 k=0 가정
-        n_si = self.interp @ (self.si_n_init + _SI_N_SCALE * self.raw_si_n)
-        k_si = softplus(self.interp @ (self.si_k_init + _SI_K_SCALE * self.raw_si_k))
+        if self.si_param == "adachi":
+            # n·k가 학습된 λ의 함수 — MDF의 ε₂ ≥ 0 구조가 k ≥ 0을 보장한다.
+            n_si, k_si = adachi_si_nk(
+                lam, softplus(self.adachi_init + self.adachi_scale * self.raw_adachi)
+            )
+        else:
+            n_si = self.interp @ (self.si_n_init + _SI_N_SCALE * self.raw_si_n)
+            k_si = softplus(self.interp @ (self.si_k_init + _SI_K_SCALE * self.raw_si_k))
         ns = torch.complex(n_si, -k_si)  # n − i·k (tmm.py 부호 관례, k ≥ 0)
         return lam, n_layers, ns
 
@@ -231,6 +280,7 @@ def load_calibrated_stack(path: Path | str) -> tuple[CalibratedStack, dict[str, 
         n_sin_knots=None if n_sin_knots is None else int(n_sin_knots),
         lam_init=tuple(mc["lam_init"]),
         descending=bool(mc["descending"]),
+        si_param=str(mc.get("si_param", "knot")),
     )
     model.load_state_dict(ckpt["state_dict"])
     return model, ckpt
@@ -444,6 +494,7 @@ def fit_calibration(
         lam_grid=lam_grid,
         sin_init_samples=sin_init_samples,
         curve_inits=curve_inits,
+        si_param=str(cfg["model"].get("si_param", "knot")),
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(fit_cfg["lr"]))
     scheduler = build_lr_scheduler(

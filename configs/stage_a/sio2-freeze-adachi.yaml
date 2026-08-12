@@ -1,0 +1,32 @@
+# stage_a — 전(全)파라메트릭 물리 피팅: λ 그리드(단조)·SiN Cauchy에 더해 Si 기판을
+# Adachi MDF 13계수로 파라미터화 (knot 보간 대체). SiO₂ 게이지(freeze)는 유지.
+# 학습 파라미터 ~242개 (λ 226 + SiN Cauchy 3 + Adachi 13) vs phase 2의 ~904개이고,
+# n_Si·k_Si가 학습된 λ의 매끈한 물리 함수로 강제된다.
+#
+# 실험 질문 (2026-08-12): 모든 미지수가 λ의 매끈한 물리 함수인 모델족이 게이트
+# (a)+(c)를 통과하는가. **사전 등록 예측: 진단 RMSE 0.0121~0.0125 정체, 게이트 실패**
+# — 근거는 phase 1(sio2-freeze) 정체 0.01254 + 단일 자유도 절제 상한 −0.0004
+# (reports/stage_a.md). 예측 적중 시 "생성기 분산은 Cauchy/Adachi 족 밖"의 정량화,
+# 0.0121 미만이면 절제 논증의 국소성 발견 — 어느 쪽이든 결과가 정보다.
+# 디코더 교체는 게이트 (a)+(c) 통과 시에만 (아니면 phase 2 유지).
+seed: 42
+experiment: stage_a
+run_name: sio2-freeze-adachi
+
+data:
+  val_frac: 0.1
+  fit_rows: 50000
+  diag_rows: 20000
+
+model:
+  si_param: adachi     # Si 기판 = Adachi MDF (초기 계수: scripts/fit_adachi_init.py 산출)
+  n_si_knots: 24       # adachi 모드에서는 미사용 (설정 지문·구조 스냅샷에만 남는다)
+
+fit:                   # phase 1(sio2-freeze)과 동일 조건 — 직접 비교 가능하게
+  steps: 3000
+  batch_size: 4096
+  lr: 1.0e-2
+  lr_schedule: cosine
+  warmup_steps: 100
+  eval_every: 100
+  eval_batch: 8192
