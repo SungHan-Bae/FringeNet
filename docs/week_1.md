@@ -294,6 +294,33 @@
 - 세션 유실 대비 계약이 로컬에서도 실전 작동: phase 2가 세션 종료로 step 1500에서
   중단 → resume으로 무중단과 동일 궤적 완주.
 
+## 2026-08-12 (수) — Stage A 변형 실험: 전파라메트릭 물리 피팅 (게이트 불통과, 디코더 유지)
+
+상세: [reports/stage_a.md](../reports/stage_a.md) "변형 실험" 절,
+게이트 수치 [reports/stage_a_gate_adachi.md](../reports/stage_a_gate_adachi.md).
+브랜치 `exp/stage-a-adachi`. 동기: phase 2 채널별 유효값은 물리 상수로 해석 불가하다는
+한계 → "모든 미지수를 λ의 매끈한 물리 함수로 강제하면 게이트를 통과하는가"를 판정.
+
+- **구성**: Si 기판 knot 24점 → **Adachi MDF 13계수** (`adachi_si_eps`, si_param: adachi).
+  SiO₂ 게이지·λ 단조·SiN Cauchy·phase 0 초기화는 phase 1과 동일. 학습 파라미터 242개.
+  초기 계수는 Adachi 원표(유료) 전사 대신 **함수형을 A&S 테이블에 결정론 프리핏**
+  (`scripts/fit_adachi_init.py`) — 수치는 스크립트 산출물 규약 준수.
+- **사전 등록 예측 적중(방향) + 초과(크기)**: 예측 "0.0121~0.0125 정체, 게이트 실패"
+  → 실측 **0.01442 정체, 실패**. Adachi 13계수는 knot 24(0.01254)보다도 경직.
+- **"옵티마이저 한계" 반론을 측정으로 종결** (사용자 제기 — LBFGS 제안): Adam 해의
+  전배치 기울기 |g|₂ = 8.5e-5 ≈ 0, −grad 최선 개선 ΔRMSE ~ 2e-8
+  (`scripts/probe_calibration_stationarity.py`) → **모델족의 1차 정류점**. 전배치
+  L-BFGS 폴리시(`fit.optimizer: lbfgs`, state_dict 워름스타트) 60회도 개선 0으로 일치.
+- **결론**: "생성기 분산은 Cauchy/Adachi 매끈 물리족 밖" 정량 확정 — 0.01442 vs
+  0.01254(phase 1) vs 0.00929(phase 2, 채택 유지). 채널별 곡선이 더 충실한 답이라는
+  기존 한계 절 주장의 실험적 뒷받침.
+- **부산물 (torch 함정)**: `LBFGS(max_iter=1)`은 `max_eval` 기본값 = max_iter·5//4 = 1
+  때문에 라인서치 예산이 0 → t=0 반환으로 **파라미터가 안 움직이면서 조용히 정체**.
+  `max_eval=32` 명시로 수정, 회귀 테스트 고정. from-scratch L-BFGS는 fringe 차수
+  비볼록 구간을 못 뚫는다(라인서치 정체) — 수렴 해의 폴리시 전용.
+- 진단 스크립트에 `--tag` 추가 — 채택 디코더의 무태그 게이트 기록·그림을 변형 실험이
+  덮어쓰지 않게 보호.
+
 ---
 
 ## 확정 수치 (이후 작업의 기준선)

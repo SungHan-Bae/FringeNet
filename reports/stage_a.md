@@ -105,12 +105,64 @@ phase 1 결과에서 워밍스타트(`init_from_run`). 진단 RMSE **0.00929**.
   - k_Si: ~450 nm까지 문헌 추종. 그 위(가시광 장파장)에서는 0.03~0.1 사이에서 진동 —
     **약식별 구간** (k가 작으면 R에 대한 민감도가 O(k)로 소멸). 한계로 기록.
 
+## 변형 실험 — 전(全)파라메트릭 물리 피팅 `sio2-freeze-adachi` (2026-08-12, 게이트 불통과)
+
+phase 2 채널별 유효값은 물리 상수로 해석할 수 없다는 한계(아래 "한계·후속")를 겨냥해,
+**모든 미지수를 λ의 매끈한 물리 함수로 강제**한 변형. λ 그리드(단조)·SiN Cauchy(3계수)·
+SiO₂ 게이지·phase 0 초기화는 동일하고, Si 기판만 knot 24점 → **Adachi MDF 13계수**
+(E1 2D-M0 + 여기자, E0'·E2 DHO, 간접갭 ε₂ — `src/physics/dispersion.py`)로 교체.
+학습 파라미터 242개 (phase 2는 ~904개), n_Si·k_Si가 학습된 λ의 함수가 된다.
+초기 계수는 Adachi 원표 전사가 아니라 함수형을 본 저장소의 Aspnes & Studna 테이블에
+결정론 프리핏한 산출물(`scripts/fit_adachi_init.py` — 원문 유료 접근 불가 + 수치는
+스크립트 산출물 규약. 대역 내 n 중앙 편차 1.6%, 문헌 대조 테스트 고정).
+
+**사전 등록 예측** (config 주석에 실행 전 기록): phase 1 정체 0.01254 + 단일 자유도
+절제 상한 −0.0004 근거로 "진단 RMSE 0.0121~0.0125 정체, 게이트 실패".
+
+**결과 — 게이트 실패, 예측보다 더 나쁨** ([stage_a_gate_adachi.md](stage_a_gate_adachi.md)):
+
+| run | 진단 RMSE | 게이트 (a) | 비고 |
+|---|---|---|---|
+| sio2-freeze-adachi (Adam 3,000스텝, phase 1과 동일 조건) | **0.01442** | ✗ | Adachi 13계수는 knot 24(0.01254)보다도 경직 |
+| sio2-freeze-adachi-lbfgs (전배치 L-BFGS 폴리시 60회) | 0.01442 | ✗ | step 1 이후 개선 0 — 아래 정류점 검사 |
+
+- **잔차 서명이 모델족 한계를 가리킨다**: 두께 bin RMS는 전 층 평평(max/min ≤ 1.16 ✓ —
+  두께 물리는 다 맞춤)한데, 채널 방향은 bias ±0.015의 매끈한 구조(채널 RMSE max/min
+  3.09, lag-1 자기상관 +0.460) — λ 방향 분산 표현력이 모자란다는 뜻
+  (fig_stage_a2_residuals_adachi.png).
+- **"Adam 미수렴(underfitting)" 반론은 측정으로 차단** (`scripts/probe_calibration_stationarity.py`):
+  Adam 해에서 fit 5만 행 전배치 기울기 **|g|₂ = 8.5e-5 ≈ 0**, −grad 방향 최선 개선
+  ΔRMSE ≈ 2e-8 — 이 해는 **모델족의 1차 정류점**이다. 전배치 L-BFGS(strong Wolfe,
+  `fit.optimizer: lbfgs`, state_dict 워름스타트)의 60회 무개선과 일치. 분지(fringe
+  차수)는 phase 0 닫힌형 식별이 고정하므로 "다른 분지" 여지도 없다 — 채널별 자유
+  모델이 같은 분지에서 0.0093에 도달했다.
+- 복원 곡선 자체는 물리적으로 타당한 모양(fig_stage_a1_dispersion_adachi.png — Si E1
+  피크 재현, SiN은 Luke 대비 ~2% 아래)이라, 실패는 "비물리 해"가 아니라 **매끈 물리족과
+  생성기 분산 사이의 잔차**로 해석된다.
+
+**결론**: "생성기의 분산 곡선은 Cauchy/Adachi 매끈 물리족 밖에 있다"가 정량 확정 —
+**0.01442**(전파라메트릭 물리족) vs **0.01254**(phase 1, Cauchy+knot) vs
+**0.00929**(phase 2, 채널별 — 채택 디코더) vs 게이트 0.0105. **Stage B 디코더는 phase 2
+(sio2-freeze-refine) 유지.** 이 격차가 "채널별 곡선이 더 충실한 답"이라는 아래 한계
+절의 주장을 실험으로 뒷받침한다.
+
+부산물: torch `LBFGS(max_iter=1)`은 `max_eval` 기본값(max_iter·5//4 = 1) 때문에
+라인서치 예산이 0이 되어 **파라미터가 전혀 안 움직이면서 조용히 정체**한다 —
+`max_eval` 명시로 수정 (src/calibrate.py 주석, 회귀 테스트).
+
 ## 재현
 
 ```bash
 python -m src.calibrate --config configs/stage_a/sio2-freeze.yaml         # phase 0+1 (~1h CPU)
 python -m src.calibrate --config configs/stage_a/sio2-freeze-refine.yaml  # phase 2 (~35m CPU)
 python scripts/diagnose_calibration.py --run runs/stage_a/sio2-freeze-refine
+
+# 변형 실험 (2026-08-12): 전파라메트릭 Adachi + L-BFGS 폴리시 + 정류점 검사
+python scripts/fit_adachi_init.py                                          # 프리핏 (JSON 재생성)
+python -m src.calibrate --config configs/stage_a/sio2-freeze-adachi.yaml   # (~45m CPU)
+python -m src.calibrate --config configs/stage_a/sio2-freeze-adachi-lbfgs.yaml  # (~15m CPU)
+python scripts/diagnose_calibration.py --run runs/stage_a/sio2-freeze-adachi --tag adachi
+python scripts/probe_calibration_stationarity.py --run runs/stage_a/sio2-freeze-adachi
 ```
 
 세션 유실 대비 계약(즉시 best 저장, resume.pt+RNG, 완료 run 스킵)은 train_gpu.py와
@@ -130,8 +182,9 @@ python scripts/diagnose_calibration.py --run runs/stage_a/sio2-freeze-refine
   가족으로의 투영이라 그 가족의 최적해인 phase 1 결과(0.01254)로 회귀한다. 개선분
   전체가 Cauchy가 표현 못 하는 편차에서 왔기 때문이고, Cauchy 자체가 절단 근사식
   이므로(생성기가 Sellmeier나 표 값을 썼다면 자외선 쪽 편차는 필연 — 실제 반복 2의
-  잔차가 대역 양끝에 몰렸던 것과 부합) 채널별 곡선이 더 충실한 답이다. 해석용으로
-  "최적 Cauchy 근사 + 편차 곡선"을 병기하는 것은 문서화 후속 후보.
+  잔차가 대역 양끝에 몰렸던 것과 부합) 채널별 곡선이 더 충실한 답이다.
+  → **2026-08-12 변형 실험으로 실측 확정** (위 "변형 실험" 절): Si를 Adachi MDF로
+  물리족을 넓혀도 0.01442에서 정류점 — 매끈 물리족의 한계이지 요약 방식의 문제가 아니다.
 - 층별 재료 분리 피팅(1·3 분리, 2·4 분리) ablation은 미수행 — 층별 독립 주파수
   추정의 일치가 근거라 우선순위가 낮고, 필요하면 phase 2 config에서 파라미터
   묶음만 풀면 된다.

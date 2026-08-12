@@ -270,7 +270,11 @@ T = 4 * n0 * Re(n_s) / |n0*B + C|^2        # 무흡수 층 가정 시 R + T = 1
   방법: 두께축 주파수 식별 — 전수 격자 조건부 평균 E[R|d_j]의 두께축 주파수
   f_j = 2n_j(λ)/λ + SiO₂ 게이지로 λ_c 채널별 닫힌형 해 (λ = 284~793 nm 내림차순)
   → 매끈 피팅 → 채널별 공동 미세조정 2-phase. Stage B 디코더 =
-  runs/stage_a/sio2-freeze-refine/model.pt, 2026-08-11.)
+  runs/stage_a/sio2-freeze-refine/model.pt, 2026-08-11.
+  변형 실험 2026-08-12: 전파라메트릭 물리 피팅(Si = Adachi MDF 13계수)은 0.01442에서
+  **모델족의 1차 정류점**(전배치 |g| ≈ 0, L-BFGS 폴리시 무개선) — 게이트 불통과.
+  "생성기 분산은 Cauchy/Adachi 매끈 물리족 밖" 정량 확정, 디코더 변경 없음.
+  이 결론 재론 금지 — 근거는 reports/stage_a.md "변형 실험" 절.)
 - [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석.
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신.
 

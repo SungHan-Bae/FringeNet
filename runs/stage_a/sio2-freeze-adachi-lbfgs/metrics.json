@@ -1,0 +1,53 @@
+{
+  "experiment": "stage_a",
+  "run_name": "sio2-freeze-adachi-lbfgs",
+  "seed": 42,
+  "rows": {
+    "fit": 50000,
+    "diag": 20000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "stage_a",
+    "run_name": "sio2-freeze-adachi-lbfgs",
+    "data": {
+      "val_frac": 0.1,
+      "fit_rows": 50000,
+      "diag_rows": 20000
+    },
+    "model": {
+      "si_param": "adachi",
+      "n_si_knots": 24,
+      "init_from_run": "runs/stage_a/sio2-freeze-adachi"
+    },
+    "fit": {
+      "optimizer": "lbfgs",
+      "steps": 60,
+      "history_size": 20,
+      "batch_size": 4096,
+      "lr": 1.0,
+      "lr_schedule": "none",
+      "warmup_steps": 0,
+      "eval_every": 1,
+      "eval_batch": 8192
+    }
+  },
+  "init": {
+    "mode": "from-run-state",
+    "run": "runs/stage_a/sio2-freeze-adachi",
+    "src_step": 3000,
+    "src_val_rmse": 0.014419698646533
+  },
+  "result": {
+    "ckpt_path": "runs/stage_a/sio2-freeze-adachi-lbfgs/model.pt",
+    "best_step": 1,
+    "best_val_rmse": 0.014419722220891672,
+    "steps": 60,
+    "wall_sec": 643.7869235929993,
+    "gate_a": {
+      "rmse": 0.014419722220891672,
+      "threshold": 0.0105,
+      "pass": false
+    }
+  }
+}
