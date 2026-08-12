@@ -2,6 +2,8 @@
 
 holdout 81,000행 (val_frac 0.1, seed 42) / 디코더 runs/stage_a/sio2-freeze-refine (complex64). 해석은 reports/stage_b.md.
 
+**누수 검증**: Stage A 캘리브레이션 표집(fit 50,000 + diag 20,000, holdout 제외 train에서 seed 42로 표집) ∩ 평가 holdout = **0행** — 디코더는 평가 행을 본 적이 없다. 역산 refinement는 각 행의 R_obs(모델 입력)만 쓰고 라벨은 오차 측정에만 쓴다.
+
 ## 1. run 요약 + 무결성
 
 | run | β | holdout MAE [nm] | 재추론 MAE | L1 | L2 | L3 | L4 | val_phys | best ep |

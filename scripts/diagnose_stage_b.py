@@ -159,11 +159,33 @@ def main() -> None:
         "",
     ]
 
-    x, y, _, holdout_idx = prepare_train_arrays(val_frac=0.1, seed=SEED)
+    x, y, train_idx, holdout_idx = prepare_train_arrays(val_frac=0.1, seed=SEED)
     x_v, y_v = x[holdout_idx], y[holdout_idx]
     del x, y
+
+    # 누수 검증: Stage A 캘리브레이션(디코더 피팅)이 쓴 행과 이 평가 holdout이 겹치지
+    # 않아야 역산 refinement 수치가 유효하다. calibrate.py main()의 표집을 그대로
+    # 재현해 교집합 0을 확인한다 (표집원이 train_idx라 freq-id 사용분도 함께 커버).
+    calib_cfg = json.loads(
+        (REPO_ROOT / "runs" / "stage_a" / "sio2-freeze-refine" / "metrics.json").read_text()
+    )
+    calib_rows = calib_cfg["rows"]
+    calib_pick = np.random.default_rng(int(calib_cfg["seed"])).choice(
+        train_idx, size=calib_rows["fit"] + calib_rows["diag"], replace=False
+    )
+    n_leak = len(np.intersect1d(calib_pick, holdout_idx))
+    assert n_leak == 0, f"Stage A 캘리브레이션 표집과 holdout이 {n_leak}행 겹친다 — 누수"
+
     decoder, dec_meta = load_tmm_decoder(REPO_ROOT / "runs" / "stage_a" / "sio2-freeze-refine")
-    print(f"디코더: {dec_meta} / holdout {len(x_v):,}행")
+    print(f"디코더: {dec_meta} / holdout {len(x_v):,}행 / 캘리브레이션 표집과 교집합 {n_leak}")
+    lines += [
+        "**누수 검증**: Stage A 캘리브레이션 표집(fit "
+        f"{calib_rows['fit']:,} + diag {calib_rows['diag']:,}, holdout 제외 train에서"
+        f" seed {calib_cfg['seed']}로 표집) ∩ 평가 holdout = **{n_leak}행** — 디코더는"
+        " 평가 행을 본 적이 없다. 역산 refinement는 각 행의 R_obs(모델 입력)만 쓰고"
+        " 라벨은 오차 측정에만 쓴다.",
+        "",
+    ]
 
     # ---- 1. run 요약 + 무결성 (기록 val MAE 재현) --------------------------------
     preds: dict[str, np.ndarray] = {}
