@@ -95,6 +95,11 @@ _THETA_STEP_ABS = {
     "si_klog": 0.02,  # Si k 로그 스케일 (약 2%)
     "sio2_scale": 1e-3,  # SiO₂ n 배율 (0.1%) — 게이지 검정 전용, 기본은 동결
 }
+# Si 실측표의 기본 출처 = **채택 표**. Aspnes 1983 / Green 2008도 `literature/`에 있고
+# `si_source`로 고를 수 있지만, 같은 자유도에서 네 지표 전부 Schinke가 나았다
+# (reports/stage_a.md 설계 근거 (3)). 기본값을 기각된 표로 두면 si_source를 빠뜨린
+# config가 조용히 그쪽으로 돈다.
+DEFAULT_SI_SOURCE = "Si_nk_Schinke.yml"
 PARAM_NAMES = (
     "lam_nu0",
     "lam_r1",
@@ -148,7 +153,9 @@ class PhysicalStack(nn.Module):
         lam_coeffs: (ν₀, r₁, r₂) 초기값 — `fit_lam_coefficients` 산출.
         free: 자유로 둘 파라미터 이름들 (PARAM_NAMES 부분집합). 비면 전부 동결.
         si_source: Si n·k 출처. `literature/`의 tabulated nk 파일명, 또는 ablation
-            대조군 `"coarse"` (거친 19점 표 + λ축 선형 보간).
+            대조군 `"coarse"` (거친 19점 표 + λ축 선형 보간). 기본값은 **채택 표**
+            (Schinke 2015) — 측정으로 고른 것이며 Aspnes/Green은 같은 자유도에서
+            네 지표 전부 더 나빴다 (reports/stage_a.md 설계 근거 (3)).
     """
 
     def __init__(
@@ -157,7 +164,7 @@ class PhysicalStack(nn.Module):
         n_channels: int,
         lam_coeffs: tuple[float, float, float],
         free: tuple[str, ...] = (),
-        si_source: str = "Si_nk_Aspnes.yml",
+        si_source: str = DEFAULT_SI_SOURCE,
     ) -> None:
         super().__init__()
         unknown = set(free) - set(PARAM_NAMES)
@@ -317,6 +324,12 @@ def identify_lam_coefficients(run_dir: Path) -> tuple[tuple[float, ...], dict[st
     train 전체**(~73만 행, bin당 ~2.4만 행)를 쓴다. 경사하강이 개입하지 않는 닫힌형
     이라 같은 데이터면 항상 같은 결과가 나온다 (run마다 재계산해도 동일).
 
+    **분할 계약의 명시적 예외**: 이 단계만은 판정 표본 20,000행(train의 2.74%)을 포함한다.
+    `scripts/check_lam_leakage.py`가 그 영향을 측정했다 (reports/stage_a_leakage.md):
+    λ를 **해방**하는 run(채택 디코더 포함)은 최소제곱이 λ를 다시 정하므로 판정 행을 빼도
+    게이트 수치가 **6자리 동일**하고, λ를 **동결**하는 사다리 하단 run만 RMSE가 1.8% 폭
+    안에서 움직인다(현행 값이 그 범위의 낙관적 끝). 판정에 쓰는 결론은 영향받지 않는다.
+
     Args:
         run_dir: 식별 진단을 train.log에 기록할 디렉토리.
 
@@ -395,11 +408,15 @@ def fit_physical(
     *,
     lam_coeffs: tuple[float, float, float],
 ) -> dict[str, Any]:
-    """Levenberg–Marquardt(trust-region) 최소제곱 — 자유도가 작아 한 번에 수렴한다.
+    """신뢰영역 최소제곱 (scipy `least_squares`, **TRF**) — 자유도가 작아 한 번에 수렴한다.
 
     자유도 P ≤ 7이므로 2점 수치 야코비안(P+1 forward/iter)이 충분하고, 그 야코비안이
     그대로 **파라미터 공분산**을 준다: cov = σ²(JᵗJ)⁻¹. "이 값이 물리적으로 의미
-    있나"에 신뢰구간으로 답하기 위한 것이 LM을 쓰는 주된 이유다.
+    있나"에 신뢰구간으로 답하기 위한 것이 경사하강 대신 이쪽을 쓰는 주된 이유다.
+
+    **이름 주의**: 여기 쓰는 것은 Trust Region Reflective이고 Levenberg–Marquardt가
+    아니다 (감쇠 정규방정식이 아니라 신뢰영역 부분문제를 푼다). 실제 LM은 게이트 (d)의
+    두께 역해(`scripts/diagnose_calibration.py: invert_thickness`) 쪽이다.
 
     Args:
         data: `load_split` 산출. cfg: 전체 config. run_dir: 산출물 디렉토리.
@@ -414,7 +431,7 @@ def fit_physical(
         n_channels=data["x_fit"].shape[1],
         lam_coeffs=lam_coeffs,
         free=free,
-        si_source=str(model_cfg.get("si_source", "Si_nk_Aspnes.yml")),
+        si_source=str(model_cfg.get("si_source", DEFAULT_SI_SOURCE)),
     )
     hold = model_cfg.get("holdout_channels")
     hold_range = model_cfg.get("holdout_channel_range")

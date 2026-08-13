@@ -12,7 +12,9 @@
    디코더를 배치 Levenberg–Marquardt로 역해해 d̂를 뽑고 층별 MAE를 잰다 — Stage B의
    물리 손실이 강제할 수 있는 정확도의 상한이 이 값이다.
 3. **잔차 구조의 국소화** — 채널·두께 축 위반율 프로파일. 잔차가 어느 λ에 몰리는지가
-   무슨 물리가 부족한지를 가리킨다 (실제로 c-Si 임계점 E1·E2를 지목했다).
+   무슨 물리가 부족한지를 가리킨다. 구역(c-Si 임계점 E1·E2 / SiN Sellmeier 유효범위 밖)
+   별로 산출하고, **문헌표 불일치와 교차**해 "표 문제"와 "모델 부족"을 분리한다 —
+   위반율만 큰 구역은 더 나은 표로 풀리지 않는다.
 4. **채널 홀드아웃**(피팅에서 뺀 채널을 예측) — 매끈한 물리 분산만 통과할 수 있다.
    **대조군과 함께** 본다: 전 채널로 적합한 모델을 같은 채널에서 평가해 나눠야
    홀드아웃의 *한계 효과*가 나온다. 이걸 빼면 그 채널의 고유 난이도를 홀드아웃 비용으로
@@ -68,7 +70,15 @@ from src.calibrate import (  # noqa: E402
     residual_stats,
 )
 from src.data.dataset import REPO_ROOT  # noqa: E402
-from src.physics.dispersion import TabulatedNK, si3n4_n, sio2_n  # noqa: E402
+from src.physics.dispersion import (  # noqa: E402
+    HC_EV_NM,
+    SI3N4_LUKE_RANGE_NM,
+    SI_CRITICAL_POINTS_EV,
+    TabulatedNK,
+    si3n4_n,
+    sio2_n,
+)
+from src.physics.tmm import tmm_reflectance  # noqa: E402
 
 FIG_PATH = REPO_ROOT / "reports" / "figures" / "fig_stage_a.png"
 GATE_PATH = REPO_ROOT / "reports" / "stage_a_gate.md"
@@ -84,14 +94,30 @@ DEFAULT_RUNS = (
     "runs/stage_a/joint-lam3-sin2-si2-green",
     "runs/stage_a/joint-lam3-sin2-si2-schinke",
 )
-# 게이트 (e) 채널 홀드아웃 run — 균등 간격판과 연속 블록판.
-HOLDOUT_RUNS = ("runs/stage_a/holdout-channels", "runs/stage_a/holdout-block-uv")
+# 게이트 (e) 채널 홀드아웃 run — 균등 간격판·연속 블록판, 그리고 채택 표(Schinke) 판본.
+HOLDOUT_RUNS = (
+    "runs/stage_a/holdout-channels",
+    "runs/stage_a/holdout-block-uv",
+    "runs/stage_a/holdout-block-uv-schinke",
+)
 # 홀드아웃의 **한계 효과**를 재기 위한 대조군: 전 226채널로 적합한 같은 설정의 모델.
 # 이것 없이 held/fit 비만 보면 그 채널의 고유 난이도를 홀드아웃 비용으로 오독한다.
-REFERENCE_RUN = "runs/stage_a/joint-lam3-sin2-si2"
+# **Si 표별로 짝을 맞춘다** — 표가 다르면 그 채널의 고유 난이도 자체가 달라지므로
+# 대조군은 홀드아웃 run과 같은 표를 써야 한다.
+REFERENCE_RUNS = {
+    "Si_nk_Aspnes.yml": "runs/stage_a/joint-lam3-sin2-si2",
+    "Si_nk_Schinke.yml": "runs/stage_a/joint-lam3-sin2-si2-schinke",
+}
 # λ 절대 스케일 검정 run (SiO₂ 배율 해방 + Si 동결). 통과 기준 |s − 1| < 1%.
 GAUGE_RUN = "runs/stage_a/gauge-sio2-scale"
 GAUGE_TOL = 0.01
+# 게이트 (f) Si 문헌표 계통 — 세 표를 채택 λ 그리드에서 비교한다.
+SI_TABLES = ("Si_nk_Aspnes.yml", "Si_nk_Green-2008.yml", "Si_nk_Schinke.yml")
+# 4층 스택 비교에 쓰는 무작위 두께 조합 (시드 고정 — 수치가 run마다 흔들리면 안 된다).
+STACK_SEED = 42
+STACK_ROWS = 3000
+# 잔차 국소화 표에 싣는 최악 채널 수.
+TOP_CHANNELS = 6
 
 C_SIN, C_SIO2, C_SI = LAYER_COLORS[0], LAYER_COLORS[1], LAYER_COLORS[2]
 
@@ -228,17 +254,266 @@ def invert_thickness(
     }
 
 
+def _table_label(filename: str) -> str:
+    """문헌 파일명 → 사람이 읽는 표 이름 ("Si_nk_Green-2008.yml" → "Green 2008")."""
+    stem = filename.removeprefix("Si_nk_").removesuffix(".yml").replace("-", " ")
+    return {"Aspnes": "Aspnes 1983", "Green 2008": "Green 2008", "Schinke": "Schinke 2015"}.get(
+        stem, stem
+    )
+
+
+def localization_section(best: dict[str, Any]) -> list[str]:
+    """게이트 (b) 잔차가 어느 λ에 몰리는지 — **채택(=최선) 모델 기준**으로 산출한다.
+
+    이 표를 손으로 적으면 디코더를 교체할 때마다 스테일이 된다 (실제로 Si 표를 Aspnes →
+    Schinke로 바꿨을 때 최악 채널이 E1에서 대역 단파장 끝으로 옮겨갔는데 리포트는 옛
+    측정을 그대로 싣고 있었다). 마스크는 물리에서 온 세 구역이다:
+    c-Si 임계점 E1·E2 ±0.12 eV, SiN Sellmeier 유효범위 밖(λ < 310 nm), 그 나머지.
+    """
+    lam = best["lam"]
+    viol = best["struct"]["channel_violation"]
+    energy = HC_EV_NM / lam
+    order = np.argsort(-viol)[:TOP_CHANNELS]
+    worst = int(order[0])
+    luke_lo = SI3N4_LUKE_RANGE_NM[0]
+    masks = {
+        f"E1 임계점 ±0.12 eV ({SI_CRITICAL_POINTS_EV['E1']} eV)": np.abs(
+            energy - SI_CRITICAL_POINTS_EV["E1"]
+        )
+        <= 0.12,
+        f"E2 임계점 ±0.12 eV ({SI_CRITICAL_POINTS_EV['E2']} eV)": np.abs(
+            energy - SI_CRITICAL_POINTS_EV["E2"]
+        )
+        <= 0.12,
+        f"λ < {luke_lo:.0f} nm — Luke Sellmeier 외삽": lam < luke_lo,
+    }
+    rest = ~np.logical_or.reduce(list(masks.values()))
+    worst_zones = ", ".join(
+        name.split(" —")[0].split(" (")[0] for name, m in masks.items() if m[worst]
+    )
+    thickness = {
+        f"layer_{j + 1}": np.array(best["struct"]["thickness_violation"][f"layer_{j + 1}"])
+        for j in range(4)
+    }
+    grid = np.unique(np.round(np.linspace(10, 300, 30)))
+    lines = [
+        "",
+        "## 게이트 (b) 잔차 국소화 — 채택 모델 기준",
+        "",
+        f"최선 run `{best['name']}`의 채널별 위반율. 마스크는 겹칠 수 있어 개수 합이 226을 "
+        "넘을 수 있다 (E2 근방과 Luke 외삽 구간이 실제로 겹친다).",
+        "",
+        f"### 최악 채널 {TOP_CHANNELS}개",
+        "",
+        "| 채널 | λ [nm] | E [eV] | 위반율 | 해당 구역 |",
+        "|---|---|---|---|---|",
+    ]
+    for c in order:
+        zones = [name.split(" —")[0].split(" (")[0] for name, m in masks.items() if m[c]] or ["—"]
+        lines.append(
+            f"| ch{c} | {lam[c]:.1f} | {energy[c]:.3f} | {viol[c]:.1%} | {', '.join(zones)} |"
+        )
+    lines += [
+        "",
+        "### 구역별 평균 위반율",
+        "",
+        "| 구역 | 채널 수 | 평균 위반율 | 나머지 대비 |",
+        "|---|---|---|---|",
+    ]
+    for name, mask in masks.items():
+        ratio = viol[mask].mean() / viol[rest].mean() if rest.any() and mask.any() else float("nan")
+        lines.append(f"| {name} | {int(mask.sum())} | {viol[mask].mean():.2%} | {ratio:.2f}배 |")
+    lines += [
+        f"| 위 세 구역 밖 | {int(rest.sum())} | {viol[rest].mean():.2%} | 1.00배 (기준) |",
+        "",
+        f"**최악 채널은 ch{worst} (λ {lam[worst]:.1f} nm, E {energy[worst]:.3f} eV)** — "
+        f"해당 구역: {worst_zones or '없음'}.",
+        "",
+        "### 두께축 — 채널축보다 훨씬 평평하다",
+        "",
+        "| 층 | 최소 | 최대 | 최대 발생 두께 [nm] |",
+        "|---|---|---|---|",
+    ]
+    for name, rates in thickness.items():
+        lines.append(
+            f"| {name} | {rates.min():.2%} | {rates.max():.2%} | {grid[int(rates.argmax())]:.0f} |"
+        )
+    return lines
+
+
+def lam_shift_section(results: list[dict[str, Any]]) -> list[str]:
+    """게이트 (f) — 식별의 매끈 곡선에서 공동 피팅이 λ를 얼마나 움직였나.
+
+    두 독립 경로(두께축 주파수 식별 vs 전체 TMM 최소제곱)의 일치도이므로 게이트 (f)의
+    핵심 수치다. 절대 nm과 **상대편차**를 함께 싣는다 — 상대편차가 정직한 표현이고,
+    산포 0.445 nm(채널별 개별 추정)를 곡선의 오차 막대로 쓰면 안 된다
+    ([stage_a_leakage.md](stage_a_leakage.md)가 곡선의 재표집 산포를 따로 측정한다).
+    """
+    lines = [
+        "",
+        "## 게이트 (f) λ 이동 — 식별 매끈 곡선 vs 공동 피팅",
+        "",
+        "| run | rms [nm] | std [nm] | max [nm] | 상대편차 중앙 | 상대편차 p95 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for res in results:
+        if res["n_free"] < 3:  # λ 동결 run은 정의상 이동이 0이다
+            continue
+        dv = res["lam"] - res["lam_init"]
+        rel = np.abs(dv) / res["lam_init"]
+        lines.append(
+            f"| `{res['name']}` | {np.sqrt((dv**2).mean()):.4f} | {dv.std():.4f} "
+            f"| {np.abs(dv).max():.4f} | {np.median(rel):.4%} | {np.percentile(rel, 95):.4%} |"
+        )
+    lines += [
+        "",
+        "λ 동결 run은 정의상 이동이 0이라 제외했다.",
+    ]
+    return lines
+
+
+def si_table_section(best: dict[str, Any]) -> list[str]:
+    """게이트 (f) — 어느 Si 문헌표를 믿느냐가 만드는 계통오차.
+
+    형식 신뢰구간도, 방법 간 일치도도 이 항을 담지 못하는데 실제로는 **지배적**이다.
+    채택 λ 그리드에서 (i) 맨 Si 수직입사 R, (ii) 4층 스택 R 을 표별로 계산해 비교한다.
+    """
+    lam = torch.from_numpy(best["lam"])
+    n_layers = torch.from_numpy(best["n_layers"])
+    de, klog = best["si_de"], best["si_klog"]
+    peaks: dict[str, tuple[float, float]] = {}
+    bare: dict[str, np.ndarray] = {}
+    stack: dict[str, np.ndarray] = {}
+    rng = np.random.default_rng(STACK_SEED)
+    d_rand = torch.from_numpy(rng.uniform(10.0, 300.0, size=(STACK_ROWS, 4)))
+    lam_si = HC_EV_NM / (HC_EV_NM / lam + de)
+    for filename in SI_TABLES:
+        table = TabulatedNK(filename)
+        with torch.no_grad():
+            # E1 봉우리: 표 자체의 성질이므로 촘촘한 에너지 격자에서 스플라인을 훑는다.
+            e_scan = torch.linspace(3.2, 3.6, 4001, dtype=torch.float64)
+            n_scan, _ = table(HC_EV_NM / e_scan)
+            top = int(n_scan.argmax())
+            peaks[filename] = (float(n_scan[top]), float(e_scan[top]))
+            n_si, k_si = table(lam_si)
+            ns = torch.complex(n_si, -k_si * float(np.exp(klog)))
+            r_bare = (1.0 - ns) / (1.0 + ns)
+            bare[filename] = (r_bare.real**2 + r_bare.imag**2).numpy()
+            stack[filename] = tmm_reflectance(d_rand, n_layers, 1.0, ns, lam).numpy()
+    lines = [
+        "",
+        "## 게이트 (f) Si 문헌표 계통 — 지배적 불확실성",
+        "",
+        f"채택 λ 그리드(`{best['name']}`)에서 `si_source`만 바꿔 계산한다. 나머지 물성·λ·"
+        "Si 파라미터(ΔE, k 스케일)는 채택 모델 값으로 고정 — **표만 다른** 비교다.",
+        "",
+        "### E1 봉우리 (에너지축 3차 스플라인, 3.2–3.6 eV 훑기)",
+        "",
+        "| 표 | n 최대 | 위치 [eV] |",
+        "|---|---|---|",
+    ]
+    for filename, (n_peak, e_peak) in peaks.items():
+        lines.append(f"| {_table_label(filename)} | {n_peak:.4f} | {e_peak:.4f} |")
+    span = max(e for _, e in peaks.values()) - min(e for _, e in peaks.values())
+    lines += [
+        "",
+        f"세 표의 봉우리 위치가 **{span * 1000:.1f} meV** 안에서 일치한다 — 스플라인이 표의 "
+        "격자(0.1 eV 균등 vs λ 10 nm 균등)와 무관하게 봉우리를 복원한다는 뜻이고, "
+        '"Aspnes만 격자점이 봉우리에 놓인다"는 옛 논거가 성립하지 않는 근거다.',
+        "",
+        "### 표 간 반사율 차이 — 맨 Si (수직입사)",
+        "",
+        "| 표 쌍 | rms | 최대 | σ 대비 | 유계 상한 대비 | 최대 발생 채널 |",
+        "|---|---|---|---|---|---|",
+    ]
+    pairs = [(a, b) for i, a in enumerate(SI_TABLES) for b in SI_TABLES[i + 1 :]]
+    for a, b in pairs:
+        dv = np.abs(bare[a] - bare[b])
+        c = int(dv.argmax())
+        lines.append(
+            f"| {_table_label(a)} − {_table_label(b)} | {np.sqrt((dv**2).mean()):.5f} "
+            f"| **{dv.max():.5f}** | {dv.max() / NOISE_SIGMA:.2f}σ | {dv.max() / NOISE_BOUND:.0%} "
+            f"| ch{c} = {best['lam'][c]:.1f} nm |"
+        )
+    lines += [
+        "",
+        f"### 표 간 반사율 차이 — 4층 스택 (무작위 두께 {STACK_ROWS:,}조합, seed {STACK_SEED})",
+        "",
+        "| 표 쌍 | rms | 최대 | 유계 상한 단독 초과 |",
+        "|---|---|---|---|",
+    ]
+    for a, b in pairs:
+        dv = np.abs(stack[a] - stack[b])
+        lines.append(
+            f"| {_table_label(a)} − {_table_label(b)} | {np.sqrt((dv**2).mean()):.5f} "
+            f"| **{dv.max():.5f}** | {(dv > NOISE_BOUND).mean():.3%} |"
+        )
+    lines += [
+        "",
+        "**표를 바꾸는 것만으로 유계 상한을 넘는 관측이 만들어진다** — 게이트 (b) 잔차의 "
+        '상당 부분이 "더 나은 모형"이 아니라 "더 나은 표"의 문제일 수 있다는 뜻이다.',
+        "",
+        "### 구역 교차 — 위반율이 높은 곳에 표 불일치도 있는가",
+        "",
+        "표 불일치(Aspnes − Schinke)와 위반율을 같은 구역에서 나란히 본다. 둘이 함께 큰 "
+        "구역은 **표**가 후속 대상이고, 위반율만 큰 구역은 표로 설명되지 않는 **모델 부족**이다.",
+        "",
+        "| 구역 | 채널 수 | 평균 위반율 | 표 불일치 평균 \\|ΔR\\| | 표 불일치 최대 | 해석 |",
+        "|---|---|---|---|---|---|",
+    ]
+    lam_np, viol = best["lam"], best["struct"]["channel_violation"]
+    energy = HC_EV_NM / lam_np
+    diff = np.abs(bare[SI_TABLES[0]] - bare[SI_TABLES[-1]])
+    luke_lo = SI3N4_LUKE_RANGE_NM[0]
+    e1_zone = np.abs(energy - SI_CRITICAL_POINTS_EV["E1"]) <= 0.12
+    worst4 = np.zeros_like(e1_zone)
+    worst4[np.argsort(-viol)[:4]] = True
+    zones = [
+        ("E1 임계점 ±0.12 eV", e1_zone),
+        (f"λ < {luke_lo:.0f} nm 전체 (Luke 외삽)", lam_np < luke_lo),
+        ("**최악 4채널**", worst4),
+        ("그 밖", ~(e1_zone | (lam_np < luke_lo))),
+    ]
+    for name, mask in zones:
+        table_big = diff[mask].mean() > 2.0 * diff[~(e1_zone | (lam_np < luke_lo))].mean()
+        viol_big = viol[mask].mean() > 1.3 * viol[~(e1_zone | (lam_np < luke_lo))].mean()
+        verdict = (
+            "표·모델 둘 다"
+            if table_big and viol_big
+            else "**모델 부족** (표로 설명 안 됨)"
+            if viol_big
+            else "표 차이만"
+            if table_big
+            else "기준"
+        )
+        lines.append(
+            f"| {name} | {int(mask.sum())} | {viol[mask].mean():.2%} | {diff[mask].mean():.5f} "
+            f"| {diff[mask].max():.5f} ({diff[mask].max() / NOISE_SIGMA:.2f}σ) | {verdict} |"
+        )
+    return lines
+
+
 def holdout_section(x_diag: np.ndarray, d_diag: np.ndarray) -> list[str]:
     """게이트 (e) — 채널 홀드아웃. **대조군과 함께** 보고한다.
 
     held/fit 비만 보면 그 채널들의 고유 난이도를 홀드아웃 비용으로 오독한다. 전 226채널로
-    적합한 대조군(`REFERENCE_RUN`)을 같은 채널에서 평가해 나눠야 **한계 효과**가 나온다
+    적합한 대조군(`REFERENCE_RUNS`)을 같은 채널에서 평가해 나눠야 **한계 효과**가 나온다
     (균등 간격 20채널은 +0.3%뿐이고, 연속 블록이어야 요구가 실제로 올라간다 — 08-13 리뷰).
+    대조군은 홀드아웃 run과 **같은 Si 표**를 쓴 것으로 짝을 맞춘다.
     """
-    ref_dir = REPO_ROOT / REFERENCE_RUN
-    ref_model = None
-    if (ref_dir / "model.pt").exists():
-        ref_model, _ = load_physical_stack(ref_dir / "model.pt")
+    ref_cache: dict[str, torch.nn.Module | None] = {}
+
+    def reference_for(si_source: str) -> tuple[torch.nn.Module | None, str]:
+        run = REFERENCE_RUNS.get(si_source)
+        if run is None:
+            return None, "—"
+        if run not in ref_cache:
+            path = REPO_ROOT / run / "model.pt"
+            ref_cache[run] = load_physical_stack(path)[0] if path.exists() else None
+            if ref_cache[run] is None:
+                print(f"[skip] 대조군 {run} — model.pt 없음 (한계 효과 계산 제외)")
+        return ref_cache[run], run.split("/")[-1]
+
     lines: list[str] = []
     for run in HOLDOUT_RUNS:
         run_dir = REPO_ROOT / run
@@ -257,21 +532,23 @@ def holdout_section(x_diag: np.ndarray, d_diag: np.ndarray) -> list[str]:
         span = f"{held.min()}–{held.max()}" if len(held) else "—"
         contiguous = len(held) == held.max() - held.min() + 1
         kind = f"연속블록 ch{span}" if contiguous else f"균등간격 {len(held)}채널"
+        table = _table_label(model.si_source)
+        ref_model, ref_name = reference_for(model.si_source)
         if ref_model is None:
             lines.append(
-                f"| `{run.split('/')[-1]}` | {kind} | {h['rmse']:.6f} | {f['rmse']:.6f} "
-                f"| {ratio:.4f} | — | — |"
+                f"| `{run.split('/')[-1]}` | {kind} | {table} | {h['rmse']:.6f} "
+                f"| {f['rmse']:.6f} | {ratio:.4f} | — | — |"
             )
             continue
         rh = residual_stats(ref_model, x_diag, d_diag, channels=held)
         rf = residual_stats(ref_model, x_diag, d_diag, channels=fit_ch)
         control = rh["rmse"] / rf["rmse"]
         lines.append(
-            f"| `{run.split('/')[-1]}` | {kind} | {h['rmse']:.6f} | {f['rmse']:.6f} "
-            f"| {ratio:.4f} | {control:.4f} | **{ratio / control:.4f}** |"
+            f"| `{run.split('/')[-1]}` | {kind} | {table} | {h['rmse']:.6f} | {f['rmse']:.6f} "
+            f"| {ratio:.4f} | {control:.4f} (`{ref_name}`) | **{ratio / control:.4f}** |"
         )
         print(
-            f"{run.split('/')[-1]:26s} {kind:18s} held/fit {ratio:.4f}"
+            f"{run.split('/')[-1]:30s} {kind:18s} held/fit {ratio:.4f}"
             f"  대조군 {control:.4f}  한계효과 {ratio / control:.4f}"
         )
     if not lines:
@@ -280,11 +557,11 @@ def holdout_section(x_diag: np.ndarray, d_diag: np.ndarray) -> list[str]:
         "",
         "## 게이트 (e) 채널 홀드아웃 — 대조군 대비 한계 효과",
         "",
-        f"대조군 = 전 226채널로 적합한 `{REFERENCE_RUN.split('/')[-1]}`을 같은 채널에서 평가한 값.",
+        "대조군 = 전 226채널로 적합한 **같은 Si 표**의 모델을 같은 채널에서 평가한 값.",
         "한계 효과 = (홀드아웃 모델의 held/fit) ÷ (대조군의 held/fit) — 1.0이면 홀드아웃 비용 0.",
         "",
-        "| run | 방식 | held RMSE | fit RMSE | held/fit | 대조군 | 한계 효과 |",
-        "|---|---|---|---|---|---|---|",
+        "| run | 방식 | Si 표 | held RMSE | fit RMSE | held/fit | 대조군 | 한계 효과 |",
+        "|---|---|---|---|---|---|---|---|",
         *lines,
     ]
 
@@ -336,6 +613,10 @@ def figure(results: list[dict[str, Any]], run_names: list[str]) -> None:
 
     상단은 최종 모델(자유도 최대)의 물성 곡선을 문헌과 겹쳐 그린다 (CLAUDE.md가
     요구하는 육안 확인 기록). 거친 표 대조군을 함께 그려 표·보간 품질의 영향을 보인다.
+
+    **문헌 곡선은 그 run이 실제로 쓴 표로 그린다.** 하드코딩하면 채택 표가 바뀌는 순간
+    "적합 vs 문헌" 간격이 실제로는 "표 교체 + 적합"이 되어 그림이 거짓말을 한다
+    (표 간 차이는 최대 1.22σ로 적합량과 같은 자릿수다 — 게이트 (f) Si 표 계통 절).
     """
     best = min(results, key=lambda r: r["struct"]["rmse"])
     coarse = next((r for r in results if "coarse" in r["name"]), None)
@@ -343,8 +624,10 @@ def figure(results: list[dict[str, Any]], run_names: list[str]) -> None:
     fig.subplots_adjust(hspace=0.45, wspace=0.28)
 
     lam, order = best["lam"], np.argsort(best["lam"])
+    lit_source = best["si_source"] if best["si_source"] != "coarse" else SI_TABLES[0]
+    lit_label = _table_label(lit_source)
     with torch.no_grad():
-        n_lit, k_lit = TabulatedNK("Si_nk_Aspnes.yml")(torch.from_numpy(lam[order]))
+        n_lit, k_lit = TabulatedNK(lit_source)(torch.from_numpy(lam[order]))
 
     ax = axes[0, 0]
     _style_axes(ax)
@@ -390,7 +673,7 @@ def figure(results: list[dict[str, Any]], run_names: list[str]) -> None:
             ax.set_yscale("log")
         ax.set_xlabel("λ [nm]")
         ax.set_ylabel("k (log)" if logy else "n")
-        _title(ax, label, "dashed = Aspnes 1983, gray = coarse-table control")
+        _title(ax, label, f"dashed = {lit_label} (table used), gray = coarse-table control")
 
     ax = axes[1, 0]
     _style_axes(ax)
@@ -557,14 +840,23 @@ def main() -> int:
         eps = residual_array(model, x_diag, d_diag)
         with torch.no_grad():
             lam, n_layers, ns = model.spectra()
+        coeffs = metrics["lam_coeffs"]
+        u = np.arange(len(lam), dtype=np.float64) / (len(lam) - 1.0)
+        physical = model.physical_values()
         res: dict[str, Any] = {
             "name": run.split("/")[-1],
             "n_free": n_free,
+            "si_source": model.si_source,
             "struct": structure_metrics(eps, d_diag),
             "lam": lam.numpy(),
+            # 식별이 준 매끈 곡선 = 공동 피팅의 출발점. 게이트 (f) λ 이동의 기준선.
+            "lam_init": 1.0 / (coeffs[0] * (1.0 + coeffs[1] * u + coeffs[2] * u**2)),
             "n_sin": n_layers[0].real.numpy(),
+            "n_layers": n_layers.numpy(),
             "n_si": ns.real.numpy(),
             "k_si": (-ns.imag).numpy(),
+            "si_de": physical["si_de"],
+            "si_klog": physical["si_klog"],
             "color": palette[i % len(palette)],
         }
         rows = args.invert_rows
@@ -580,7 +872,14 @@ def main() -> int:
         results.append(res)
 
     figure(results, runs)
-    extra = holdout_section(x_diag, d_diag) + gauge_section()
+    best = min(results, key=lambda r: r["struct"]["rmse"])
+    extra = (
+        localization_section(best)
+        + holdout_section(x_diag, d_diag)
+        + gauge_section()
+        + lam_shift_section(results)
+        + si_table_section(best)
+    )
     write_report(results, runs, len(x_diag), n_invert=args.invert_rows, extra=extra)
     print(f"\n산출물: {GATE_PATH}\n         {FIG_PATH}")
     return 0

@@ -1,6 +1,6 @@
 torch>=2.0
 numpy
-scipy          # src/calibrate.py의 Levenberg-Marquardt (least_squares)
+scipy          # src/calibrate.py의 신뢰영역 최소제곱 (least_squares, TRF)
 pandas
 pyarrow
 matplotlib

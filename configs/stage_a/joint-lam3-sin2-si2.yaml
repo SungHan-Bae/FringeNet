@@ -3,7 +3,9 @@
 # 추가분: SiN C₁(공명 위치 = 밴드갭 = 조성), Si 에너지축 시프트 ΔE(온도·응력·도핑),
 # Si k 스케일. 어느 손잡이가 개선을 만드는지가 잔여 계통오차의 정체를 가리킨다.
 #
-# **Stage B 물리 디코더로 채택된 설정.**
+# **디코더로 채택된 설정이 아니다** — 08-13에 `si_source`만 바꾼 세 판본을 측정해
+# `joint-lam3-sin2-si2-schinke`(Schinke 2015)로 교체했다. 이 run은 그 비교의
+# Aspnes 기준점이자 게이트 (e) 홀드아웃의 Aspnes 대조군으로 남는다.
 seed: 42
 experiment: stage_a
 run_name: joint-lam3-sin2-si2

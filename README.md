@@ -118,14 +118,14 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 | λ(c) | 1/λ = ν₀(1 + r₁u + r₂u²), u = c/225 | 두께축 주파수 식별 (닫힌형) | 0 또는 3 |
 | SiO₂ | Sellmeier 3항 **동결** | Malitson 1965 | **0 (게이지)** |
 | SiN | Sellmeier 2항 | Luke et al. 2015 | 1~2 (B₁, C₁) |
-| Si 기판 | 실측표 + 에너지축 3차 스플라인 | Aspnes & Studna 1983 | 0~2 (ΔE, k 스케일) |
+| Si 기판 | 실측표 + 에너지축 3차 스플라인 | **Schinke 2015** (대안: Aspnes 1983 / Green 2008) | 0~2 (ΔE, k 스케일) |
 
 - **1단계 — 두께축 주파수 식별 (`src/physics/freq_id.py`).** λ축 fringe 정렬은
   경사하강에 비볼록이라 잘못된 fringe 차수에 안착한다. 대신 타깃이 30⁴ 전수 격자인
   점을 쓴다: 층 j로 조건화한 평균 E[R_c | d_j] 는 두께축에서 f_j = 2n_j(λ_c)/λ_c 로
   진동하므로, SiO₂ 게이지에서 λ_c가 **이분법으로 유일하게** 풀린다. 경사하강이
   개입하지 않아 결정론적이다.
-- **2단계 — Levenberg–Marquardt 최소제곱 (`src/calibrate.py`).** 자유도가 작아 야코비안이
+- **2단계 — 신뢰영역 최소제곱 (`src/calibrate.py`, scipy TRF).** 자유도가 작아 야코비안이
   그대로 **파라미터 공분산**을 주므로, 각 물성값을 신뢰구간·상관행렬과 함께 보고한다.
 - **게이지 축퇴 — n과 λ는 동시에 식별되지 않는다.** δ = 2πnd/λ 이므로 모든 n과 λ를 같은
   배수로 스케일해도 스펙트럼이 불변이다. **SiO₂를 문헌값에 고정**하는 것이 그 선언이고,
@@ -144,7 +144,7 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 
 | | 기준 | 성격 |
 |---|---|---|
-| (a) 재구성 RMSE | < 1.2σ = 1.039×10⁻² (σ = 0.008658, §2.1) — 노이즈가 있어 완벽한 모델도 σ 아래로 못 내려간다 | pass/fail |
+| (a) 재구성 RMSE | < 1.2σ = 1.039×10⁻² (σ = 0.008658, §2.1) — 노이즈가 있어 완벽한 모델도 σ 아래로 못 내려간다. 1.2라는 배수에 유도는 없으므로 **계통오차 √(RMSE²−σ²)를 함께** 1차 지표로 읽는다 | pass/fail |
 | (b) **유계 노이즈 위반율** | 노이즈가 \|ε\| ≤ 0.0152로 **유계**임이 확정됐으므로(§2.1), 잔차가 이를 넘는 관측은 통계 없이 모델 오류의 증거. 완벽한 모델은 0% | pass/fail |
 | (c) 잔차 백색성 | 두께·채널에 구조 없음 — 단독으로는 판별력이 없다 | 참고 |
 | (d) 두께 nm 역해 MAE | 디코더를 LM으로 역해한 층별 오차 — Stage B가 강제할 수 있는 정확도의 상한 | 실용 판단 |
@@ -153,6 +153,19 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 
 게이트에 실패하면 데이터가 TMM과 다른 방식으로 생성됐다는 뜻이다 — 지도학습된
 d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환하고, 그 사실을 기록한다.
+
+> **판정 결과 — (b)는 통과하지 못했고, 그럼에도 TMM을 채택했다.** 사전에 (b)를
+> pass/fail로 선언했으므로 이 사실을 여기에 적어 둔다. 최선 모델의 위반율이 **9.99%**
+> (완벽한 모델은 0%)이므로 **forward 모델은 불완전하다**. fallback으로 전환하지 않은
+> 근거는 둘이다. ① (b)가 재는 잔여 오차의 크기가 이 프로젝트의 용도에는 충분히 작다 —
+> 두께 단위로 옮기면 역해 MAE **0.340 nm**이고 규제 대상인 Level 1 CNN이 2.346 nm라
+> 물리 손실의 규제자로서 7배 여유가 있다. ② 잔여 오차의 지배 성분이 모형이 아니라
+> **문헌표 불일치**로 측정됐다 — 세 Si 표의 상호 차이가 이미 유계 노이즈 예산의 70%를
+> 쓰고(최대 1.23σ), 그 최대가 위반율이 높은 E1 임계점 구역에 놓인다. NN emulator로 갈아타면
+> 이 잔차는 사라지지만 (e)·(f)(홀드아웃 예측력·파라미터 물리성)를 함께 잃으므로
+> 프로젝트 목표에 역행한다. **수용하는 리스크**: Stage B의 물리 항은 0.34 nm 수준의
+> 계통 편향을 가진 기준으로 예측을 당긴다 — β ablation은 이 편향이 실제로 해가 되는지
+> 재는 실험이기도 하다.
 
 결과와 한계는 [reports/stage_a.md](reports/stage_a.md).
 
@@ -240,12 +253,14 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   ├── eda_metrics.md          # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
 │   ├── eda_notes.md            # EDA 관찰·해석 메모
 │   ├── stage_a_gate.md         # Stage A 게이트 수치 (스크립트 산출, 재실행 시 덮어씀)
+│   ├── stage_a_leakage.md      # 식별의 판정표본 포함 영향 (스크립트 산출, 재실행 시 덮어씀)
 │   └── figures/                # 산출 그림
 ├── scripts/
 │   ├── verify_data.py          # 데이터 계약 검증 (통과 여부를 종료 코드로 반환)
 │   ├── eda.py                  # EDA 그림 3종 + 측정값 생성
 │   ├── measure_noise.py        # 노이즈 σ·유계 상한 측정 (채널축 m차 차분)
-│   └── diagnose_calibration.py # Stage A 게이트 (a)~(f) 진단 + 그림 (§3.2)
+│   ├── diagnose_calibration.py # Stage A 게이트 (a)~(f) 진단 + 그림 (§3.2)
+│   └── check_lam_leakage.py    #   ↳ 주파수 식별이 판정 표본을 포함하는 예외의 영향 측정
 ├── src/
 │   ├── physics/
 │   │   ├── tmm.py              #   미분가능 TMM — 프로젝트의 물리 코어
@@ -259,7 +274,7 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   │   ├── cnn.py              #   Level 1 1D CNN — flatten·dilated·bound 플래그 (Task 5 확정)
 │   │   └── winner_skip_mlp.py  #   1등 솔루션 213M skip-MLP 충실 재현 (상한 기준선)
 │   ├── utils/seed.py           # 시드 고정 유틸
-│   ├── calibrate.py            # Stage A 캘리브레이션 — 물리 제약 LM 피팅 (자유도 1~7)
+│   ├── calibrate.py            # Stage A 캘리브레이션 — 물리 제약 최소제곱 TRF (자유도 1~7)
 │   ├── train.py                # baseline/k-fold 학습 — CPU 경로 (Stage B 물리 손실은 Task 7 예정)
 │   ├── train_gpu.py            # GPU(Colab) 학습 경로 — holdout 전용, 세션 유실 대비 resume+Drive 미러
 │   └── evaluate.py             # holdout 재평가·제출 파일 생성
@@ -295,6 +310,11 @@ python -m src.evaluate --run runs/mlp_baseline/dropout0.0  # holdout 재평가 (
 
 `verify_data.py` 최초 실행은 `train.csv`(1.9 GB)를 파싱해 `data/cache/train.parquet`을
 만드느라 약 30초 걸리고, 이후 실행은 캐시를 읽어 3~4초다.
+
+**메모리 요구(실측 최대 상주)**: `verify_data.py`·`eda.py` 약 4 GB, `src.calibrate`·
+`diagnose_calibration.py` 약 5 GB, `check_lam_leakage.py` 약 6 GB — 두께축 주파수 식별의
+조건부 평균이 holdout 제외 train 전체(73만 행)를 올리기 때문이다. 8 GB 미만 환경에서는
+Stage A 재현이 스왑을 탄다.
 
 (명령은 구현 진행에 따라 갱신)
 
