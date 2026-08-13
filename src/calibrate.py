@@ -14,7 +14,7 @@ TMM을 Stage B의 물리 디코더로 쓰려면 forward 모델의 미지수를 �
 | λ(c) | 1/λ = ν₀(1 + r₁u + r₂u²), u = c/(W−1) | 0 또는 3 |
 | SiO₂ | Malitson 1965 Sellmeier **동결** | 0 (게이지) — `sio2_scale`은 게이지 검정 전용 |
 | SiN | Luke 2015 Sellmeier 형태, k=0 | 1~2 (B₁, C₁) |
-| Si 기판 | Aspnes & Studna 1983 실측표, 에너지축 3차 스플라인 | 0~2 (ΔE, k 스케일) |
+| Si 기판 | **Schinke 2015** 실측표, 에너지축 3차 스플라인 | 0~2 (ΔE, k 스케일) |
 
 **게이지 고정이 원리적으로 필요하다**: δ = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이라
 둘을 동시에 자유로 두면 해가 하나로 정해지지 않는다. SiO₂를 문헌값에 못박는 것이
@@ -37,7 +37,7 @@ resume은 두지 않고, **완료 run 자동 스킵**과 결과 원자적 저장
 계약의 취지 — 장시간 GPU 스크립트가 아니다).
 
 사용법:
-    python -m src.calibrate --config configs/stage_a/lam-frozen-sin1.yaml
+    python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yaml
 """
 
 from __future__ import annotations
@@ -110,12 +110,13 @@ PARAM_NAMES = (
 def fit_lam_coefficients(lam_grid: np.ndarray, *, trim_sigma: float = 4.0) -> tuple[float, ...]:
     """채널별 λ 추정에 1/λ = ν₀(1 + r₁u + r₂u²)를 강건 적합한다 (u = c/(W−1)).
 
-    분광기 격자 분산은 채널 인덱스의 매끈·단조 함수다. phase-0의 채널별 추정은
-    ~0.44 nm 흔들림을 갖는데(다항 차수를 올려도 줄지 않아 잡음이다), 이를 그대로
-    고정하면 λ 오차만으로 R 오차 rms 0.0047이 생겨 남은 계통오차 0.0034보다 크다.
+    분광기 격자 분산은 채널 인덱스의 매끈·단조 함수다. 1단계(주파수 식별)의 채널별 추정은
+    ~0.44 nm 흔들림을 갖는데(다항 차수를 올려도 줄지 않는다 — 주파수 후보 격자 양자화와
+    기저 절단에서 오는 결정론적 편향이다), 이를 그대로 고정하면 λ 오차만으로 R 오차
+    rms 0.0052가 생겨 최종 모델에 남은 계통오차 전체(0.0041)보다 크다.
 
     Args:
-        lam_grid: (W,) 채널 순서 λ [nm] (phase-0 주파수 식별 결과).
+        lam_grid: (W,) 채널 순서 λ [nm] (1단계 주파수 식별 결과).
         trim_sigma: 잔차 MAD 기준 이탈 채널 배제 임계 (주파수 식별 실패 방어).
 
     Returns:
@@ -336,7 +337,7 @@ def identify_lam_coefficients(run_dir: Path) -> tuple[tuple[float, ...], dict[st
         "lam_grid": [float(v) for v in lam_grid],
         "lam_coeffs": list(coeffs),
         # 채널별 추정과 매끈 곡선의 차이 = 주파수 추정 잡음. 이것을 그대로 고정하면
-        # 그 잡음만으로 R 오차 rms 0.0047이 생긴다 (계통오차 0.0034보다 크다).
+        # 그것만으로 R 오차 rms 0.0052가 생긴다 (남은 계통오차 전체 0.0041보다 크다).
         "smooth_fit_residual_rms_nm": float((smooth - lam_grid).std()),
         "smooth_fit_residual_max_nm": float(np.abs(smooth - lam_grid).max()),
     }
