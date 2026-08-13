@@ -533,7 +533,9 @@ def main() -> int:
 
     data = load_split(fit_rows=8000)
     x_diag, d_diag = data["x_diag"], data["d_diag"].astype(np.float64)
-    palette = [INK_MUTED, C_SIO2, C_SIN, C_SI, INK_SECONDARY]
+    # 색 수 ≥ run 수여야 한다 — 부족하면 순환해서 대조군과 채택 run이 같은 색이 된다
+    # (실제로 6 run이 되자 coarsesi와 schinke가 둘 다 회색이 됐다).
+    palette = [INK_MUTED, INK_SECONDARY, C_SIO2, C_SIN, LAYER_COLORS[3], C_SI]
 
     # 없는 run은 건너뛴다. 조용히 빠지면 "전부 비교했다"로 읽히므로 명시적으로 알린다.
     requested = list(args.runs)
@@ -542,6 +544,11 @@ def main() -> int:
         print(f"[skip] {missing} — model.pt 없음 (비교에서 제외)")
     if not runs:
         raise SystemExit("진단할 run이 없다")
+    if len(runs) > len(palette):
+        raise SystemExit(
+            f"run {len(runs)}개 > 팔레트 {len(palette)}색 — 색이 순환해 범례가 모호해진다. "
+            "팔레트를 늘리거나 --runs 로 비교 대상을 줄일 것."
+        )
 
     results: list[dict[str, Any]] = []
     for i, run in enumerate(runs):
