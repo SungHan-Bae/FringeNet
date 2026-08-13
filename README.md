@@ -66,7 +66,8 @@ inductive bias로 결합한 딥러닝으로 푼다.
 이 사실들이 설계를 두 곳에서 규정한다.
 
 - **전수 격자** → 무작위 split은 모든 두께 값이 학습에 등장하므로 "조합 보간"만 측정한다.
-  §3.5의 평가 프로토콜(held-out 두께 값 split 등)이 이를 통제한다.
+  §3.5의 평가 프로토콜(held-out 두께 값 split 등)이 이를 통제할 **예정**이다
+  (현재 구현은 격자 스냅 분리 보고 1종뿐 — §3.5 각주 참조).
 - **노이즈 바닥** → 완벽한 forward 모델도 관측 대비 재구성 RMSE가 σ 아래로 내려갈 수 없다.
   §3.2의 판정 게이트가 이 바닥(1.2σ)을 기준으로 잡혀 있고, 노이즈 강건성 실험(§3.5)의
   주입 노이즈는 같은 종류(균등 ±0.015)를 기본으로 하며 "기존 노이즈 위 추가분"으로 표기한다.
@@ -188,6 +189,14 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
    노이즈를 주입한 조건에서의 성능 열화를 함께 보고한다. 주입은 데이터와 같은 종류인
    균등 ±0.015가 기본이고(§2.1), 이미 있는 노이즈 위에 더하는 "추가분"임을 명시한다.
 
+> **구현 현황 (정직하게 밝힌다): 4종 중 1종만 구현돼 있다.** 격자 스냅 분리 보고만
+> `src/evaluate.py`(`snap_to_grid` + `--snap`)에 있고, **2·3·4는 미구현**이다.
+> Task 4·5·6은 이 프로토콜 없이 종결됐고, 따라서 그 리포트들은 **격자 밖 외삽 성능이나
+> 노이즈 강건성을 주장하지 않는다**(random split 조합 보간 성능만 보고한다).
+> 2번은 캘리브레이션된 forward 모델이 전제라 Stage A(08-12) 이전에는 원리적으로
+> 불가능했다. 3·4번은 Task 7에서 물리 손실의 기여를 재는 축이 정확히 이 둘이므로
+> 함께 구현한다 (docs/week_1.md 열린 항목).
+
 ### 3.6 가정과 한계
 
 - 수직입사·등방성·평행 평면층·표면 거칠기 없음을 가정한다. 실제 계측은 유한 개구각과
@@ -224,10 +233,13 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   ├── <실험>.md               # 대실험별 취합 리포트 — 결과·분석·결론 (§6)
 │   ├── eda_metrics.md          # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
 │   ├── eda_notes.md            # EDA 관찰·해석 메모
+│   ├── stage_a_gate.md         # Stage A 게이트 수치 (스크립트 산출, 재실행 시 덮어씀)
 │   └── figures/                # 산출 그림
 ├── scripts/
 │   ├── verify_data.py          # 데이터 계약 검증 (통과 여부를 종료 코드로 반환)
-│   └── eda.py                  # EDA 그림 3종 + 측정값 생성
+│   ├── eda.py                  # EDA 그림 3종 + 측정값 생성
+│   ├── measure_noise.py        # 노이즈 σ·유계 상한 측정 (채널축 m차 차분)
+│   └── diagnose_calibration.py # Stage A 게이트 (a)~(f) 진단 + 그림 (§3.2)
 ├── src/
 │   ├── physics/
 │   │   ├── tmm.py              #   미분가능 TMM — 프로젝트의 물리 코어
@@ -250,7 +262,9 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
     ├── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
     ├── test_models.py          # 모델 계약(shape)·bound·미분·재현성·팩토리
     ├── test_train.py           # 지표·제출 파일 정렬·LR 스케줄·학습 스모크
-    └── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·완료 run 스킵
+    ├── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·완료 run 스킵
+    ├── test_calibrate.py       # Stage A — 파라미터화·분할·주파수 식별 계약
+    └── test_dispersion_literature.py  # 코드 상수 ↔ literature/*.yml 원본 대조
 ```
 
 ## 5. 시작하기

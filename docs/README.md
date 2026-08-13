@@ -6,14 +6,14 @@
 
 | 노트 | 기간 | 요약 |
 |---|---|---|
-| [week_1.md](week_1.md) | 2026-08-08 ~ 08-14 | 스캐폴드 → TMM(테스트 7종) → 데이터 검증(**노이즈 σ ≈ 0.0087 발견**) → EDA → Stage A 게이트 확정 → **baseline 4.599 nm** → GPU(Colab) 전환 → CNN ablation 3라운드 (**flatten-dilated-bound 2.346 nm**, −49%) → **1등 단일 모델 재현 0.3955 nm** (상한 기준선) → **Stage A 캘리브레이션 게이트 통과** (RMSE 0.00929 = 1.07σ, TMM 채택) |
+| [week_1.md](week_1.md) | 2026-08-08 ~ 08-14 | 스캐폴드 → TMM(테스트 7종) → 데이터 검증(**노이즈 σ ≈ 0.0087 발견**) → EDA → Stage A 게이트 확정 → **baseline 4.599 nm** → GPU(Colab) 전환 → CNN ablation 3라운드 (**flatten-dilated-bound 2.346 nm**, −49%) → **1등 단일 모델 재현 0.3955 nm** (상한 기준선) → **Stage A 캘리브레이션** — 물리 제약 자유도 7, RMSE **0.009941 (1.148σ)**로 게이트 (a) 통과 / **유계 노이즈 게이트 (b)는 미통과 (12.01%)**, TMM 조건부 채택 |
 
 ## 로드맵 (3주)
 
 | 주차 | 계획 | 상태 |
 |---|---|---|
 | Week 1 (08-08~08-14) | 스캐폴드 · TMM 모듈+테스트 · 데이터 검증 · EDA · baseline 학습 | **완료** (08-10) |
-| Week 2 (08-15~08-21) | 구조 ablation(MLP/CNN, 다중 스케일) · Stage A 캘리브레이션+게이트 판정 · Stage B 물리 손실 학습 | 구조 ablation·Stage A는 **08-11 완료** (Week 1로 당겨짐) · Stage B 예정 |
+| Week 2 (08-15~08-21) | 구조 ablation(MLP/CNN, 다중 스케일) · Stage A 캘리브레이션+게이트 판정 · Stage B 물리 손실 학습 | 구조 ablation은 **08-11**, Stage A는 **08-12 완료** (Week 1로 당겨짐) · Stage B 예정 |
 | Week 3 (08-22~08-28) | 신뢰도 지표 분석 · 결과·그림 정리 · 문서화 마감 | 예정 |
 
 ## 실험 리포트 목록 (reports/)
