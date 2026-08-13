@@ -14,7 +14,12 @@
 3. **잔차 구조의 국소화** — 채널·두께 축 위반율 프로파일. 잔차가 어느 λ에 몰리는지가
    무슨 물리가 부족한지를 가리킨다 (실제로 c-Si 임계점 E1·E2를 지목했다).
 4. **채널 홀드아웃**(피팅에서 뺀 채널을 예측) — 매끈한 물리 분산만 통과할 수 있다.
-   run의 metrics.json에 기록되며 여기서는 표로 옮긴다.
+   **대조군과 함께** 본다: 전 채널로 적합한 모델을 같은 채널에서 평가해 나눠야
+   홀드아웃의 *한계 효과*가 나온다. 이걸 빼면 그 채널의 고유 난이도를 홀드아웃 비용으로
+   오독한다 (균등 간격 20채널의 한계 효과는 +0.3%뿐이고, 연속 블록이어야 요구가 오른다).
+5. **λ 절대 스케일 검정** — SiO₂ 배율을 풀고 Si 표를 동결한 run에서 배율이 1로
+   돌아오는지. 위상 정보만으로는 (n, λ) 공통 스케일이 축퇴이므로, Si 임계점을 절대
+   앵커로 써서 Fresnel 진폭이 축퇴를 깨는지 확인하는 것이다.
 
 산출물:
   reports/figures/fig_stage_a.png   분산 곡선(문헌 대조) + 잔차 구조 4패널
@@ -60,6 +65,7 @@ from src.calibrate import (  # noqa: E402
     NOISE_SIGMA,
     load_physical_stack,
     load_split,
+    residual_stats,
 )
 from src.data.dataset import REPO_ROOT  # noqa: E402
 from src.physics.dispersion import TabulatedNK, si3n4_n, sio2_n  # noqa: E402
@@ -67,13 +73,25 @@ from src.physics.dispersion import TabulatedNK, si3n4_n, sio2_n  # noqa: E402
 FIG_PATH = REPO_ROOT / "reports" / "figures" / "fig_stage_a.png"
 GATE_PATH = REPO_ROOT / "reports" / "stage_a_gate.md"
 
-# 기본 ablation 사다리 — 거친 Si 표 → 원본 실측표 → λ 해방 → 물성 손잡이 추가.
+# 기본 ablation 사다리 — 거친 Si 표 → 원본 실측표 → λ 해방 → 물성 손잡이 추가,
+# 그 뒤 **같은 자유도에서 Si 실측표만 바꾼 대안 2종** (표 선택을 기하학 논증이 아니라
+# 측정으로 정하기 위해 — 08-13 리뷰).
 DEFAULT_RUNS = (
     "runs/stage_a/lam-frozen-sin1-coarsesi",
     "runs/stage_a/lam-frozen-sin1",
     "runs/stage_a/joint-lam3-sin1",
     "runs/stage_a/joint-lam3-sin2-si2",
+    "runs/stage_a/joint-lam3-sin2-si2-green",
+    "runs/stage_a/joint-lam3-sin2-si2-schinke",
 )
+# 게이트 (e) 채널 홀드아웃 run — 균등 간격판과 연속 블록판.
+HOLDOUT_RUNS = ("runs/stage_a/holdout-channels", "runs/stage_a/holdout-block-uv")
+# 홀드아웃의 **한계 효과**를 재기 위한 대조군: 전 226채널로 적합한 같은 설정의 모델.
+# 이것 없이 held/fit 비만 보면 그 채널의 고유 난이도를 홀드아웃 비용으로 오독한다.
+REFERENCE_RUN = "runs/stage_a/joint-lam3-sin2-si2"
+# λ 절대 스케일 검정 run (SiO₂ 배율 해방 + Si 동결). 통과 기준 |s − 1| < 1%.
+GAUGE_RUN = "runs/stage_a/gauge-sio2-scale"
+GAUGE_TOL = 0.01
 
 C_SIN, C_SIO2, C_SI = LAYER_COLORS[0], LAYER_COLORS[1], LAYER_COLORS[2]
 
@@ -136,6 +154,7 @@ def invert_thickness(
     *,
     iters: int = 30,
     step_nm: float = 1e-3,
+    box: tuple[float, float] = (1.0, 400.0),
 ) -> dict[str, Any]:
     """디코더를 두께로 역해한다 — 배치 Levenberg–Marquardt, d_true에서 출발.
 
@@ -143,12 +162,19 @@ def invert_thickness(
     내재 편향**이다 (forward 모델 오차가 두께 추정을 얼마나 밀어내는가). 야코비안은
     중앙차분 — float64에서 상대오차 ~1e-10이고 4층뿐이라 autograd보다 단순하다.
 
+    상자 제약은 **의도적으로 물리 범위보다 넓다** ([1, 400] vs 격자 [10, 300]).
+    라벨의 사전지식을 역해에 넣지 않는 보수적 선택이며, 조이면 값이 좋아지는 방향이다
+    (12,000행에서 MAE 0.392 → 0.366). 대신 물리 범위를 벗어난 해의 비율을 함께 보고해
+    그 비용이 보이게 한다 — 이 값이 크면 "디코더 편향"이라는 해석 자체가 약해진다.
+
     Args:
         model: 캘리브레이션된 디코더. x: (M, W) R_obs. d_true: (M, 4) [nm].
-        iters: LM 반복 수. step_nm: 중앙차분 보폭 [nm].
+        iters: LM 반복 수. step_nm: 중앙차분 보폭 [nm]. box: 해의 상자 제약 [nm].
 
     Returns:
-        {"mae", "mae_per_layer", "bias_per_layer", "rmse_nm"} — 전부 nm 단위.
+        {"mae", "mae_per_layer", "bias_per_layer", "rmse_nm", "abs_err_median",
+         "abs_err_p99", "abs_err_max", "out_of_physical", "at_box_boundary"} —
+        오차는 전부 nm 단위, 비율은 [0, 1].
     """
     d = torch.from_numpy(d_true.astype(np.float64)).clone()
     obs = torch.from_numpy(x.astype(np.float64))
@@ -173,7 +199,7 @@ def invert_thickness(
             eye = torch.eye(4, dtype=torch.float64).expand_as(jtj)
             damped = jtj + lam_damp * eye * jtj.diagonal(dim1=1, dim2=2).mean()
             delta = torch.linalg.solve(damped, -jtr.unsqueeze(-1)).squeeze(-1)
-            cand = (d + delta).clamp(1.0, 400.0)
+            cand = (d + delta).clamp(*box)
             resid_c = model(cand) - obs
             cost_c = (resid_c**2).sum(dim=1)
             better = cost_c < cost
@@ -183,13 +209,126 @@ def invert_thickness(
             lam_damp = torch.where(
                 better.reshape(-1, 1, 1), (lam_damp * 0.3).clamp(min=1e-9), lam_damp * 3.0
             )
+    d_hat = d.numpy()
     err = (d - torch.from_numpy(d_true.astype(np.float64))).numpy()
+    abs_err = np.abs(err)
     return {
-        "mae": float(np.abs(err).mean()),
-        "mae_per_layer": [float(v) for v in np.abs(err).mean(axis=0)],
+        "mae": float(abs_err.mean()),
+        "mae_per_layer": [float(v) for v in abs_err.mean(axis=0)],
         "bias_per_layer": [float(v) for v in err.mean(axis=0)],
         "rmse_nm": float(np.sqrt((err**2).mean())),
+        # 평균만 보면 중앙값과 꼬리가 섞인 혼합값이라 규제자 신뢰도를 두 성분으로
+        # 나눠 말할 수 없다 (08-13 리뷰).
+        "abs_err_median": float(np.median(abs_err)),
+        "abs_err_p99": float(np.percentile(abs_err, 99)),
+        "abs_err_max": float(abs_err.max()),
+        # 상자가 물리 범위보다 넓은 데 대한 비용 — 위 docstring 참조.
+        "out_of_physical": float(((d_hat < 10.0) | (d_hat > 300.0)).mean()),
+        "at_box_boundary": float((np.isclose(d_hat, box[0]) | np.isclose(d_hat, box[1])).mean()),
     }
+
+
+def holdout_section(x_diag: np.ndarray, d_diag: np.ndarray) -> list[str]:
+    """게이트 (e) — 채널 홀드아웃. **대조군과 함께** 보고한다.
+
+    held/fit 비만 보면 그 채널들의 고유 난이도를 홀드아웃 비용으로 오독한다. 전 226채널로
+    적합한 대조군(`REFERENCE_RUN`)을 같은 채널에서 평가해 나눠야 **한계 효과**가 나온다
+    (균등 간격 20채널은 +0.3%뿐이고, 연속 블록이어야 요구가 실제로 올라간다 — 08-13 리뷰).
+    """
+    ref_dir = REPO_ROOT / REFERENCE_RUN
+    ref_model = None
+    if (ref_dir / "model.pt").exists():
+        ref_model, _ = load_physical_stack(ref_dir / "model.pt")
+    lines: list[str] = []
+    for run in HOLDOUT_RUNS:
+        run_dir = REPO_ROOT / run
+        if not (run_dir / "model.pt").exists():
+            print(f"[skip] {run} — model.pt 없음 (게이트 (e) 표에서 제외)")
+            continue
+        model, metrics, _ = load_run(run_dir)
+        hold = metrics["result"].get("holdout")
+        if hold is None:
+            continue
+        held = np.asarray(hold["channels"], dtype=int)
+        fit_ch = np.setdiff1d(np.arange(x_diag.shape[1]), held)
+        h = residual_stats(model, x_diag, d_diag, channels=held)
+        f = residual_stats(model, x_diag, d_diag, channels=fit_ch)
+        ratio = h["rmse"] / f["rmse"]
+        span = f"{held.min()}–{held.max()}" if len(held) else "—"
+        contiguous = len(held) == held.max() - held.min() + 1
+        kind = f"연속블록 ch{span}" if contiguous else f"균등간격 {len(held)}채널"
+        if ref_model is None:
+            lines.append(
+                f"| `{run.split('/')[-1]}` | {kind} | {h['rmse']:.6f} | {f['rmse']:.6f} "
+                f"| {ratio:.4f} | — | — |"
+            )
+            continue
+        rh = residual_stats(ref_model, x_diag, d_diag, channels=held)
+        rf = residual_stats(ref_model, x_diag, d_diag, channels=fit_ch)
+        control = rh["rmse"] / rf["rmse"]
+        lines.append(
+            f"| `{run.split('/')[-1]}` | {kind} | {h['rmse']:.6f} | {f['rmse']:.6f} "
+            f"| {ratio:.4f} | {control:.4f} | **{ratio / control:.4f}** |"
+        )
+        print(
+            f"{run.split('/')[-1]:26s} {kind:18s} held/fit {ratio:.4f}"
+            f"  대조군 {control:.4f}  한계효과 {ratio / control:.4f}"
+        )
+    if not lines:
+        return []
+    return [
+        "",
+        "## 게이트 (e) 채널 홀드아웃 — 대조군 대비 한계 효과",
+        "",
+        f"대조군 = 전 226채널로 적합한 `{REFERENCE_RUN.split('/')[-1]}`을 같은 채널에서 평가한 값.",
+        "한계 효과 = (홀드아웃 모델의 held/fit) ÷ (대조군의 held/fit) — 1.0이면 홀드아웃 비용 0.",
+        "",
+        "| run | 방식 | held RMSE | fit RMSE | held/fit | 대조군 | 한계 효과 |",
+        "|---|---|---|---|---|---|---|",
+        *lines,
+    ]
+
+
+def gauge_section() -> list[str]:
+    """λ 절대 스케일 검정 — SiO₂ 배율을 풀고 Si를 동결했을 때 배율이 1로 돌아오는가.
+
+    δ = 2πnd/λ 는 (n, λ) 공통 스케일에 불변이라 **위상만으로는** 검증 불가다. Si를
+    에너지축에서 동결하면 임계점이 절대 앵커가 되고 Fresnel 진폭이 축퇴를 부분적으로
+    깬다 — 적합값이 1 근처면 λ 그리드의 절대 스케일이 위상 외 정보로 확인된 것이다.
+    """
+    run_dir = REPO_ROOT / GAUGE_RUN
+    if not (run_dir / "model.pt").exists():
+        print(f"[skip] {GAUGE_RUN} — model.pt 없음 (게이지 검정 제외)")
+        return []
+    model, metrics, n_free = load_run(run_dir)
+    scale = model.physical_values()["sio2_scale"]
+    entry = next(
+        (p for p in metrics["result"]["params"] if p["name"] == "sio2_scale"),
+        None,
+    )
+    ci = "—" if entry is None else f"±{1.96 * entry['sd']:.2e}"
+    passed = abs(scale - 1.0) < GAUGE_TOL
+    print(
+        f"{GAUGE_RUN.split('/')[-1]:26s} sio2_scale {scale:.6f} ({ci})"
+        f"  |s−1| = {abs(scale - 1.0):.4%}  → {'통과' if passed else '실패'}"
+    )
+    return [
+        "",
+        "## λ 절대 스케일 검정 (게이지 축퇴 깨기)",
+        "",
+        f"`{GAUGE_RUN.split('/')[-1]}` — SiO₂ 배율 1개를 풀고 **Si 표를 동결**했다 "
+        f"(자유도 {n_free}). Si 임계점이 절대 앵커가 되어 Fresnel 진폭이 위상 축퇴를 깬다.",
+        "",
+        "| 값 | 적합 | 형식 ±1.96σ | \\|s − 1\\| | 기준 | 판정 |",
+        "|---|---|---|---|---|---|",
+        f"| SiO₂ n 배율 | **{scale:.6f}** | {ci} | {abs(scale - 1.0):.3%} "
+        f"| < {GAUGE_TOL:.0%} | {'**통과**' if passed else '**실패**'} |",
+        "",
+        "통과의 뜻: λ 그리드의 **절대** 스케일이 SiO₂ = Malitson 가정에만 의존하지 않는다."
+        if passed
+        else "실패의 뜻: λ 절대 스케일이 게이지 가정에 의존한다 — "
+        "물성 절대값을 조건부로 읽어야 한다.",
+    ]
 
 
 def figure(results: list[dict[str, Any]], run_names: list[str]) -> None:
@@ -305,7 +444,14 @@ def figure(results: list[dict[str, Any]], run_names: list[str]) -> None:
     plt.close(fig)
 
 
-def write_report(results: list[dict[str, Any]], run_names: list[str], n_diag: int) -> None:
+def write_report(
+    results: list[dict[str, Any]],
+    run_names: list[str],
+    n_diag: int,
+    *,
+    n_invert: int,
+    extra: list[str] | None = None,
+) -> None:
     """게이트 표를 reports/stage_a_gate.md 에 쓴다 (스크립트 산출, 덮어씀)."""
     lines = [
         "# Stage A 게이트 진단 (`scripts/diagnose_calibration.py` 산출 — 손으로 고치지 말 것)",
@@ -313,6 +459,8 @@ def write_report(results: list[dict[str, Any]], run_names: list[str], n_diag: in
         f"- 진단 표본 {n_diag:,}행 × 226채널 (전 run **동일 표본**, 피팅과 분리)",
         f"- 노이즈 σ = {NOISE_SIGMA} (채널축 고차 차분, m=5~8 수렴) / "
         f"유계 상한 |ε| ≤ {NOISE_BOUND} / 게이트 (a) 임계 {GATE_A_RMSE:.6f} = 1.2σ",
+        f"- **역해 MAE 열은 진단 표본의 앞 {n_invert:,}행**으로 계산한다 "
+        f"(배치 LM, d_true에서 출발, 상자 [1, 400] nm — 물리 범위보다 넓은 보수적 선택)",
         "",
         "## 게이트 종합",
         "",
@@ -356,6 +504,23 @@ def write_report(results: list[dict[str, Any]], run_names: list[str], n_diag: in
             continue
         per = " | ".join(f"{v:.4f}" for v in inv["mae_per_layer"])
         lines.append(f"| `{name.split('/')[-1]}` | {per} | **{inv['mae']:.4f}** |")
+    lines += [
+        "",
+        "### 역해 오차 분포 — 평균만 보면 중앙값과 꼬리가 섞인다",
+        "",
+        "| run | 중앙값 | p99 | 최대 | 물리범위 밖 | 상자 경계 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for res, name in zip(results, run_names, strict=True):
+        inv = res.get("invert")
+        if inv is None:
+            continue
+        lines.append(
+            f"| `{name.split('/')[-1]}` | {inv['abs_err_median']:.4f} | {inv['abs_err_p99']:.4f} "
+            f"| {inv['abs_err_max']:.4f} | {inv['out_of_physical']:.2%} "
+            f"| {inv['at_box_boundary']:.2%} |"
+        )
+    lines += extra or []
     lines += ["", f"그림: `figures/{FIG_PATH.name}`", ""]
     GATE_PATH.write_text("\n".join(lines), encoding="utf-8")
 
@@ -408,7 +573,8 @@ def main() -> int:
         results.append(res)
 
     figure(results, runs)
-    write_report(results, runs, len(x_diag))
+    extra = holdout_section(x_diag, d_diag) + gauge_section()
+    write_report(results, runs, len(x_diag), n_invert=args.invert_rows, extra=extra)
     print(f"\n산출물: {GATE_PATH}\n         {FIG_PATH}")
     return 0
 
