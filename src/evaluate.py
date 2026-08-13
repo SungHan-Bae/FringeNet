@@ -104,7 +104,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--run", required=True, help="runs/<이름> 디렉토리 경로")
     parser.add_argument("--submission", action="store_true", help="test 추론 후 제출 csv 생성")
     parser.add_argument(
-        "--snap", action="store_true", help="격자 스냅본도 생성/보고 (누설 — 분리 보고 전용)"
+        "--snap",
+        action="store_true",
+        help="격자 스냅본도 생성/보고 (holdout에서는 누설 — 분리 보고 전용. "
+        "**제출에는 쓰지 말 것**: test 두께는 격자 밖이라 MAE가 약 +1.2 nm 나빠진다)",
     )
     parser.add_argument("--batch-size", type=int, default=8192)
     return parser.parse_args(argv)

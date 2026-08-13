@@ -12,9 +12,9 @@ TMM을 Stage B의 물리 디코더로 쓰려면 forward 모델의 미지수를 �
 | 대상 | 모델 | 자유 |
 |---|---|---|
 | λ(c) | 1/λ = ν₀(1 + r₁u + r₂u²), u = c/(W−1) | 0 또는 3 |
-| SiO₂ | Malitson 1965 Sellmeier **동결** | 0 (게이지) |
+| SiO₂ | Malitson 1965 Sellmeier **동결** | 0 (게이지) — `sio2_scale`은 게이지 검정 전용 |
 | SiN | Luke 2015 Sellmeier 형태, k=0 | 1~2 (B₁, C₁) |
-| Si 기판 | Aspnes & Studna 1983 실측표, 에너지축 3차 스플라인 | 0~2 (ΔE, k 스케일) |
+| Si 기판 | **Schinke 2015** 실측표, 에너지축 3차 스플라인 | 0~2 (ΔE, k 스케일) |
 
 **게이지 고정이 원리적으로 필요하다**: δ = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이라
 둘을 동시에 자유로 두면 해가 하나로 정해지지 않는다. SiO₂를 문헌값에 못박는 것이
@@ -37,7 +37,7 @@ resume은 두지 않고, **완료 run 자동 스킵**과 결과 원자적 저장
 계약의 취지 — 장시간 GPU 스크립트가 아니다).
 
 사용법:
-    python -m src.calibrate --config configs/stage_a/lam-frozen-sin1.yaml
+    python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yaml
 """
 
 from __future__ import annotations
@@ -93,19 +93,30 @@ _THETA_STEP_ABS = {
     "sin_c1": 1.8e-4,  # Luke C₁ = 0.018317 μm² 의 약 1%
     "si_de": 5e-3,  # Si 에너지축 시프트 [eV]
     "si_klog": 0.02,  # Si k 로그 스케일 (약 2%)
+    "sio2_scale": 1e-3,  # SiO₂ n 배율 (0.1%) — 게이지 검정 전용, 기본은 동결
 }
-PARAM_NAMES = ("lam_nu0", "lam_r1", "lam_r2", "sin_b1", "sin_c1", "si_de", "si_klog")
+PARAM_NAMES = (
+    "lam_nu0",
+    "lam_r1",
+    "lam_r2",
+    "sin_b1",
+    "sin_c1",
+    "si_de",
+    "si_klog",
+    "sio2_scale",
+)
 
 
 def fit_lam_coefficients(lam_grid: np.ndarray, *, trim_sigma: float = 4.0) -> tuple[float, ...]:
     """채널별 λ 추정에 1/λ = ν₀(1 + r₁u + r₂u²)를 강건 적합한다 (u = c/(W−1)).
 
-    분광기 격자 분산은 채널 인덱스의 매끈·단조 함수다. phase-0의 채널별 추정은
-    ~0.44 nm 흔들림을 갖는데(다항 차수를 올려도 줄지 않아 잡음이다), 이를 그대로
-    고정하면 λ 오차만으로 R 오차 rms 0.0047이 생겨 남은 계통오차 0.0034보다 크다.
+    분광기 격자 분산은 채널 인덱스의 매끈·단조 함수다. 1단계(주파수 식별)의 채널별 추정은
+    ~0.44 nm 흔들림을 갖는데(다항 차수를 올려도 줄지 않는다 — 주파수 후보 격자 양자화와
+    기저 절단에서 오는 결정론적 편향이다), 이를 그대로 고정하면 λ 오차만으로 R 오차
+    rms 0.0052가 생겨 최종 모델에 남은 계통오차 전체(0.0041)보다 크다.
 
     Args:
-        lam_grid: (W,) 채널 순서 λ [nm] (phase-0 주파수 식별 결과).
+        lam_grid: (W,) 채널 순서 λ [nm] (1단계 주파수 식별 결과).
         trim_sigma: 잔차 MAD 기준 이탈 채널 배제 임계 (주파수 식별 실패 방어).
 
     Returns:
@@ -167,6 +178,12 @@ class PhysicalStack(nn.Module):
             "sin_c1": SI3N4_LUKE_SELLMEIER[1][0],
             "si_de": 0.0,
             "si_klog": 0.0,
+            # 게이지: 기본 1.0 동결. 자유로 두는 것은 **게이지 검정 전용**이다 —
+            # δ = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이므로 λ와 함께 풀면 위상만으로는
+            # 축퇴다. 그래도 Si를 에너지축에서 동결하면 임계점이 절대 앵커가 되어
+            # Fresnel 진폭이 축퇴를 깬다 — 적합값이 1로 돌아오는지가 λ 절대 스케일의
+            # 독립 검증이다 (reports/stage_a.md 한계 절).
+            "sio2_scale": 1.0,
         }
         for name, value in inits.items():
             self.register_buffer(f"init_{name}", torch.tensor(value, dtype=f64))
@@ -218,7 +235,7 @@ class PhysicalStack(nn.Module):
     def spectra(self) -> tuple[Tensor, Tensor, Tensor]:
         """TMM 입력 물리량. 반환 (lam (W,), n_layers (4, W) complex, ns (W,) complex)."""
         lam = self.lam()
-        n_sio2 = _sellmeier(lam, self.sio2_b, self.sio2_c)
+        n_sio2 = _sellmeier(lam, self.sio2_b, self.sio2_c) * self._value("sio2_scale")
         n_sin = _sellmeier(
             lam,
             torch.stack([self._value("sin_b1"), self.sin_b2]),
@@ -248,7 +265,14 @@ def _sellmeier(lam_nm: Tensor, b: Tensor, c_um2: Tensor) -> Tensor:
 
 
 def load_physical_stack(path: Path | str) -> tuple[PhysicalStack, dict[str, Any]]:
-    """model.pt에서 모델을 복원한다. 반환 (model, 체크포인트 dict)."""
+    """model.pt에서 모델을 복원한다. 반환 (model, 체크포인트 dict).
+
+    **구버전 체크포인트 호환**: `init_*` 버퍼는 나중에 파라미터가 추가되면 늘어나므로,
+    체크포인트에 없는 `init_*` 키는 현재 구현의 기본값(= 동결값)으로 채운다. 그 파라미터가
+    자유였던 run이라면 값이 저장돼 있으니 이 경로를 타지 않는다 — 즉 채우는 것은 언제나
+    "그 run이 건드리지 않은 손잡이"뿐이고, 복원되는 물리 모델은 저장 당시와 동일하다.
+    (이 장치가 없으면 파라미터 하나를 추가하는 순간 기존 run 전부가 로드 불가가 된다.)
+    """
     ckpt = torch.load(Path(path), map_location="cpu", weights_only=True)
     mc = ckpt["model_cfg"]
     model = PhysicalStack(
@@ -257,7 +281,15 @@ def load_physical_stack(path: Path | str) -> tuple[PhysicalStack, dict[str, Any]
         free=tuple(mc["free"]),
         si_source=str(mc["si_source"]),
     )
-    model.load_state_dict(ckpt["state_dict"])
+    state = dict(ckpt["state_dict"])
+    current = model.state_dict()
+    missing = set(current) - set(state)
+    unexpected = missing - {f"init_{name}" for name in PARAM_NAMES}
+    if unexpected:
+        raise ValueError(f"체크포인트에 없는 키가 init_* 버퍼가 아니다: {sorted(unexpected)}")
+    for key in missing:
+        state[key] = current[key]
+    model.load_state_dict(state)
     model.eval()
     return model, ckpt
 
@@ -305,7 +337,7 @@ def identify_lam_coefficients(run_dir: Path) -> tuple[tuple[float, ...], dict[st
         "lam_grid": [float(v) for v in lam_grid],
         "lam_coeffs": list(coeffs),
         # 채널별 추정과 매끈 곡선의 차이 = 주파수 추정 잡음. 이것을 그대로 고정하면
-        # 그 잡음만으로 R 오차 rms 0.0047이 생긴다 (계통오차 0.0034보다 크다).
+        # 그것만으로 R 오차 rms 0.0052가 생긴다 (남은 계통오차 전체 0.0041보다 크다).
         "smooth_fit_residual_rms_nm": float((smooth - lam_grid).std()),
         "smooth_fit_residual_max_nm": float(np.abs(smooth - lam_grid).max()),
     }
@@ -385,8 +417,21 @@ def fit_physical(
         si_source=str(model_cfg.get("si_source", "Si_nk_Aspnes.yml")),
     )
     hold = model_cfg.get("holdout_channels")
+    hold_range = model_cfg.get("holdout_channel_range")
     n_ch = data["x_fit"].shape[1]
-    if hold:
+    if hold and hold_range:
+        raise ValueError("holdout_channels 와 holdout_channel_range 를 함께 줄 수 없다")
+    if hold_range:
+        # **연속 블록** 홀드아웃 — 균등 간격판보다 훨씬 요구가 크다. 이웃 채널이 강상관이라
+        # 균등 간격 20채널은 사실상 보간이고, 전 채널 적합 모델도 그 채널에서 비슷한 오차를
+        # 내므로 홀드아웃의 한계 효과가 +0.3%뿐이다 (08-13 리뷰). 대역 끝 블록을 통째로
+        # 빼면 진짜 외삽이 되고, 그래도 예측이 성립해야 매끈한 물리 분산이 입증된다.
+        lo, hi = (int(v) for v in hold_range)
+        if not 0 <= lo <= hi < n_ch:
+            raise ValueError(f"holdout_channel_range {hold_range} 가 [0, {n_ch - 1}] 범위 밖")
+        held = np.arange(lo, hi + 1, dtype=int)
+        fit_channels = np.setdiff1d(np.arange(n_ch), held)
+    elif hold:
         # 균등 간격으로 홀드아웃 채널을 고른다 — 매끈한 분산 모델만 이 채널을 예측할 수
         # 있다 (채널별 자유 모델은 원리적으로 불가능). 물리 파라미터화의 결정적 검정.
         held = np.linspace(0, n_ch - 1, int(hold), dtype=int)
@@ -482,7 +527,7 @@ def fit_physical(
     with torch.no_grad():
         lam = model.lam().numpy()
     out["lam_range"] = [float(lam.min()), float(lam.max())]
-    if hold:
+    if len(held):
         out["holdout"] = {
             "channels": held.tolist(),
             "held_out": residual_stats(model, data["x_diag"], data["d_diag"], channels=held),

@@ -105,6 +105,91 @@ def test_gauge_sio2_is_frozen_under_any_perturbation() -> None:
     assert np.allclose(n_layers[3].real.numpy(), sio2_n(lam.numpy()), atol=1e-12)
 
 
+def test_sio2_scale_is_the_only_way_to_release_the_gauge() -> None:
+    """`sio2_scale`은 기본 동결이고, 자유로 둘 때만 SiO₂가 문헌에서 벗어난다.
+
+    게이지 검정(`configs/stage_a/gauge-sio2-scale.yaml`)이 성립하려면 이 손잡이가
+    **정확히 배율로만** 작동해야 한다 — 그래야 적합값 1.0이 "λ 스케일이 맞다"로 읽힌다.
+    """
+    from src.physics.dispersion import sio2_n
+
+    frozen = _stack(free=("lam_nu0", "sin_b1"))
+    assert frozen.physical_values()["sio2_scale"] == pytest.approx(1.0)
+
+    released = _stack(free=("sio2_scale",))
+    _perturb(released, scale=4.0)
+    scale = released.physical_values()["sio2_scale"]
+    assert scale != pytest.approx(1.0)
+    with torch.no_grad():
+        lam, n_layers, _ = released.spectra()
+    # λ는 동결이므로 평가 지점이 같다 → 문헌값의 정확한 배수여야 한다.
+    expected = sio2_n(lam.numpy()) * scale
+    assert np.allclose(n_layers[1].real.numpy(), expected, atol=1e-12)
+    assert np.allclose(n_layers[3].real.numpy(), expected, atol=1e-12)
+
+
+def test_holdout_channel_range_excludes_a_contiguous_block(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """`holdout_channel_range`는 연속 블록을 피팅에서 빼고 그 채널을 별도로 평가한다.
+
+    균등 간격판(`holdout_channels`)은 이웃 상관 때문에 사실상 보간이라 요구가 약하다 —
+    연속 블록이 진짜 외삽 검정이다 (08-13 리뷰).
+    """
+    from src.calibrate import fit_physical
+
+    n_ch = 32
+    rng = np.random.default_rng(0)
+    model = _stack(n_channels=n_ch)
+    d = rng.uniform(20.0, 280.0, size=(24, 4))
+    with torch.no_grad():
+        x = model(torch.from_numpy(d).to(DTYPE)).numpy()
+    data = {"x_fit": x, "d_fit": d, "x_diag": x, "d_diag": d}
+    cfg = {"model": {"free": [], "holdout_channel_range": [24, 31]}}
+
+    out = fit_physical(data, cfg, tmp_path, lam_coeffs=LAM_COEFFS)
+
+    assert out["holdout"]["channels"] == list(range(24, 32))
+    assert out["n_fit_channels"] == n_ch - 8
+
+    with pytest.raises(ValueError, match="함께 줄 수 없다"):
+        fit_physical(
+            data,
+            {"model": {"free": [], "holdout_channels": 4, "holdout_channel_range": [0, 3]}},
+            tmp_path,
+            lam_coeffs=LAM_COEFFS,
+        )
+    with pytest.raises(ValueError, match="범위 밖"):
+        fit_physical(
+            data,
+            {"model": {"free": [], "holdout_channel_range": [30, n_ch]}},
+            tmp_path,
+            lam_coeffs=LAM_COEFFS,
+        )
+
+
+def test_load_physical_stack_accepts_checkpoints_missing_later_params(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """파라미터를 추가해도 기존 체크포인트가 로드돼야 한다 (하위 호환).
+
+    `init_*` 버퍼는 PARAM_NAMES가 늘면 함께 늘어난다. 이 장치가 없으면 손잡이 하나를
+    추가하는 순간 커밋된 run 전부가 로드 불가가 된다.
+    """
+    from src.calibrate import load_physical_stack
+
+    model = _stack(free=("sin_b1",))
+    state = {k: v for k, v in model.state_dict().items() if k != "init_sio2_scale"}
+    torch.save({"model_cfg": model.model_cfg, "state_dict": state}, tmp_path / "model.pt")
+
+    restored, _ = load_physical_stack(tmp_path / "model.pt")
+    assert restored.physical_values()["sio2_scale"] == pytest.approx(1.0)
+    with torch.no_grad():
+        assert torch.allclose(restored.lam(), model.lam())
+
+    bogus = {**state, "init_sin_b1": state["init_sin_b1"]}
+    bogus.pop("theta")
+    torch.save({"model_cfg": model.model_cfg, "state_dict": bogus}, tmp_path / "bad.pt")
+    with pytest.raises(ValueError, match="init_. 버퍼가 아니다"):
+        load_physical_stack(tmp_path / "bad.pt")
+
+
 def test_frozen_parameters_do_not_move() -> None:
     """`free`에 없는 파라미터는 섭동 후에도 초기값이어야 한다."""
     model = _stack(free=("sin_b1",))

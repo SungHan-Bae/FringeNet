@@ -1,0 +1,18 @@
+# stage_a — Si 표 재선정: Green 2008.
+#
+# `joint-lam3-sin2-si2`와 **si_source만** 다르다. 08-13 리뷰에서 기존 표 선택 논거
+# ("Aspnes만 0.1 eV 균등 격자라 E1 봉우리에 격자점이 놓인다 / Green·Schinke는 비껴간다")가
+# 반증됐다 — 같은 에너지축 3차 스플라인으로 세 표를 평가하면 E1 봉우리 위치가 3.5 meV
+# 이내로 일치하고, 스플라인이 10 nm λ 격자에서도 봉우리를 복원한다. 따라서 표는
+# 기하학 논증이 아니라 **측정**으로 골라야 한다.
+seed: 42
+experiment: stage_a
+run_name: joint-lam3-sin2-si2-green
+
+data:
+  fit_rows: 8000
+  diag_rows: 20000
+
+model:
+  si_source: Si_nk_Green-2008.yml
+  free: [lam_nu0, lam_r1, lam_r2, sin_b1, sin_c1, si_de, si_klog]
