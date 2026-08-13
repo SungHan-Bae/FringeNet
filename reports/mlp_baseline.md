@@ -46,7 +46,8 @@
    (대회 1등은 100 epochs).
 4. 참고 스케일: 대회 1등 단일 모델 val MAE ≈ 0.42 nm (약 213M 파라미터
    skip-connection MLP). 본 baseline은 0.65M — 이 격차를 재는 것이
-   strong baseline(수상자 축소 재현) 실험의 역할이다.
+   strong baseline(수상자 **원본 충실 재현**) 실험의 역할이다 — 재현 성공,
+   holdout MAE 0.3955 nm ([strong_baseline.md](strong_baseline.md)).
    (출처: [\[1등\]\[Context_KKP\] Skipconnection MLP with Ensemble — 데이콘 코드 공유](https://dacon.io/competitions/official/235554/codeshare/651).
    skip-connection MLP·앙상블·단일 모델 val 0.42는 페이지 본문에서 확인.
    파라미터 수·epochs·dropout 미사용은 페이지 본문이 아니라 원문 첨부 코드 기준.)
