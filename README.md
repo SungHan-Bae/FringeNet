@@ -228,8 +228,9 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   └── <실험>/
 │       └── <변형>.yaml         #   예: mlp_baseline/dropout0.0.yaml
 ├── notebooks/                  # Colab GPU 학습 드라이버 — 라운드별 1개, 완료 후 수정 금지 (실행 로그 보존)
-│   └── <대실험>/
-│       └── roundN_<내용>.ipynb #   예: level1_cnn/round3_bound.ipynb
+│   ├── <대실험>/
+│   │   └── roundN_<내용>.ipynb #   예: level1_cnn/round3_bound.ipynb
+│   └── checkpoint_archive.ipynb #  유틸 (규약 예외) — Drive ↔ 저장소 양방향 (미러는 3종) + sha256 검증
 ├── data/                       # 대회 데이터 — 파일은 git 미포함, 구조만 .gitkeep (§2)
 │   ├── raw/                    #   데이콘 원본 (사용자가 직접 배치)
 │   └── cache/                  #   parquet 캐시 (최초 실행 시 자동 생성)
