@@ -260,17 +260,21 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   │   ├── heads.py            #   공용 출력단 (ThicknessBound 등)
 │   │   ├── cnn.py              #   Level 1 1D CNN — flatten·dilated·bound 플래그 (Task 5 확정)
 │   │   └── winner_skip_mlp.py  #   1등 솔루션 213M skip-MLP 충실 재현 (상한 기준선)
-│   ├── utils/seed.py           # 시드 고정 유틸
+│   ├── utils/
+│   │   ├── seed.py             #   시드 고정 유틸
+│   │   └── io.py               #   원자적 저장 (calibrate·train_gpu 공용)
 │   ├── calibrate.py            # Stage A 캘리브레이션 — 물리 제약 최소제곱 TRF (자유도 1~7)
-│   ├── train.py                # baseline/k-fold 학습 — CPU 경로 (Stage B 물리 손실은 Task 7 예정)
-│   ├── train_gpu.py            # GPU(Colab) 학습 경로 — holdout 전용, 세션 유실 대비 resume+Drive 미러
+│   ├── losses.py               # Stage B 물리 손실 — 동결 TMM 디코더 + beta 워밍업 (§3.2)
+│   ├── train.py                # baseline/k-fold 학습 — CPU 경로 (물리 손실은 GPU 경로에만)
+│   ├── train_gpu.py            # GPU(Colab) 학습 경로 — holdout 전용, resume+Drive 미러, train.physics
 │   └── evaluate.py             # holdout 재평가·제출 파일 생성
 └── tests/
     ├── test_tmm.py             # §3.3 물리 단위 테스트
     ├── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
     ├── test_models.py          # 모델 계약(shape)·bound·미분·재현성·팩토리
     ├── test_train.py           # 지표·제출 파일 정렬·LR 스케줄·학습 스모크
-    ├── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·완료 run 스킵
+    ├── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·물리 손실 배선
+    ├── test_losses.py          # 물리 손실 — 동결 계약·dtype 충실도·beta=0 대조군 동등성·누수
     ├── test_calibrate.py       # Stage A — 파라미터화·분할·주파수 식별 계약
     └── test_dispersion_literature.py  # 코드 상수 ↔ literature/*.yml 원본 대조
 ```

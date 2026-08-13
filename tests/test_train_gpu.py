@@ -380,3 +380,74 @@ def test_lagged_mirror_resume_matches_uninterrupted(tmp_path: Path) -> None:
     assert resumed["best_epoch"] == full["best_epoch"]
     assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
     assert np.allclose(resumed["val_pred"], full["val_pred"], atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Stage B 물리 손실 (train.physics 블록) — 손실 자체는 tests/test_losses.py가 검증하고
+# 여기서는 배선을 건다: 대조군 동등성 · 진단 기록 · 워밍업이 resume을 가로질러 이어짐.
+# ---------------------------------------------------------------------------
+def _physics_cfg(beta: float, *, epochs: int = 2) -> dict:
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["epochs"] = epochs
+    cfg["train"]["physics"] = {"beta": beta, "warmup_steps": 2}
+    return cfg
+
+
+def test_physics_run_records_decoder_provenance_and_diagnostics(tmp_path: Path) -> None:
+    result = _train(tmp_path, _physics_cfg(100.0))
+    assert result["physics"]["beta"] == 100.0
+    assert result["physics"]["decoder"].endswith("joint-lam3-sin2-si2-schinke/model.pt")
+    assert len(result["physics"]["free"]) == 7  # Stage A 확정 자유도
+    assert np.isfinite(result["val_phys_l1"])
+    log = (tmp_path / "train.log").read_text()
+    assert "물리 손실 beta 100" in log
+    assert "train_phys" in log and "val_phys" in log
+
+
+def test_physics_beta_zero_reproduces_run_without_physics(tmp_path: Path) -> None:
+    """대조군(beta=0)의 학습 경로가 물리 항 도입 전과 같아야 차이를 물리 항에 귀속할 수 있다.
+
+    CPU 전용 — 결정성이 보장되는 쪽에서 비트 동일성을 건다 (CPU↔GPU는 MAE 수준 비교 규약).
+    """
+    plain_dir = tmp_path / "plain"
+    phys_dir = tmp_path / "phys"
+    plain_dir.mkdir()
+    phys_dir.mkdir()
+    cfg_plain = _tiny_cnn_cfg()
+    cfg_plain["train"]["epochs"] = 2
+
+    plain = _train(plain_dir, cfg_plain)
+    zero = _train(phys_dir, _physics_cfg(0.0))
+
+    assert zero["val_mae"] == plain["val_mae"]
+    assert np.array_equal(zero["val_pred"], plain["val_pred"])
+    assert zero["physics"]["beta"] == 0.0
+    assert np.isfinite(zero["val_phys_l1"])  # 대조군도 진단은 기록한다
+    # 대조군의 로그는 물리 항이 켜진 run과 같은 형식이어야 나란히 읽을 수 있다
+    assert "beta 0" in (phys_dir / "train.log").read_text()
+
+
+def test_physics_resume_matches_uninterrupted(tmp_path: Path) -> None:
+    cfg = _physics_cfg(100.0, epochs=3)
+
+    full_dir = tmp_path / "full"
+    full_dir.mkdir()
+    full = _train(full_dir, cfg)
+
+    part_dir = tmp_path / "interrupted"
+    part_dir.mkdir()
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(part_dir, cfg, _abort_after_epoch=1)
+    resumed = _train(part_dir, cfg)
+
+    assert resumed["best_epoch"] == full["best_epoch"]
+    assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
+    assert resumed["val_phys_l1"] == pytest.approx(full["val_phys_l1"], abs=1e-6)
+
+
+def test_physics_config_typo_raises_before_training(tmp_path: Path) -> None:
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["physics"] = {"beta": 1.0, "warmpu_steps": 2}  # 오타
+    with pytest.raises(ValueError, match="physics"):
+        _train(tmp_path, cfg)
+    assert not (tmp_path / "model.pt").exists()

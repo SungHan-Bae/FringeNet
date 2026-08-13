@@ -191,11 +191,24 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     λ 절대 스케일 검정 통과(1.00689), 물성 전부 문헌 정합(독립 두 방법 0.32~0.74%).
     **게이트 (b) 미통과 (9.99%)** — 잔차는 대역 단파장 끝(Luke 유효범위 밖 외삽)에 몰리고
     그 구간엔 문헌표 불일치가 없다(모델 부족).
-  - **Stage B 디코더 = `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt`**. 착수 시
-    `theta` 7개를 `requires_grad_(False)`로 **명시 동결**할 것 — `nn.Parameter`라
-    `model.parameters()`를 통째로 옵티마이저에 넘기면 동결 계약이 조용히 깨진다.
-- **Stage B `src/train.py --physics`**: `L = MAE(d_hat, d) + beta * L1(R_dec(d_hat), R_obs)`,
-  beta 워밍업. ablation: beta=0 vs beta>0. 사전등록한 예측은 docs/week_1.md TODO.
+  - **Stage B 디코더 = `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt`**
+    (`src.losses.DEFAULT_DECODER`).
+- **Stage B = `src/losses.py` + `src/train_gpu.py`의 `train.physics` 블록**
+  (`configs/stage_b/beta{0,30,100,300}.yaml`):
+  `L = MAE(d_hat, d) + beta(step) * L1(R_dec(d_hat), R_obs)`, beta 선형 워밍업.
+  **CPU 경로 `src/train.py`에는 없다** — GPU가 필요한 실험이므로 수정 금지 규약을 지켜
+  GPU 경로에만 배선했다. 사전등록한 예측은 docs/week_1.md TODO.
+  - **동결은 두 겹**: `theta.requires_grad_(False)` + 디코더가 **파라미터를 아예 보유하지
+    않는다**(상수 분광량만 버퍼). `nn.Parameter`라 `model.parameters()`를 통째로 옵티마이저에
+    넘기면 계약이 조용히 깨지므로, 학습 모델의 서브모듈로 두지 않는다 (체크포인트
+    state_dict에도 섞이지 않아 `evaluate.py` 로드 계약이 유지된다).
+  - **beta=0 대조군은 물리 항을 gradient에 넣지 않고 진단으로만 기록한다** — 학습 경로가
+    물리 항 도입 전과 같아야 차이를 물리 항에 귀속할 수 있다 (테스트가 비트 동일성으로
+    고정, 실데이터 스모크에서도 holdout MAE 10자리 일치).
+  - 학습 dtype은 **complex64**: theta가 동결이라 (λ, n, n_s)는 상수이므로 1회 계산해
+    캐스팅·캐시한다 (float64 대비 오차 max 6.0e-6 = σ의 0.07%, GPU float64는 1/32 처리율).
+  - 진단: 매 에폭 `train_phys`(가중 전 재구성 L1)·`val_phys`를 로그에 남기고 best 에폭
+    값을 metrics.json `val_phys_l1`에 기록한다. 참 두께에서의 하한은 E|ε| = 0.0075.
 - 평가: 전체/층별 MAE, 학습곡선, TMM 재구성 오차 히스토그램(신뢰도 지표), 두께 구간별 오차.
 
 ## 평가 규약 (데이터가 시뮬레이션 격자라서 생기는 함정)
@@ -265,6 +278,11 @@ python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
 python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yaml  # Stage A (디코더)
 python scripts/diagnose_calibration.py                                            # Stage A 게이트·그림
 python -m src.evaluate --run runs/mlp_baseline/dropout0.0                          # holdout 재평가
+
+# Stage B 물리 손실 — 본 학습은 Colab GPU, 로컬은 스모크만 (약 35초).
+# run-name에 -smoke를 붙이는 것이 필수다 — 서브셋 run이 완료 기록을 남기면 본 run이 스킵된다
+python -m src.train_gpu --config configs/stage_b/beta100.yaml --device cpu \
+  --subset 20000 --epochs 2 --run-name beta100-smoke
 ```
 
 Stage A 경로는 최대 상주 메모리 **약 5 GB**를 쓴다 (조건부 평균이 train 전체를 올린다).

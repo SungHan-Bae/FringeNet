@@ -1,0 +1,38 @@
+# stage_b — 물리 손실 beta ablation (beta = 100). 조작 변인은 train.physics.beta 하나.
+#
+# 백본은 Level 1 확정(flatten-dilated-bound, holdout 2.346 nm), 대조군은 beta0.yaml.
+# 스케일 감각: 지도 항은 nm 단위로 O(2), 물리 항은 참 두께에서 E|ε| = 0.0075다
+# (균등 ±0.015). beta 100 → 두 항의 기여가 같은 자리수로 맞는 지점이다.
+seed: 42
+experiment: stage_b
+run_name: beta100
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000 # 학습률 워밍업 (물리 항 워밍업은 physics.warmup_steps)
+  num_folds: 0
+  physics:
+    decoder: runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt
+    beta: 100.0
+    warmup_steps: 3000
