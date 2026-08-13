@@ -1,4 +1,8 @@
-# 체크포인트 아카이브 (`notebooks/checkpoint_archive.ipynb` 산출 — 손으로 고치지 말 것)
+# 체크포인트 아카이브
+
+산출: notebooks/checkpoint_archive.ipynb — **일회성 이관 도구라 이 파일을 만든 뒤 삭제했다**
+(히스토리 `2a2ba56`에 있다). 앞으로의 체크포인트는 `train_gpu.py`의 `_mirror_copy`가 학습
+중에 Drive로 보내므로 이관 작업 자체가 생기지 않는다.
 
 `runs/`에는 텍스트 산출물(`train.log` · `metrics.json`)만 두고 학습 체크포인트는 Drive 미러에 보관한다. **미러에는 3종을 다 둔다** — run 하나가 자기완결적이어야 새 VM 에서 복원이 되고, 학습 중 `train_gpu.py`가 이미 그 형태로 쓰기 때문이다. 텍스트 2종은 **git이 정본**이고 미러는 사본이다.
 
@@ -8,7 +12,9 @@
 
 - 원본 커밋: `2a2ba5673279dae9aa9600036b07c432cde8440d`
 - 복구: `git show <원본 커밋>:runs/<실험>/<run>/model.pt > model.pt` — 히스토리에 blob이 남아 있으므로 **Drive는 편의 사본이다**. 단 `drive-only` 항목은 커밋된 적이 없어 Drive가 유일본이다.
-- 되돌리기: 이 노트북을 `MODE = "pull"` 로 실행 (기본은 `model.pt`만 — 텍스트 2종은 git 정본을 덮어쓰지 않도록 `PULL_TEXT`로 명시해야 한다)
+- 되돌리기: Drive 미러에서 `model.pt`를 그대로 복사하면 된다 (위 sha256으로 대조).
+  텍스트 2종은 **git이 정본**이므로 미러 사본으로 덮어쓰지 말 것 — 과거 미러의 `train.log`가
+  마지막 줄이 빠진 채 남아 있던 이력이 있다.
 
 | 실험 | run | model.pt | sha256 (model.pt) | 상태 | 미러 3종 검증 |
 |---|---|---|---|---|---|

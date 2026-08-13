@@ -109,7 +109,6 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   4. 노트북 Run-All이 입력 대기 없이 end-to-end로 돌고(비밀은 정적 소스에서 로드),
      전 작업 완료+push 성공 시 런타임 자동 반납
 - **Colab 노트북은 라운드(학습 세션)별 1개**: `notebooks/<대실험>/roundN_<내용>.ipynb`.
-  (예외: `notebooks/checkpoint_archive.ipynb` — 라운드에 속하지 않는 유틸이라 최상위에 둔다.)
   완료된 라운드는 실행 로그 보존을 위해 수정·재실행하지 않는다. 새 라운드는 직전 노트북을
   복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다. **복사 전 원본이 디스크 최신인지
   확인** — IDE의 옛 버퍼가 저장되면 커밋된 셀 fix를 되돌린다. 필수 셀 규약:
@@ -213,11 +212,18 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   주입은 **추가분**임을 명시한다.
 - 위 셋은 Task 7의 측정 도구로 함께 만든다. 좋은 숫자만 고르지 않는다.
 - **실험 관리 — 대실험(experiment) / 변형(run) 2단**: 설정 `configs/<실험>/<변형>.yaml`,
-  산출물 `runs/<실험>/<변형>/` = **model.pt + train.log + metrics.json 세 가지만**
-  (metrics.json이 설정 스냅샷을 겸한다). 전부 git 추적. **예외: GitHub 파일당 100MB를
-  넘는 model.pt는 Drive 미러에 보관**하고 .gitignore에 경로를 명시한다.
-  변형 이름은 번호가 아니라 **무엇이 다른지 드러나는 서술형**으로 (예: `dropout0.0`).
-  대실험이 끝나면 `reports/<실험>.md`로 취합한다 — README에는 성능 수치를 두지 않는다.
+  산출물 `runs/<실험>/<변형>/` = model.pt + train.log + metrics.json 세 가지만
+  (metrics.json이 설정 스냅샷을 겸한다). 변형 이름은 번호가 아니라 **무엇이 다른지 드러나는
+  서술형**으로 (예: `dropout0.0`). 대실험이 끝나면 `reports/<실험>.md`로 취합한다 —
+  README에는 성능 수치를 두지 않는다.
+- **git에는 텍스트 산출물만 추적한다** (metrics.json · train.log). 체크포인트는 Drive 미러
+  `MyDrive/FringeNet/runs_mirror/<실험>/<run>/`에 3종(model.pt 포함)으로 보관한다 —
+  `train_gpu.py`의 `_mirror_copy`가 학습 중에 이미 그렇게 쓰므로 별도 작업이 필요 없다.
+  목록·sha256·복구 방법은 **`runs/CHECKPOINTS.md`**, 복구는
+  `git show <원본 커밋>:runs/<실험>/<run>/model.pt`(과거분) 또는 Drive 사본.
+  **예외 — `runs/stage_a/*/model.pt`는 git 추적**(합계 44 KB): `diagnose_calibration.py`가
+  직접 로드해 `reports/stage_a_gate.md`를 재생성하므로 빠지면 재현 커맨드가 깨진다.
+  텍스트 2종은 git이 정본이다 — 미러 사본으로 덮어쓰지 말 것.
 - **주차별 실험 노트 `docs/week_N.md`** (첫 커밋 2026-08-08 기준 7일 단위): 날짜별 진행·
   발견·결정의 연표이고 **TODO 관리도 여기서** 한다. 백로그 체크박스를 갱신할 때 함께 갱신.
 

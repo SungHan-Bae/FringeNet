@@ -228,16 +228,15 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   └── <실험>/
 │       └── <변형>.yaml         #   예: mlp_baseline/dropout0.0.yaml
 ├── notebooks/                  # Colab GPU 학습 드라이버 — 라운드별 1개, 완료 후 수정 금지 (실행 로그 보존)
-│   ├── <대실험>/
-│   │   └── roundN_<내용>.ipynb #   예: level1_cnn/round3_bound.ipynb
-│   └── checkpoint_archive.ipynb #  유틸 (규약 예외) — Drive ↔ 저장소 양방향 (미러는 3종) + sha256 검증
+│   └── <대실험>/
+│       └── roundN_<내용>.ipynb #   예: level1_cnn/round3_bound.ipynb
 ├── data/                       # 대회 데이터 — 파일은 git 미포함, 구조만 .gitkeep (§2)
 │   ├── raw/                    #   데이콘 원본 (사용자가 직접 배치)
 │   └── cache/                  #   parquet 캐시 (최초 실행 시 자동 생성)
-├── runs/                       # 실행 산출물 — git 추적 (§6)
+├── runs/                       # 실행 산출물 — **텍스트 2종만 git 추적** (§6)
+│   ├── CHECKPOINTS.md          #   Drive 미러 목록·sha256·복구 방법 (체크포인트는 Drive 보관)
 │   └── <실험>/
-│       └── <변형>/             #   model.pt · train.log · metrics.json 세 가지만
-│                               #   (GitHub 100MB 한도 초과 model.pt만 예외 — Drive 미러 보관, §6)
+│       └── <변형>/             #   train.log · metrics.json (+ stage_a만 model.pt — §6)
 ├── reports/
 │   ├── <실험>.md               # 대실험별 취합 리포트 — 결과·분석·결론 (§6)
 │   ├── eda_metrics.md          # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
@@ -314,7 +313,7 @@ Stage A 재현이 스왑을 탄다.
 |---|---|---|
 | [`docs/week_N.md`](docs/) | **주차별 실험 노트** — 날짜별 진행·결과·발견·결정 + TODO 관리 | 작업할 때마다 |
 | `reports/<실험>.md` | 대실험별 취합 리포트 — 변형 비교·분석·최종 결론 | 대실험 종료 시 |
-| `runs/<실험>/<변형>/` | 실행 산출물 — `model.pt`(best 체크포인트) · `train.log`(에폭별 실시간 로그) · `metrics.json`(설정 스냅샷 + 최종 지표) | 학습 실행 시 (git 추적. 단 GitHub 100MB 한도 초과 `model.pt`는 Drive 미러 보관 — `.gitignore`에 경로 명시) |
+| `runs/<실험>/<변형>/` | 실행 산출물 — `train.log`(에폭별 실시간 로그) · `metrics.json`(설정 스냅샷 + 최종 지표) | 학습 실행 시. **체크포인트는 Drive 미러 보관** — 목록·sha256·복구는 [`runs/CHECKPOINTS.md`](runs/CHECKPOINTS.md), 예외로 `runs/stage_a/*/model.pt`만 git 추적(진단 스크립트가 직접 읽는다) |
 | `configs/<실험>/<변형>.yaml` | 실험 설정 — `experiment`·`run_name` 키 필수 | 실험 설계 시 |
 
 - 실험은 **대실험(experiment) / 변형(run)** 2단 구조. 변형 이름은 번호가 아니라
