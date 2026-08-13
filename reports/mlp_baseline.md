@@ -66,10 +66,6 @@ python -m src.train --config configs/mlp_baseline/dropout0.1.yaml
 python -m src.evaluate --run runs/mlp_baseline/dropout0.0
 ```
 
-부기: 이 실험은 원래 평면 구조 — dropout0.0은 `runs/mlp_baseline_dropout0/`,
-dropout0.1은 `runs/mlp_baseline/` (각 train.log 1행에 원래 run 이름이 남아 있다) —
-로 실행됐고, 2026-08-10 리포트 체계 개편 때 현 구조로 이관했다 (metrics.json의
-experiment/run_name/ckpt_path를 새 경로로 갱신). train.log는 실행 당시 원문
-그대로라 옛 run 이름과 당시 산출물 목록(`history_*.csv` — 개편 때 폐기)이 보인다.
-결과 수치는 실행 당시 그대로이며, 2026-08-10 현재 코드의 `src.evaluate`로 두
-체크포인트를 재평가해 holdout MAE 4.5990 / 6.6453 nm이 재현됨을 확인했다.
+부기: 이 실험은 실험 관리 2단 구조 도입 전에 실행돼 `runs/` 경로를 이관했다 —
+`train.log`는 실행 당시 원문 그대로라 옛 run 이름이 보인다. 두 체크포인트를 현재 코드의
+`src.evaluate`로 재평가해 holdout MAE 4.5990 / 6.6453 nm이 재현됨을 확인했다.

@@ -1,8 +1,7 @@
-# level1_cnn — flatten + dilated 조합: flatten 기준 대비 조작 변인은 dilations 하나.
+# level1_cnn — flatten + dilated: flatten 대비 조작 변인은 dilations 하나.
 #
-# flatten(위치 보존)과 dilated(수용영역 확장)는 서로 직교하는 축이다.
-# flatten이 가설대로 크게 개선되면, 이 변형과 flatten의 차이가 "위치 보존 하에서
-# 넓은 수용영역의 추가 기여"를 측정한다. 파라미터 662,020 (+2.4% vs MLP).
+# 위치 보존과 수용영역 확장은 직교하는 축이므로, flatten과의 차이가 "위치 보존 하에서
+# 넓은 수용영역의 추가 기여"를 측정한다. 파라미터 662,020.
 seed: 42
 experiment: level1_cnn
 run_name: flatten-dilated

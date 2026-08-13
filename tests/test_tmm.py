@@ -71,6 +71,16 @@ def test_energy_conservation_lossless_stack() -> None:
     assert torch.isfinite(total).all()
     assert torch.allclose(total, torch.ones_like(total), atol=1e-6)
 
+    # 보강: **흡수 기판 + n0 ≠ 1**. 무흡수 층 스택에서는 복소 ns여도 R + T = 1이 그대로
+    # 성립한다 (T = 4·n0·Re(ns)/|n0B+C|² 가 기판으로 들어가는 전력이므로). n0를 1에서
+    # 떼고 ns에 허수부를 주면 T 식의 n0 계수·Re(ns) 취급·복소 부호 관례를 동시에 건다 —
+    # n0 = 1, 실수 ns만 쓰면 이 넷을 잘못 써도 통과한다 (08-13 변이 테스트에서 확인).
+    for n0_abs, ns_abs in ((1.31, complex(3.8, -0.5)), (1.31, complex(4.5, -2.0))):
+        r_abs, t_abs = tmm_rt(d, n_layers, n0_abs, ns_abs, lam)
+        assert torch.isfinite(r_abs).all() and torch.isfinite(t_abs).all()
+        assert (t_abs >= 0).all()
+        assert torch.allclose(r_abs + t_abs, torch.ones_like(r_abs), atol=1e-9)
+
 
 # ---------------------------------------------------------------------------
 # 3. λ/4 무반사 — n1 = sqrt(n0*ns), d = λ/(4 n1) 에서 반사가 사라진다.

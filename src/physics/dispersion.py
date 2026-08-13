@@ -1,27 +1,20 @@
 """문헌 광학상수 — Stage A 캘리브레이션의 물리 모델과 게이지 고정용.
 
-**원본 파일을 저장소에 그대로 둔다**: `literature/*.yml` 은 refractiveindex.info
-데이터베이스 파일 그대로다 (CC0 public domain). 문헌 표를 손으로 옮겨 적으면 뾰족한
-임계점 구조가 조용히 깎이므로(아래 `_SI_*` 대조군이 그 예다) 파싱해서 쓴다.
+**원본 파일을 그대로 둔다**: `literature/*.yml` 은 refractiveindex.info 데이터베이스
+파일 그대로다 (CC0). 문헌 표를 손으로 옮겨 적으면 뾰족한 임계점 구조가 조용히 깎인다
+(아래 `CoarseTableNK` 대조군이 그 실측 예다).
 
-수록 문헌:
-  - SiO₂ (fused silica): **Malitson 1965 Sellmeier** — 게이지 고정(freeze) 대상.
-    delta = 2πnd/λ 가 (n, λ)의 공통 스케일에 불변이라 SiO₂를 문헌값에 못박아야
-    λ 그리드가 식별된다 (CLAUDE.md Level 2 게이지 고정).
-  - Si₃N₄: **Luke et al. 2015 Sellmeier** — B₁(·C₁)이 자유 파라미터, 나머지는 동결.
-    유효범위 310–5504 nm (그 아래 채널은 외삽 — 한계로 기록).
-  - Si (결정질): **Aspnes & Studna 1983** 실측표 (에너지축 0.1 eV 균등이라 E1(3.4 eV)
-    봉우리에 격자점이 놓인다) + Green 2008 / Schinke 2015 (ablation 대조군).
+  - SiO₂: **Malitson 1965 Sellmeier** — 게이지 고정 대상. δ = 2πnd/λ 가 (n, λ) 공통
+    스케일에 불변이므로 SiO₂를 문헌값에 못박아야 λ 그리드가 식별된다.
+  - Si₃N₄: **Luke 2015 Sellmeier** — B₁(·C₁)이 자유, 나머지 동결. 유효범위 310–5504 nm
+    (그 아래 채널은 외삽 — 한계로 기록).
+  - Si: **Schinke 2015** 실측표 (`si_source`로 Aspnes 1983 / Green 2008 선택 가능).
+    세 표를 전부 적합해 측정으로 골랐고, 상호 불일치가 유계 노이즈 예산의 70%를 쓴다
+    (reports/stage_a.md 설계 근거 (3)).
 
-파장축이 비식별화되어 있으므로 (CLAUDE.md 데이터 계약) 여기의 λ[nm]는 캘리브레이션이
-식별한 그리드에서만 평가된다.
-
-제공하는 것:
-  - `sellmeier_n_t`: λ·계수 양쪽으로 미분가능한 **정확한** Sellmeier (절단 근사 없음).
-  - `TabulatedNK`: 실측 n·k를 **광자 에너지축 3차 스플라인**으로 평가 (λ로 미분가능).
-    에너지축이 임계점 구조의 자연 좌표다.
-  - `CoarseTableNK`: 거친 19점 표 + λ축 선형 보간 — **표·보간 품질의 기여를 재는
-    ablation 대조군**. 실사용 금지 (E1 봉우리를 0.288 = 4.3% 깎는다).
+파장축이 비식별화되어 있으므로 여기의 λ[nm]는 캘리브레이션이 식별한 그리드에서만
+평가된다. `sellmeier_n_t`는 λ·계수 양쪽으로 미분가능한 정확한 Sellmeier(절단 근사 없음),
+`TabulatedNK`는 실측 n·k를 광자 에너지축 3차 스플라인으로 평가한다.
 """
 
 from __future__ import annotations
@@ -36,7 +29,9 @@ from torch import Tensor, nn
 __all__ = [
     "HC_EV_NM",
     "LITERATURE_DIR",
+    "SI3N4_LUKE_RANGE_NM",
     "SI3N4_LUKE_SELLMEIER",
+    "SI_CRITICAL_POINTS_EV",
     "SIO2_MALITSON_SELLMEIER",
     "CoarseTableNK",
     "TabulatedNK",
@@ -56,12 +51,16 @@ _SIO2_SELLMEIER_B = (0.6961663, 0.4079426, 0.8974794)  # Malitson 1965
 _SIO2_SELLMEIER_C_UM2 = (0.0684043**2, 0.1162414**2, 9.896161**2)
 _SI3N4_SELLMEIER_B = (3.0249, 40314.0)  # Luke et al. 2015
 _SI3N4_SELLMEIER_C_UM2 = (0.1353406**2, 1239.842**2)
+# Luke et al. 2015 Sellmeier의 문헌 유효범위 [nm]. 캘리브레이션된 λ 그리드의 짧은 쪽
+# 31채널(λ < 310 nm)은 이 범위 밖 외삽이다 — 게이트 (b) 잔차 국소화에서 쓴다.
+SI3N4_LUKE_RANGE_NM = (310.0, 5504.0)
+# 결정질 Si의 임계점 [eV] (Aspnes & Studna 1983 등) — 잔차가 이 근방에 몰리는지 본다.
+SI_CRITICAL_POINTS_EV = {"E1": 3.40, "E2": 4.25}
 
 # --- ablation 대조군 전용 ---
-# 결정질 Si의 n·k를 문헌 그래프에서 눈대중으로 옮긴 19점 표. **실사용 금지** —
-# 380 nm 미만이 특히 거칠고(270 nm의 n = 2.6은 c-Si 값이 아니다), λ축 선형 보간과
-# 결합되면 E1 봉우리가 6.767 → 6.479로 깎인다. 원본 실측표(`TabulatedNK`) 대비
-# 두께 역해 MAE가 0.663 → 1.104 nm로 나빠지는 것을 재는 대조군으로만 쓴다.
+# 문헌 그래프에서 눈대중으로 옮긴 19점 표. **실사용 금지** — λ축 선형 보간과 결합되면
+# E1 봉우리가 6.767 → 6.479로 깎이고 두께 역해 MAE가 0.663 → 1.104 nm로 나빠진다.
+# 그 열화를 재는 대조군으로만 쓴다.
 _SI_LAM_NM = np.array(
     [270.0, 290.0, 310.0, 335.0, 355.0, 368.0, 380.0, 400.0, 450.0, 500.0,
      550.0, 600.0, 650.0, 700.0, 750.0, 800.0, 850.0, 900.0, 1000.0]
@@ -208,9 +207,9 @@ def _natural_cubic_coefficients(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 class TabulatedNK(nn.Module):
     """문헌 실측 n·k 표를 **광자 에너지축 3차 스플라인**으로 평가한다 (λ로 미분가능).
 
-    왜 에너지축인가: c-Si의 광학상수는 E1(3.4 eV)·E2(4.25 eV) 임계점 구조가
-    지배하고, Aspnes & Studna 1983이 0.1 eV 균등 격자라 봉우리에 격자점이 놓인다.
-    λ축 선형 보간은 이 봉우리를 깎아낸다 (`CoarseTableNK` 참조).
+    왜 에너지축인가: c-Si는 E1(3.4 eV)·E2(4.25 eV) 임계점이 지배하고 임계점은 에너지축에서
+    대칭적인 봉우리라 그 좌표에서 보간해야 모양이 보존된다. λ축 선형 보간은 봉우리를
+    깎아낸다 (`CoarseTableNK` 대조군이 E1을 4.3% 깎는다).
 
     k는 3자리 수 넘게 변하고 음수가 될 수 없으므로 **log k**를 스플라인한다.
 

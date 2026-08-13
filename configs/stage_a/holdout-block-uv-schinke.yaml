@@ -1,0 +1,17 @@
+# stage_a — 검정용: 연속 블록 홀드아웃을 **채택 디코더의 Si 표(Schinke)** 로.
+#
+# `holdout-block-uv`와 `si_source`만 다르다 — 게이트 (e) 증거를 기각된 표에만 걸어 두지
+# 않기 위한 run이다. 대조군도 같은 표를 쓴 `joint-lam3-sin2-si2-schinke`로 짝을 맞춘다
+# (표가 다르면 그 채널의 고유 난이도가 달라져 한계 효과가 오염된다).
+seed: 42
+experiment: stage_a
+run_name: holdout-block-uv-schinke
+
+data:
+  fit_rows: 8000
+  diag_rows: 20000
+
+model:
+  si_source: Si_nk_Schinke.yml
+  holdout_channel_range: [206, 225]   # 연속 20채널 — 균등 간격판과 같은 개수
+  free: [lam_nu0, lam_r1, lam_r2, sin_b1, sin_c1, si_de, si_klog]
