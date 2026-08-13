@@ -1,13 +1,8 @@
-# stage_a — 검정용: 연속 블록 채널 홀드아웃을 **채택 디코더의 Si 표(Schinke 2015)** 로.
+# stage_a — 검정용: 연속 블록 홀드아웃을 **채택 디코더의 Si 표(Schinke)** 로.
 #
-# `holdout-block-uv`와 `si_source`만 다르다. 게이트 (e)를 처음 돌릴 때는 채택 표가
-# Aspnes였는데 08-13에 Schinke로 교체됐다 — 그래서 "채널 홀드아웃 예측이 성립한다"는
-# 증거가 **채택 디코더 자신에 대해서는 시행되지 않은** 상태였다. 파라미터화가 같아
-# 결론이 전이되기는 하지만, 게이트 증거를 기각된 표에만 걸어 둘 이유가 없다.
-#
-# 대조군(전 226채널 적합)도 같은 표를 쓴 `joint-lam3-sin2-si2-schinke`로 짝을 맞춘다 —
-# 표가 다르면 그 채널들의 고유 난이도 자체가 달라지므로 한계 효과가 오염된다
-# (`scripts/diagnose_calibration.py`의 REFERENCE_RUNS).
+# `holdout-block-uv`와 `si_source`만 다르다 — 게이트 (e) 증거를 기각된 표에만 걸어 두지
+# 않기 위한 run이다. 대조군도 같은 표를 쓴 `joint-lam3-sin2-si2-schinke`로 짝을 맞춘다
+# (표가 다르면 그 채널의 고유 난이도가 달라져 한계 효과가 오염된다).
 seed: 42
 experiment: stage_a
 run_name: holdout-block-uv-schinke

@@ -132,7 +132,7 @@ def test_holdout_channel_range_excludes_a_contiguous_block(tmp_path) -> None:  #
     """`holdout_channel_range`는 연속 블록을 피팅에서 빼고 그 채널을 별도로 평가한다.
 
     균등 간격판(`holdout_channels`)은 이웃 상관 때문에 사실상 보간이라 요구가 약하다 —
-    연속 블록이 진짜 외삽 검정이다 (08-13 리뷰).
+    연속 블록이 진짜 외삽 검정이다.
     """
     from src.calibrate import fit_physical
 

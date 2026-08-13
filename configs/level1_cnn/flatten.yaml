@@ -1,9 +1,7 @@
-# level1_cnn — flatten 헤드: 기준(single-scale, GAP) 대비 조작 변인은 head 하나.
+# level1_cnn — flatten 헤드: single-scale 대비 조작 변인은 head 하나.
 #
-# 가설 (첫 결과의 진단): GAP 18.16 nm < shuffled 12.23 nm 역전은 위치 불변성이
-# 병목이라는 증거 — 이 태스크의 정보는 fringe의 파장축 절대 위치·위상에 있다.
-# flatten은 conv의 국소성은 유지하고 위치 정보만 보존한다 (C_last=280 x W_last=15
-# -> 4200 -> Linear). 파라미터 662,020 (+2.4% vs MLP 646,660 — ±10% 통제 유지).
+# GAP는 파장축을 평균으로 붕괴시킨다. flatten은 conv의 국소성을 유지하고 위치 정보만
+# 보존한다 (C_last 280 × W_last 15 → 4200 → Linear). 파라미터 662,020 (+2.4% vs MLP).
 seed: 42
 experiment: level1_cnn
 run_name: flatten

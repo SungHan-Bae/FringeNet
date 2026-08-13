@@ -1,40 +1,23 @@
 """Stage A 캘리브레이션 — 비식별 파장축과 미지 물성을 (d_true, R_obs)에서 역추정한다.
 
-TMM을 Stage B의 물리 디코더로 쓰려면 forward 모델의 미지수를 먼저 알아야 하는데,
-데이터는 두께 라벨과 반사율만 준다 (파장축은 비식별화, 물성은 미제공). 그것을
-학습셋의 정답 쌍으로 피팅한다.
-
 **설계 원칙: 물리 법칙을 자유도 개수로 강제한다.** 물성은 λ의 매끈한 함수이고 파장축은
-분광기 격자 분산의 결과이므로, 채널별 자유 곡선을 두면 안 된다 — 손잡이가 채널 수만큼
-있으면 모델 오차를 물성에 흡수해 재구성 RMSE는 내려가지만 나온 곡선은 물성이 아니게
-된다 (CLAUDE.md "하지 말 것"). 그래서 전체 자유 파라미터가 **1~7개**다:
+분광기 격자 분산의 결과다. 이 제약을 파라미터화가 강제하지 않으면(채널별 자유 곡선)
+손잡이가 모델 오차를 흡수해 RMSE는 내려가지만 나온 곡선은 물성이 아니다. 그래서 전체
+자유 파라미터가 **1~7개**다:
 
 | 대상 | 모델 | 자유 |
 |---|---|---|
 | λ(c) | 1/λ = ν₀(1 + r₁u + r₂u²), u = c/(W−1) | 0 또는 3 |
 | SiO₂ | Malitson 1965 Sellmeier **동결** | 0 (게이지) — `sio2_scale`은 게이지 검정 전용 |
 | SiN | Luke 2015 Sellmeier 형태, k=0 | 1~2 (B₁, C₁) |
-| Si 기판 | **Schinke 2015** 실측표, 에너지축 3차 스플라인 | 0~2 (ΔE, k 스케일) |
+| Si 기판 | Schinke 2015 실측표 + 에너지축 3차 스플라인 | 0~2 (ΔE, k 스케일) |
 
-**게이지 고정이 원리적으로 필요하다**: δ = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이라
-둘을 동시에 자유로 두면 해가 하나로 정해지지 않는다. SiO₂를 문헌값에 못박는 것이
-그 선언이며, λ의 절대 스케일은 이 가정에 의존한다 (한계로 명시).
+**게이지 고정은 원리적 요구다**: δ = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이라 둘을 동시에
+자유로 두면 해가 정해지지 않는다. SiO₂를 문헌값에 못박는 것이 그 선언이고, λ의 절대
+스케일은 이 가정에 의존한다. SiN은 동결하지 않는다 — 게이지-불변 관측량 n_SiN/n_SiO₂ 가
+문헌 대비 −2.15% 균일 편차라 동결은 이미 측정된 2%를 모델에 주입하는 셈이다.
 
-**SiN을 동결하지 않는 이유**: 주파수 식별(`src.physics.freq_id`)에서 얻은 게이지-불변
-관측량 n_SiN/n_SiO₂ 가 문헌 대비 **−2.15% 균일 편차**(분산 모양은 96% 일치)를 보인다.
-Luke의 B₁ 하나만 풀면 잔차가 2.245% → 0.231%로 10배 줄어든다 — 박막 조성 차이라는
-평범한 물리다. 문헌값 동결은 이미 측정된 2%를 모델에 주입하는 셈이다.
-
-판정은 R 단위 RMSE만 보지 않는다 (`scripts/diagnose_calibration.py`):
-  (a) RMSE < 1.2σ, σ = 0.008658 (채널축 고차 차분으로 측정 — 차수 5~8에서 수렴)
-  (b) **유계 노이즈 위반율** — 데이터 노이즈가 |ε| ≤ 0.0152로 유계임이 확정
-      (1.8억 관측 중 −0.0152 미만 0건)이므로, 잔차가 이를 넘는 관측은 통계 없이
-      모델 오류의 증거다. 완벽한 모델은 0%.
-  (c) 잔차 백색성 (d) 두께 nm 역해 MAE (e) 채널 홀드아웃 예측 (f) 파라미터 물리성
-
-세션 유실 대비: 이 피팅은 자유도가 1~7개라 CPU에서 분 단위로 끝나므로 에폭 단위
-resume은 두지 않고, **완료 run 자동 스킵**과 결과 원자적 저장만 구현한다 (CLAUDE.md
-계약의 취지 — 장시간 GPU 스크립트가 아니다).
+판정 게이트와 결론은 reports/stage_a.md · scripts/diagnose_calibration.py.
 
 사용법:
     python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yaml
@@ -69,21 +52,19 @@ from src.train_gpu import _atomic_save
 
 RUNS_DIR = REPO_ROOT / "runs"
 
-# 노이즈 바닥 — scripts/measure_noise.py 산출 (채널축 m차 차분, m=5~8에서 0.008658 고정).
+# 노이즈 바닥과 하드 상한 — scripts/measure_noise.py 산출. 상한은 1.8억 관측 중
+# R_obs < −0.0152 가 0건이라는 사실에서 온다 (가우시안이면 5σ = −0.043까지 나와야 한다).
 NOISE_SIGMA = 0.008658
-# 노이즈의 하드 상한 — R_obs 최소값 −0.015117, −0.0152 미만 관측 0건 (1.8억 중).
-# 가우시안이면 5σ = −0.043까지 나와야 하므로 유계가 확정된다. 여유 포함 0.0152.
 NOISE_BOUND = 0.0152
 GATE_A_RMSE = 1.2 * NOISE_SIGMA  # 0.010390
 
-# 고정 분할 — 피팅과 판정을 분리하고, run 사이에 진단 표본이 **비트 단위로 동일**하게
-# 유지되도록 seed·크기를 상수로 못박는다 (ablation 비교의 전제).
-# diag = pick[50000:70000] — fit_rows를 줄여도 진단 표본은 바뀌지 않는다.
+# 고정 분할 — 진단 표본이 run 사이에 **비트 단위로 동일**해야 ablation 비교가 성립한다.
+# diag = pick[50000:70000] 이므로 fit_rows를 줄여도 진단 표본은 바뀌지 않는다.
 _SPLIT_SEED = 42
 _SPLIT_FIT_ROWS = 50_000
 _SPLIT_DIAG_ROWS = 20_000
 
-# θ = 1 에 해당하는 물리량 변화 (LM이 균일 보폭으로 움직이게 하는 무차원화).
+# θ = 1 에 해당하는 물리량 변화 — 최소제곱이 균일 보폭으로 움직이게 하는 무차원화.
 # lam_nu0만 상대 스케일(초기값의 0.1% ≈ λ 0.5 nm), 나머지는 절대.
 _THETA_STEP_REL = {"lam_nu0": 1e-3}
 _THETA_STEP_ABS = {
@@ -95,10 +76,8 @@ _THETA_STEP_ABS = {
     "si_klog": 0.02,  # Si k 로그 스케일 (약 2%)
     "sio2_scale": 1e-3,  # SiO₂ n 배율 (0.1%) — 게이지 검정 전용, 기본은 동결
 }
-# Si 실측표의 기본 출처 = **채택 표**. Aspnes 1983 / Green 2008도 `literature/`에 있고
-# `si_source`로 고를 수 있지만, 같은 자유도에서 네 지표 전부 Schinke가 나았다
-# (reports/stage_a.md 설계 근거 (3)). 기본값을 기각된 표로 두면 si_source를 빠뜨린
-# config가 조용히 그쪽으로 돈다.
+# Si 실측표의 기본값 = 채택 표. 기본값을 기각된 표로 두면 si_source를 빠뜨린 config가
+# 조용히 그쪽으로 돈다 (Aspnes/Green도 `literature/`에 있고 si_source로 고른다).
 DEFAULT_SI_SOURCE = "Si_nk_Schinke.yml"
 PARAM_NAMES = (
     "lam_nu0",
@@ -115,10 +94,9 @@ PARAM_NAMES = (
 def fit_lam_coefficients(lam_grid: np.ndarray, *, trim_sigma: float = 4.0) -> tuple[float, ...]:
     """채널별 λ 추정에 1/λ = ν₀(1 + r₁u + r₂u²)를 강건 적합한다 (u = c/(W−1)).
 
-    분광기 격자 분산은 채널 인덱스의 매끈·단조 함수다. 1단계(주파수 식별)의 채널별 추정은
-    ~0.44 nm 흔들림을 갖는데(다항 차수를 올려도 줄지 않는다 — 주파수 후보 격자 양자화와
-    기저 절단에서 오는 결정론적 편향이다), 이를 그대로 고정하면 λ 오차만으로 R 오차
-    rms 0.0052가 생겨 최종 모델에 남은 계통오차 전체(0.0041)보다 크다.
+    분광기 격자 분산은 채널 인덱스의 매끈·단조 함수다. 1단계의 채널별 추정에는 ~0.44 nm
+    흔들림(주파수 후보 격자 양자화에서 오는 결정론적 편향)이 있고, 그대로 고정하면 그것만
+    으로 R 오차 rms 0.0052 — 최종 모델에 남은 계통오차 전체(0.0041)보다 크다.
 
     Args:
         lam_grid: (W,) 채널 순서 λ [nm] (1단계 주파수 식별 결과).
@@ -152,10 +130,8 @@ class PhysicalStack(nn.Module):
         n_channels: 채널 수 W.
         lam_coeffs: (ν₀, r₁, r₂) 초기값 — `fit_lam_coefficients` 산출.
         free: 자유로 둘 파라미터 이름들 (PARAM_NAMES 부분집합). 비면 전부 동결.
-        si_source: Si n·k 출처. `literature/`의 tabulated nk 파일명, 또는 ablation
-            대조군 `"coarse"` (거친 19점 표 + λ축 선형 보간). 기본값은 **채택 표**
-            (Schinke 2015) — 측정으로 고른 것이며 Aspnes/Green은 같은 자유도에서
-            네 지표 전부 더 나빴다 (reports/stage_a.md 설계 근거 (3)).
+        si_source: Si n·k 출처 — `literature/`의 tabulated nk 파일명, 또는 ablation
+            대조군 `"coarse"` (거친 19점 표 + λ축 선형 보간).
     """
 
     def __init__(
@@ -185,11 +161,9 @@ class PhysicalStack(nn.Module):
             "sin_c1": SI3N4_LUKE_SELLMEIER[1][0],
             "si_de": 0.0,
             "si_klog": 0.0,
-            # 게이지: 기본 1.0 동결. 자유로 두는 것은 **게이지 검정 전용**이다 —
-            # δ = 2πnd/λ 가 (n, λ) 공통 스케일에 불변이므로 λ와 함께 풀면 위상만으로는
-            # 축퇴다. 그래도 Si를 에너지축에서 동결하면 임계점이 절대 앵커가 되어
-            # Fresnel 진폭이 축퇴를 깬다 — 적합값이 1로 돌아오는지가 λ 절대 스케일의
-            # 독립 검증이다 (reports/stage_a.md 한계 절).
+            # 기본 1.0 동결. 자유로 두는 것은 **게이지 검정 전용** — Si를 에너지축에
+            # 동결하면 임계점이 절대 앵커가 되어 적합값이 1로 돌아오는지가 λ 절대
+            # 스케일의 독립 검증이 된다.
             "sio2_scale": 1.0,
         }
         for name, value in inits.items():
@@ -206,8 +180,7 @@ class PhysicalStack(nn.Module):
         )  # 채널 정규좌표
         self.register_buffer("sio2_b", torch.tensor(SIO2_MALITSON_SELLMEIER[0], dtype=f64))
         self.register_buffer("sio2_c", torch.tensor(SIO2_MALITSON_SELLMEIER[1], dtype=f64))
-        # SiN 적외 항(√C₂ = 1.24 mm)은 대역에서 λ²에 비례하는 작은 보정이라 동결한다
-        # (풀면 B₁과 겹쳐 자유도만 낭비).
+        # SiN 적외 항(√C₂ = 1.24 mm)은 대역에서 λ²에 비례하는 작은 보정이라 동결한다.
         self.register_buffer("sin_b2", torch.tensor(SI3N4_LUKE_SELLMEIER[0][1], dtype=f64))
         self.register_buffer("sin_c2", torch.tensor(SI3N4_LUKE_SELLMEIER[1][1], dtype=f64))
         self.si_nk = CoarseTableNK() if si_source == "coarse" else TabulatedNK(si_source)
@@ -274,11 +247,10 @@ def _sellmeier(lam_nm: Tensor, b: Tensor, c_um2: Tensor) -> Tensor:
 def load_physical_stack(path: Path | str) -> tuple[PhysicalStack, dict[str, Any]]:
     """model.pt에서 모델을 복원한다. 반환 (model, 체크포인트 dict).
 
-    **구버전 체크포인트 호환**: `init_*` 버퍼는 나중에 파라미터가 추가되면 늘어나므로,
-    체크포인트에 없는 `init_*` 키는 현재 구현의 기본값(= 동결값)으로 채운다. 그 파라미터가
-    자유였던 run이라면 값이 저장돼 있으니 이 경로를 타지 않는다 — 즉 채우는 것은 언제나
-    "그 run이 건드리지 않은 손잡이"뿐이고, 복원되는 물리 모델은 저장 당시와 동일하다.
-    (이 장치가 없으면 파라미터 하나를 추가하는 순간 기존 run 전부가 로드 불가가 된다.)
+    **구버전 호환**: 체크포인트에 없는 `init_*` 버퍼는 현재 기본값으로 채운다. 자유였던
+    파라미터는 저장돼 있으니 채워지는 것은 그 run이 건드리지 않은 손잡이뿐이고, 복원되는
+    물리 모델은 저장 당시와 동일하다. 이게 없으면 파라미터를 하나 추가하는 순간 기존 run
+    전부가 로드 불가가 된다.
     """
     ckpt = torch.load(Path(path), map_location="cpu", weights_only=True)
     mc = ckpt["model_cfg"]
@@ -321,14 +293,12 @@ def identify_lam_coefficients(run_dir: Path) -> tuple[tuple[float, ...], dict[st
     """두께축 주파수 식별을 수행해 λ 3계수를 얻는다.
 
     조건부 평균 E[R_c | d_j] 의 정확도가 생명이라 fit 서브셋이 아니라 **holdout 제외
-    train 전체**(~73만 행, bin당 ~2.4만 행)를 쓴다. 경사하강이 개입하지 않는 닫힌형
-    이라 같은 데이터면 항상 같은 결과가 나온다 (run마다 재계산해도 동일).
+    train 전체**(~73만 행, bin당 ~2.4만 행)를 쓴다. 닫힌형이라 같은 데이터면 항상 같은
+    결과가 나온다 (run마다 재계산해도 동일).
 
-    **분할 계약의 명시적 예외**: 이 단계만은 판정 표본 20,000행(train의 2.74%)을 포함한다.
-    `scripts/check_lam_leakage.py`가 그 영향을 측정했다 (reports/stage_a_leakage.md):
-    λ를 **해방**하는 run(채택 디코더 포함)은 최소제곱이 λ를 다시 정하므로 판정 행을 빼도
-    게이트 수치가 **6자리 동일**하고, λ를 **동결**하는 사다리 하단 run만 RMSE가 1.8% 폭
-    안에서 움직인다(현행 값이 그 범위의 낙관적 끝). 판정에 쓰는 결론은 영향받지 않는다.
+    **분할 계약의 명시적 예외** — 이 단계만은 판정 표본 20,000행(train의 2.74%)을 포함한다.
+    λ를 해방하는 run은 최소제곱이 λ를 다시 정하므로 판정 행을 빼도 게이트 수치가 6자리
+    동일하고, λ 동결 run만 RMSE가 1.8% 폭으로 움직인다 (reports/stage_a.md 한계 절).
 
     Args:
         run_dir: 식별 진단을 train.log에 기록할 디렉토리.
@@ -349,8 +319,8 @@ def identify_lam_coefficients(run_dir: Path) -> tuple[tuple[float, ...], dict[st
         **ident["diagnostics"],
         "lam_grid": [float(v) for v in lam_grid],
         "lam_coeffs": list(coeffs),
-        # 채널별 추정과 매끈 곡선의 차이 = 주파수 추정 잡음. 이것을 그대로 고정하면
-        # 그것만으로 R 오차 rms 0.0052가 생긴다 (남은 계통오차 전체 0.0041보다 크다).
+        # 채널별 추정과 매끈 곡선의 차이. 이것을 그대로 고정하면 그것만으로 R 오차
+        # rms 0.0052가 생긴다 (남은 계통오차 전체 0.0041보다 크다).
         "smooth_fit_residual_rms_nm": float((smooth - lam_grid).std()),
         "smooth_fit_residual_max_nm": float(np.abs(smooth - lam_grid).max()),
     }
@@ -410,13 +380,10 @@ def fit_physical(
 ) -> dict[str, Any]:
     """신뢰영역 최소제곱 (scipy `least_squares`, **TRF**) — 자유도가 작아 한 번에 수렴한다.
 
-    자유도 P ≤ 7이므로 2점 수치 야코비안(P+1 forward/iter)이 충분하고, 그 야코비안이
-    그대로 **파라미터 공분산**을 준다: cov = σ²(JᵗJ)⁻¹. "이 값이 물리적으로 의미
-    있나"에 신뢰구간으로 답하기 위한 것이 경사하강 대신 이쪽을 쓰는 주된 이유다.
-
-    **이름 주의**: 여기 쓰는 것은 Trust Region Reflective이고 Levenberg–Marquardt가
-    아니다 (감쇠 정규방정식이 아니라 신뢰영역 부분문제를 푼다). 실제 LM은 게이트 (d)의
-    두께 역해(`scripts/diagnose_calibration.py: invert_thickness`) 쪽이다.
+    자유도 P ≤ 7이므로 2점 수치 야코비안이 충분하고, 그 야코비안이 그대로 **파라미터
+    공분산**을 준다: cov = σ²(JᵗJ)⁻¹ — 물성값을 신뢰구간과 함께 보고하기 위한 것이
+    경사하강 대신 이쪽을 쓰는 주된 이유다. (이름 주의: TRF이고 LM이 아니다. 실제 LM은
+    게이트 (d)의 두께 역해 쪽이다.)
 
     Args:
         data: `load_split` 산출. cfg: 전체 config. run_dir: 산출물 디렉토리.
@@ -439,18 +406,16 @@ def fit_physical(
     if hold and hold_range:
         raise ValueError("holdout_channels 와 holdout_channel_range 를 함께 줄 수 없다")
     if hold_range:
-        # **연속 블록** 홀드아웃 — 균등 간격판보다 훨씬 요구가 크다. 이웃 채널이 강상관이라
-        # 균등 간격 20채널은 사실상 보간이고, 전 채널 적합 모델도 그 채널에서 비슷한 오차를
-        # 내므로 홀드아웃의 한계 효과가 +0.3%뿐이다 (08-13 리뷰). 대역 끝 블록을 통째로
-        # 빼면 진짜 외삽이 되고, 그래도 예측이 성립해야 매끈한 물리 분산이 입증된다.
+        # **연속 블록** 홀드아웃 — 이웃 채널이 강상관이라 균등 간격판은 사실상 보간이고
+        # 한계 효과가 +0.3%뿐이다. 대역 끝을 통째로 빼야 진짜 외삽이 된다.
         lo, hi = (int(v) for v in hold_range)
         if not 0 <= lo <= hi < n_ch:
             raise ValueError(f"holdout_channel_range {hold_range} 가 [0, {n_ch - 1}] 범위 밖")
         held = np.arange(lo, hi + 1, dtype=int)
         fit_channels = np.setdiff1d(np.arange(n_ch), held)
     elif hold:
-        # 균등 간격으로 홀드아웃 채널을 고른다 — 매끈한 분산 모델만 이 채널을 예측할 수
-        # 있다 (채널별 자유 모델은 원리적으로 불가능). 물리 파라미터화의 결정적 검정.
+        # 균등 간격 홀드아웃 — 매끈한 분산 모델만 이 채널을 예측할 수 있다
+        # (채널별 자유 모델은 배정된 값이 없어 원리적으로 불가능).
         held = np.linspace(0, n_ch - 1, int(hold), dtype=int)
         fit_channels = np.setdiff1d(np.arange(n_ch), held)
     else:
@@ -488,8 +453,8 @@ def fit_physical(
     with torch.no_grad():
         model.theta.copy_(torch.from_numpy(theta_hat).to(torch.float64))
 
-    # 파라미터 공분산 — 잔차가 iid(σ)라는 가정 하의 값이라 낙관적일 수 있다(모델 오차가
-    # 상관을 가지면 실제 불확실성은 더 크다). 한계로 명시하고 보고한다.
+    # 파라미터 공분산 — 잔차 iid(σ) 가정이라 낙관적이다 (상관을 가진 모델 오차가 남아
+    # 있으므로). 실질 불확실성은 독립 방법 간 일치도로 함께 본다 — reports/stage_a.md.
     params: list[dict[str, Any]] = []
     corr: list[list[float]] = []
     if free:

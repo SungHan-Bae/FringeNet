@@ -1,10 +1,8 @@
-# level1_cnn — dilated conv: 기준(single-scale, GAP) 대비 조작 변인은 dilations 하나.
+# level1_cnn — dilated conv: single-scale 대비 조작 변인은 dilations 하나.
 #
-# dilation은 파라미터·연산량을 바꾸지 않고 수용영역만 넓힌다 (646,340 그대로 —
-# 통제가 공짜). 기준의 RF 97채널 -> (1,2,4,4,2)로 RF 259채널(전 대역 커버).
-# 블록별 dilation은 입력 길이(226/113/57/29/15)에서 유효 span(6d+1)이 넘치지 않는
-# 최대 수준으로 골랐다. fringe 주기가 두께에 따라 ~3배 변하는 다중 스케일 대응의
-# kernel 혼합 대비 대안 축 (CLAUDE.md 모델 스펙).
+# dilation은 파라미터·연산량을 바꾸지 않고 수용영역만 넓힌다 — 통제가 공짜다.
+# RF 97채널 → (1,2,4,4,2)로 259채널(전 대역). 블록별 값은 입력 길이
+# (226/113/57/29/15)에서 유효 span(6d+1)이 넘치지 않는 최대 수준.
 seed: 42
 experiment: level1_cnn
 run_name: dilated

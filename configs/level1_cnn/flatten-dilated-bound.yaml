@@ -1,9 +1,8 @@
-# level1_cnn — flatten-dilated + output bound: 확정 백본 대비 조작 변인은 output_bound 하나.
+# level1_cnn — flatten-dilated + output bound: 조작 변인은 output_bound 하나. **확정 백본.**
 #
-# Task 5 마지막 축. sigmoid bound는 출력을 물리 범위 [d_min, d_max]에 가두지만
-# 격자 양 끝(10, 300 nm)에서 gradient가 죽는 비용이 있다. MLP baseline에서는
-# bare regression이 이겼는데(99fe78e), 백본이 강해진 flatten-dilated(2.931 nm)에서도
-# 같은 결론인지 확인한다. bias 중앙 초기화는 bound 유무와 무관하게 동일(공정 비교).
+# sigmoid bound는 출력을 물리 범위 [10, 300] nm에 가두지만 격자 양 끝에서 gradient가
+# 죽는 비용이 있다. MLP baseline에서는 bare regression이 이겼다 — 강한 백본에서도 같은
+# 결론인지 본다. bias 중앙 초기화는 bound 유무와 무관하게 동일(공정 비교).
 seed: 42
 experiment: level1_cnn
 run_name: flatten-dilated-bound

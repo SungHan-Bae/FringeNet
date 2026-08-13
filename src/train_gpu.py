@@ -527,8 +527,7 @@ def run_config(
     )
     (run_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
     # 로그를 **먼저** 다 쓴 뒤 미러로 복사한다 — 순서가 뒤집히면 미러의 train.log에서
-    # 마지막 줄이 항상 빠진다 (실사례: 미러 복원 경로를 탄 run들의 커밋된 로그가
-    # 33/125줄로 잘려 있었다 — 08-13 리뷰).
+    # 마지막 줄이 항상 빠진다 (미러 복원 경로를 탄 run의 로그가 잘려 있었다).
     log_line(run_dir, f"\n산출물: {run_dir}/ (metrics.json, train.log, model.pt)")
     _mirror_copy(run_dir, mirror_run, ("metrics.json", "train.log"))
     return metrics
