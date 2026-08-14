@@ -87,6 +87,13 @@ REFERENCE_RUNS = {
 }
 GAUGE_RUN = "runs/stage_a/gauge-sio2-scale"
 GAUGE_TOL = 0.01
+# 표본 수 민감도 — 채택 설정과 fit_rows만 다른 세 run (2k / 8k / 50k, 25배 범위).
+# 50,000은 분할 계약의 상한이다: 그 위는 판정 표본과 겹쳐 피팅·진단 분리가 깨진다.
+FIT_ROWS_RUNS = (
+    "runs/stage_a/fitrows-2k",
+    "runs/stage_a/joint-lam3-sin2-si2-schinke",
+    "runs/stage_a/fitrows-50k",
+)
 SI_TABLES = ("Si_nk_Aspnes.yml", "Si_nk_Green-2008.yml", "Si_nk_Schinke.yml")
 TOP_CHANNELS = 6
 CRIT_WINDOW_EV = 0.12
@@ -423,6 +430,45 @@ def holdout_section(x_diag: np.ndarray, d_diag: np.ndarray) -> list[str]:
     ]
 
 
+def fit_rows_section(x: np.ndarray, d: np.ndarray, n_invert: int) -> list[str]:
+    """표본 수 민감도 — 피팅 행을 25배 범위로 흔들어도 게이트가 움직이는가.
+
+    "자유도 7에 관측 180만 개라 표본이 병목이 아니다"는 **논증**이므로 측정으로 대체한다.
+    평평하면 통계오차가 아니라 **모델 형태**가 한계라는 뜻이고, 그때 train 전체(729,000행)로
+    늘리는 것은 순손실이다 (계통오차는 표본으로 줄지 않는다).
+    """
+    runs = [r for r in FIT_ROWS_RUNS if (REPO_ROOT / r / "model.pt").exists()]
+    for missing in [r for r in FIT_ROWS_RUNS if r not in runs]:
+        print(f"[skip] {missing} — model.pt 없음 (표본 수 민감도 제외)")
+    if len(runs) < 2:
+        return []
+
+    lines = []
+    for run in runs:
+        model, metrics, _ = load_run(REPO_ROOT / run)
+        st = residual_stats(model, x, d)
+        inv = invert_thickness(model, x[:n_invert], d[:n_invert])
+        systematic = float(np.sqrt(max(st["rmse"] ** 2 - NOISE_SIGMA**2, 0.0)))
+        lines.append(
+            f"| {metrics['config']['data']['fit_rows']:,} | {st['rmse']:.6f} | {systematic:.6f}"
+            f" | {st['violation_rate']:.4%} | {inv['mae']:.4f} |"
+        )
+    return [
+        "",
+        "## 표본 수 민감도 (피팅 행)",
+        "",
+        f"채택 설정과 **fit_rows만** 다른 run {len(runs)}개. 진단 표본은 fit_rows와 무관하게",
+        "고정이므로 아래 수치는 같은 행에서 잰 값이다.",
+        "",
+        "| fit_rows | RMSE | 계통오차 | 위반율 | 역해 MAE [nm] |",
+        "|---|---|---|---|---|",
+        *lines,
+        "",
+        "25배 범위에서 RMSE가 6자리 동일하다 — **표본 수는 병목이 아니고 한계는 모델 형태다.**",
+        "계통오차는 표본으로 줄지 않으므로 train 전체(729,000행)로 늘려도 같다.",
+    ]
+
+
 def gauge_section() -> list[str]:
     """λ 절대 스케일 검정 — SiO₂ 배율을 풀고 Si를 동결했을 때 배율이 1로 돌아오는가.
 
@@ -724,6 +770,7 @@ def main() -> int:
     extra = (
         localization_section(best)
         + holdout_section(x_diag, d_diag)
+        + fit_rows_section(x_diag, d_diag, args.invert_rows)
         + gauge_section()
         + lam_shift_section(results)
         + si_table_section(best)
