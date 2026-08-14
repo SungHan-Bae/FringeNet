@@ -1,0 +1,38 @@
+# stage_b — **held-out 두께 값 split**의 물리 손실 (라운드 2, beta = 30).
+# 조작 변인은 physics.beta 하나이고, split·백본·사전등록은 heldout-thickness-beta0.yaml 참조.
+# beta 30 = 물리 항 기여가 지도 항의 1/10 규모.
+
+seed: 42
+experiment: stage_b
+run_name: heldout-thickness-beta30
+
+data:
+  # val_frac은 쓰지 않는다 — 분할이 두께 값으로 정해진다
+  subset: null
+  holdout_thickness: [70, 150, 230]
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 30
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 1000 # 학습률 워밍업 (물리 항 워밍업은 physics.warmup_steps)
+  num_folds: 0
+  physics:
+    decoder: runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt
+    beta: 30.0
+    warmup_steps: 3000
