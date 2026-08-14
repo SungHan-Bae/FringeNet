@@ -201,11 +201,15 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     그 구간엔 문헌표 불일치가 없다(모델 부족).
   - **Stage B 디코더 = `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt`**
     (`src.losses.DEFAULT_DECODER`).
-- **Stage B = `src/losses.py` + `src/train_gpu.py`의 `train.physics` 블록**
-  (`configs/stage_b/beta{0,30,100,300}.yaml`):
+- **Stage B = `src/losses.py` + `src/train_gpu.py`의 `train.physics` 블록**:
   `L = MAE(d_hat, d) + beta(step) * L1(R_dec(d_hat), R_obs)`, beta 선형 워밍업.
   **CPU 경로 `src/train.py`에는 없다** (동결 경로라 GPU 쪽에만 배선한다).
   사전등록한 예측은 docs/week_1.md TODO.
+  - **판정 완료 — 이 손실 항은 기각됐다.** β ∈ {0,30,100,300}을 세 축에서 돌렸고
+    (`beta*` 무작위 split · `heldout-thickness-beta*` held-out 두께 값 split ·
+    `ft-heldout-beta*` 수렴 지점 warm start) **전부 β에 단조로 해롭다**. 적합 수준을 맞추면
+    이득은 0이다 (`reports/stage_b_curves*.md`). 코드·config는 재현을 위해 남기지만
+    **새 β run을 추가하지 않는다** — 물리의 값어치는 추론 시 역산과 신뢰도 지표에서 찾는다.
   - **동결은 두 겹**: `theta.requires_grad_(False)` + 디코더가 **파라미터를 아예 보유하지
     않는다**(상수 분광량만 버퍼). `nn.Parameter`라 `model.parameters()`를 통째로 옵티마이저에
     넘기면 계약이 조용히 깨지므로, 학습 모델의 서브모듈로 두지 않는다 (체크포인트
@@ -286,7 +290,17 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 - [x] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off
       → flatten-dilated-bound 2.346 nm
 - [x] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지 → TMM 채택 (게이트 (b) 미통과)
-- [ ] **Task 7 — Stage B 물리 손실**: beta ablation + 신뢰도 지표 분석
+- [ ] **Task 7 — Stage B**: β ablation은 **종결**(아래), 남은 것은 세 가지다
+  - [x] **β ablation 3라운드 — 물리 손실 항 기각.** 무작위 split · held-out 두께 값 split ·
+        수렴 지점 warm start 전부에서 β에 단조로 해롭고 적합 수준을 맞추면 이득이 0이다.
+        **이미 끝났으니 다시 돌리지 않는다** (`runs/stage_b/*` 12런이 정본).
+  - [ ] **역산 refinement** (사전등록 2): 물리를 손실이 아니라 **추론 후 보정**으로 쓴다.
+        `scripts/diagnose_calibration.py`의 `invert_thickness`(배치 LM) 재사용 — 단 그 함수는
+        `d_true`에서 출발하므로 **`d_hat`에서 출발하도록** 바꾸는 것이 실제 검정이다.
+        후처리이므로 평가 규약대로 별도 행으로 분리 보고한다.
+  - [ ] **평가 축 실측**: 노이즈 강건성 · 신뢰도 지표 (`scripts/evaluate_axes.py`).
+        체크포인트가 git에 없어 Drive 미러에서 받아와야 한다 (`runs/CHECKPOINTS.md`).
+  - [ ] **`reports/stage_b.md` 취합** — `stage_b_curves*.md`는 스크립트 산출물이고 서사가 아니다.
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신
 
 ## 하지 말 것
@@ -332,8 +346,15 @@ python -m src.evaluate --run runs/mlp_baseline/dropout0.0                       
 python -m src.train_gpu --config configs/stage_b/beta100.yaml --device cpu \
   --subset 20000 --epochs 2 --run-name beta100-smoke
 
+# 적합 수준을 맞춘 β 대조 — 학습·체크포인트 없이 커밋된 train.log만으로 돈다.
+# 인자를 안 주면 라운드 1(무작위 split). 산출물 이름에 split tag가 붙어 라운드끼리
+# 덮어쓰지 않는다 (tag = 대조군 run 이름에서 beta<수> 꼬리를 뗀 것).
+python scripts/analyze_stage_b_curves.py                                   # 라운드 1
+python scripts/analyze_stage_b_curves.py $(for b in 0 30 100 300; do \
+  printf -- '--run runs/stage_b/ft-heldout-beta%s ' $b; done)              # 라운드 3
+
 # 평가 축 (노이즈 강건성 · 신뢰도 지표) — 학습 없이 체크포인트 위에서 돈다.
-# 체크포인트는 git에 없으므로 Drive 미러에서 복사하거나 git show로 되살린 뒤 실행한다.
+# 체크포인트는 git에 없으므로 Drive 미러에서 복사한 뒤 실행한다 (runs/CHECKPOINTS.md).
 python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta100
 ```
 
