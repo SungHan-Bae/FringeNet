@@ -1,0 +1,114 @@
+{
+  "experiment": "stage_b",
+  "run_name": "beta300",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "stage_b",
+    "run_name": "beta300",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        64,
+        128,
+        200,
+        280
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "dilations": [
+        1,
+        2,
+        4,
+        4,
+        2
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "head": "flatten",
+      "output_bound": true,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 30,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 1000,
+      "num_folds": 0,
+      "physics": {
+        "decoder": "runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt",
+        "beta": 300.0,
+        "warmup_steps": 3000
+      }
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/stage_b/beta300/model.pt",
+    "best_epoch": 30,
+    "val_mae": 3.5581533908843994,
+    "val_mae_per_layer": {
+      "layer_1": 2.5510575771331787,
+      "layer_2": 4.559850215911865,
+      "layer_3": 3.809317111968994,
+      "layer_4": 3.3123884201049805,
+      "overall": 3.5581533908843994
+    },
+    "wall_sec": 520.7487140639996,
+    "physics": {
+      "beta": 300.0,
+      "warmup_steps": 3000,
+      "decoder": "runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt",
+      "free": [
+        "lam_nu0",
+        "lam_r1",
+        "lam_r2",
+        "sin_b1",
+        "sin_c1",
+        "si_de",
+        "si_klog"
+      ],
+      "si_source": "Si_nk_Schinke.yml",
+      "lam_range_nm": [
+        283.4150585009905,
+        790.2618238723164
+      ],
+      "stage_a_rmse": 0.009573347877484688,
+      "stage_a_violation_rate": 0.09993805309734513,
+      "physical_values": {
+        "lam_nu0": 0.0012654034014954153,
+        "lam_r1": 1.787404373883396,
+        "lam_r2": 0.0009507264139815633,
+        "sin_b1": 2.8775723790719008,
+        "sin_c1": 0.017234061595081687,
+        "si_de": -0.033134712902016895,
+        "si_klog": -0.020071202425221188,
+        "sio2_scale": 1.0
+      }
+    },
+    "val_phys_l1": 0.028471646830439568
+  }
+}
