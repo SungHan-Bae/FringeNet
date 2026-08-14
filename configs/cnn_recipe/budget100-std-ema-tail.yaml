@@ -1,0 +1,38 @@
+# cnn_recipe — 부모 `budget100-std-ema`에 **꼬리 가중 손실**만 더한다 (변인 하나).
+#
+# L1은 큰 오차에 gradient가 상수라 분지 실패에 아무 압력이 없다. L1 + 0.1*MSE면 오차
+# 2 nm에서 꼬리 항 기여가 0.4, 분지 실패(약 30 nm)에서 6이라 꼬리에만 선택적으로 붙는다.
+# **지표는 MAE이므로 중앙값이 나빠지지 않는지 함께 본다** — 나빠지면 이 가지는 버린다.
+# 로그의 train_l1은 이 항을 뺀 순수 지도 L1이라 부모와 직접 비교된다.
+seed: 42
+experiment: cnn_recipe
+run_name: budget100-std-ema-tail
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+  input_norm: true
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  ema_decay: 0.999
+  l2_weight: 0.1
+  num_folds: 0

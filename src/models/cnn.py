@@ -135,6 +135,10 @@ class CNN1D(nn.Module):
         channel_shuffle_seed: None이면 입력 그대로. 정수를 주면 그 시드의 고정 무작위
             순열로 채널 순서를 파괴한다 (buffer로 저장 — 체크포인트에 같이 남는다).
             "스펙트럼 순서 정보"의 기여를 분리하는 대조군용.
+        input_norm: True면 채널별 표준화를 forward 안에서 한다. 통계는 **학습 분할에서만**
+            `set_input_stats`로 채우고 buffer로 남기므로 체크포인트가 자기완결적이다
+            (전처리를 학습 스크립트에 두면 evaluate·역산 경로가 조용히 다른 입력을 본다).
+            baseline·Level 1 ablation은 "표준화 없음" 계약이라 기본값이 False다.
 
     Shapes:
         forward: x (B, 226) float 반사율 -> (B, 4) float 두께 [nm]
@@ -156,6 +160,7 @@ class CNN1D(nn.Module):
         d_min: float = 10.0,
         d_max: float = 300.0,
         channel_shuffle_seed: int | None = None,
+        input_norm: bool = False,
     ) -> None:
         super().__init__()
         if activation not in _ACTIVATIONS:
@@ -205,6 +210,17 @@ class CNN1D(nn.Module):
             )
             self.register_buffer("channel_perm", perm)
 
+        # 항등값으로 등록해 두고 학습 직전 `set_input_stats`가 채운다 — 채우지 않아도
+        # 동작이 표준화 없음과 같으므로 통계를 빠뜨린 run이 조용히 망가지지 않는다.
+        self.x_mean: Tensor | None
+        self.x_std: Tensor | None
+        if input_norm:
+            self.register_buffer("x_mean", torch.zeros(self.n_channels))
+            self.register_buffer("x_std", torch.ones(self.n_channels))
+        else:
+            self.x_mean = None
+            self.x_std = None
+
         blocks: list[nn.Module] = []
         c_in = 1
         for c_out, stride, dilation in zip(channels, strides, dilations, strict=True):
@@ -235,11 +251,33 @@ class CNN1D(nn.Module):
         else:
             nn.init.constant_(self.head.bias, (d_min + d_max) / 2)
 
+    @torch.no_grad()
+    def set_input_stats(self, x: Tensor) -> None:
+        """채널별 표준화 통계를 채운다. **학습 분할만** 넣을 것 (holdout은 누수다).
+
+        Args:
+            x: (N, W) 학습 반사율.
+
+        Raises:
+            RuntimeError: input_norm=False 인 모델에 부른 경우.
+            ValueError: shape가 (N, n_channels)가 아닌 경우.
+        """
+        if self.x_mean is None or self.x_std is None:
+            raise RuntimeError("input_norm=False 인 모델에는 표준화 통계를 넣을 수 없다")
+        if x.ndim != 2 or x.shape[1] != self.n_channels:
+            raise ValueError(f"x는 (N, {self.n_channels}) 여야 한다 (받은 shape: {tuple(x.shape)})")
+        self.x_mean.copy_(x.mean(dim=0))
+        # 노이즈가 채널에 균일해 상수 채널은 없지만 0 나눗셈 자리를 남기지 않는다
+        self.x_std.copy_(x.std(dim=0).clamp(min=1e-6))
+
     def forward(self, x: Tensor) -> Tensor:
         if x.ndim != 2 or x.shape[1] != self.n_channels:
             raise ValueError(
                 f"입력은 (B, {self.n_channels}) 여야 한다 (받은 shape: {tuple(x.shape)})"
             )
+        # 통계는 원래 채널 순서로 재므로 셔플보다 **먼저** 적용한다.
+        if self.x_mean is not None and self.x_std is not None:
+            x = (x - self.x_mean) / self.x_std
         if self.channel_perm is not None:
             x = x[:, self.channel_perm]
         feat = self.blocks(x.unsqueeze(1))  # (B, 1, 226) -> (B, C_last, W_last)

@@ -730,3 +730,162 @@ def test_mirror_restore_still_works_with_resume_state(tmp_path: Path) -> None:
 
     assert "미러에서 복원" in (run_dir / "train.log").read_text()
     assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# 학습 레시피 손잡이 (configs/cnn_recipe/) — noise_aug · l2_weight · ema_decay · input_norm
+# ---------------------------------------------------------------------------
+def _train_l1_by_epoch(run_dir: Path) -> list[float]:
+    """train.log에서 에폭별 train_l1을 뽑는다."""
+    out = []
+    for line in (run_dir / "train.log").read_text().splitlines():
+        if "train_l1" in line:
+            out.append(float(line.split("train_l1")[1].split()[0]))
+    return out
+
+
+def test_recipe_knobs_at_default_reproduce_run_without_them(tmp_path: Path) -> None:
+    """손잡이를 0으로 **명시**한 run이 손잡이 없는 run과 비트 동일해야 한다.
+
+    이게 깨지면 어떤 변형의 차이도 그 변형에 귀속할 수 없다 (beta=0 대조군과 같은 계약).
+    """
+    plain_dir, zeroed_dir = tmp_path / "plain", tmp_path / "zeroed"
+    plain_dir.mkdir()
+    zeroed_dir.mkdir()
+    cfg = _tiny_cnn_cfg()
+    cfg["train"].update({"noise_aug": 0.0, "l2_weight": 0.0, "ema_decay": 0.0})
+
+    plain = _train(plain_dir, _tiny_cnn_cfg())
+    zeroed = _train(zeroed_dir, cfg)
+
+    assert zeroed["val_mae"] == plain["val_mae"]
+    assert np.array_equal(zeroed["val_pred"], plain["val_pred"])
+
+
+def test_input_norm_stats_come_from_train_and_travel_in_checkpoint(tmp_path: Path) -> None:
+    """표준화 통계는 **학습 분할에서만** 재고 체크포인트에 함께 실려야 한다.
+
+    전처리를 학습 스크립트에 두면 evaluate·역산 경로가 조용히 다른 입력을 본다 — 여기서
+    거는 것은 체크포인트만으로 같은 예측이 재현된다는 계약이다.
+    """
+    x, y = _synthetic()
+    cfg = _tiny_cnn_cfg()
+    cfg["model"]["input_norm"] = True
+    result = _train(tmp_path, cfg)
+
+    ckpt = torch.load(tmp_path / "model.pt", map_location="cpu", weights_only=True)
+    assert "x_mean" in ckpt["state_dict"] and "x_std" in ckpt["state_dict"]
+    # 학습 분할(앞 192행)의 통계여야 한다 — 전체(256행)나 holdout이 섞이면 누수다
+    expected = torch.from_numpy(x[:192]).mean(dim=0)
+    assert torch.allclose(ckpt["state_dict"]["x_mean"], expected, atol=1e-6)
+    assert not torch.allclose(
+        ckpt["state_dict"]["x_mean"], torch.from_numpy(x).mean(dim=0), atol=1e-6
+    )
+
+    # 체크포인트만으로 학습 때와 같은 예측이 나와야 한다
+    model = load_model_checkpoint(tmp_path / "model.pt")
+    assert np.allclose(predict(model, x[192:]), result["val_pred"], atol=1e-6)
+
+
+def test_input_norm_changes_the_answer(tmp_path: Path) -> None:
+    """켰는데 아무것도 안 바뀌면 통계가 안 채워진 것이다 (버퍼가 항등값으로 남는다)."""
+    off_dir, on_dir = tmp_path / "off", tmp_path / "on"
+    off_dir.mkdir()
+    on_dir.mkdir()
+    cfg_on = _tiny_cnn_cfg()
+    cfg_on["model"]["input_norm"] = True
+
+    off = _train(off_dir, _tiny_cnn_cfg())
+    on = _train(on_dir, cfg_on)
+
+    assert on["val_mae"] != off["val_mae"]
+    assert "입력 채널별 표준화" in (on_dir / "train.log").read_text()
+
+
+def test_ema_checkpoint_holds_averaged_weights(tmp_path: Path) -> None:
+    """EMA를 켜면 저장·평가되는 가중치가 마지막 스텝의 가중치와 달라야 한다."""
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["ema_decay"] = 0.9
+    plain_dir, ema_dir = tmp_path / "plain", tmp_path / "ema"
+    plain_dir.mkdir()
+    ema_dir.mkdir()
+
+    plain = _train(plain_dir, _tiny_cnn_cfg())
+    ema = _train(ema_dir, cfg)
+
+    assert ema["val_mae"] != plain["val_mae"]
+    # EMA 가중치는 어느 스텝의 가중치와도 같지 않다 — 평균이므로 원본과 달라야 한다
+    ema_ckpt = torch.load(ema_dir / "model.pt", map_location="cpu", weights_only=True)
+    plain_ckpt = torch.load(plain_dir / "model.pt", map_location="cpu", weights_only=True)
+    assert not torch.equal(
+        ema_ckpt["state_dict"]["head.weight"], plain_ckpt["state_dict"]["head.weight"]
+    )
+
+
+def test_ema_resume_matches_uninterrupted(tmp_path: Path) -> None:
+    """EMA 상태가 resume.pt에 실려야 재개 결과가 무중단 실행과 같다."""
+    cfg = _tiny_cnn_cfg()
+    cfg["train"].update({"epochs": 3, "ema_decay": 0.9})
+
+    full_dir, part_dir = tmp_path / "full", tmp_path / "interrupted"
+    full_dir.mkdir()
+    part_dir.mkdir()
+    full = _train(full_dir, cfg)
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(part_dir, cfg, _abort_after_epoch=2)
+    resumed = _train(part_dir, cfg)
+
+    assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
+    assert np.allclose(resumed["val_pred"], full["val_pred"], atol=1e-6)
+
+
+def test_l2_weight_is_excluded_from_logged_train_l1(tmp_path: Path) -> None:
+    """로그의 train_l1은 꼬리 항을 뺀 순수 지도 L1이어야 run 간 비교가 성립한다.
+
+    배치가 하나뿐인 1에폭이면 train_l1은 **갱신 전** 가중치의 L1이므로, 손실이 달라도
+    두 run의 값이 정확히 같아야 한다. 반대로 val은 한 스텝 갱신 차이로 갈라진다.
+    """
+    base_dir, tail_dir = tmp_path / "base", tmp_path / "tail"
+    base_dir.mkdir()
+    tail_dir.mkdir()
+    cfg = _tiny_cnn_cfg()
+    cfg["train"].update({"epochs": 1, "batch_size": 192})
+    cfg_tail = _tiny_cnn_cfg()
+    cfg_tail["train"].update({"epochs": 1, "batch_size": 192, "l2_weight": 0.1})
+
+    base = _train(base_dir, cfg)
+    tail = _train(tail_dir, cfg_tail)
+
+    assert _train_l1_by_epoch(base_dir) == _train_l1_by_epoch(tail_dir)
+    assert tail["val_mae"] != base["val_mae"]  # 손실은 실제로 달라졌다
+
+
+def test_noise_aug_perturbs_training_inputs(tmp_path: Path) -> None:
+    """증강이 실제로 켜지는지 — 같은 시드에서 결과가 달라져야 한다.
+
+    기본 lr(1e-3)로 2에폭이면 섭동이 만든 가중치 차이가 float32 아래로 묻히므로, 학습이
+    실제로 움직이는 lr에서 건다 (여기서 재는 것은 성능이 아니라 배선이다).
+    """
+    clean_dir, noisy_dir = tmp_path / "clean", tmp_path / "noisy"
+    clean_dir.mkdir()
+    noisy_dir.mkdir()
+    base = _tiny_cnn_cfg()
+    base["train"]["lr"] = 0.02
+    cfg = _tiny_cnn_cfg()
+    cfg["train"].update({"lr": 0.02, "noise_aug": 0.015})
+
+    clean = _train(clean_dir, base)
+    noisy = _train(noisy_dir, cfg)
+
+    assert noisy["val_mae"] != clean["val_mae"]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("noise_aug", -0.1), ("l2_weight", -1.0), ("ema_decay", 1.0), ("ema_decay", -0.5)],
+)
+def test_recipe_knobs_reject_out_of_range(key: str, value: float, tmp_path: Path) -> None:
+    cfg = _tiny_cnn_cfg()
+    cfg["train"][key] = value
+    with pytest.raises(ValueError, match=key):
+        _train(tmp_path, cfg)

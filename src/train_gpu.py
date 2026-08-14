@@ -52,7 +52,7 @@ import numpy as np
 import torch
 import yaml
 from torch import Tensor, nn
-from torch.nn.functional import l1_loss
+from torch.nn.functional import l1_loss, mse_loss
 
 from src.data.dataset import REPO_ROOT, prepare_from_config
 from src.evaluate import format_mae, mae_per_layer
@@ -193,6 +193,8 @@ def train_one_model_gpu(
     (3) best 갱신 즉시 {tag}.pt 저장, (4) 매 에폭 resume.pt 저장(+미러)로 세션 유실 대비,
     (5) cfg["train"]["physics"] 블록이 있으면 Stage B 물리 손실을 더한다 (src/losses.py —
     CPU 경로에는 없다). 블록이 없으면 손실 계산 경로가 물리 항 도입 전과 동일하다.
+    (6) 학습 레시피 손잡이 `noise_aug`·`l2_weight`·`ema_decay`와 모델의 `input_norm`
+    (표준화 통계를 학습 분할에서 채워 버퍼로 남긴다). 전부 기본값이면 도입 전과 같은 경로다.
 
     Args:
         x_train: (N, 226) float32 반사율. y_train: (N, 4) float32 두께 [nm].
@@ -239,6 +241,26 @@ def train_one_model_gpu(
         raise ValueError(f'shuffle은 "epoch" | "once" 여야 한다 (받은 값: {shuffle_mode!r})')
     eval_after_first = bool(train_cfg.get("eval_mode_after_first_epoch", False))
 
+    # 학습 레시피 손잡이 (configs/cnn_recipe/) — 전부 0/없음이 기본이고 그때 손실·RNG 경로가
+    # 도입 전과 같다. 조작 변인을 하나씩만 켜서 대조한다.
+    #   noise_aug: 균등 ±a 주입 [반사율 단위]. 데이터의 실제 노이즈와 같은 종류다(EDA).
+    #     **모델만 노이즈를 보고 물리 항의 관측 R은 원본을 쓴다** — 물리 항이 재구성해야 할
+    #     대상은 실제 관측이지 증강본이 아니다.
+    #   l2_weight: 손실에 더하는 MSE 가중치. L1은 큰 오차에 상수 gradient라 분지 실패에
+    #     압력이 없다. **`train_l1` 로그는 이 항을 뺀 순수 지도 L1을 유지한다** (run 간 비교).
+    #   ema_decay: 가중치 EMA. 평가·체크포인트가 EMA 가중치를 쓴다. 초기 구간은 감쇠를
+    #     (1+t)/(10+t)로 눌러 **평균이 랜덤 초기화에 묶이지 않게** 한다 — 워밍업이 없으면
+    #     유효 창(1/(1-decay) 스텝)보다 짧은 run에서 EMA가 사실상 꺼진 채로 지나간다.
+    noise_aug = float(train_cfg.get("noise_aug", 0.0))
+    l2_weight = float(train_cfg.get("l2_weight", 0.0))
+    ema_decay = float(train_cfg.get("ema_decay", 0.0))
+    if noise_aug < 0.0:
+        raise ValueError(f"noise_aug는 0 이상이어야 한다 (받은 값: {noise_aug})")
+    if l2_weight < 0.0:
+        raise ValueError(f"l2_weight는 0 이상이어야 한다 (받은 값: {l2_weight})")
+    if ema_decay and not 0.0 < ema_decay < 1.0:
+        raise ValueError(f"ema_decay는 (0, 1) 범위여야 한다 (받은 값: {ema_decay})")
+
     set_seed(seed)
 
     x_t = torch.from_numpy(x_train).to(device)
@@ -248,6 +270,11 @@ def train_one_model_gpu(
     if train_cfg.get("init_from"):
         note = _init_from_checkpoint(model, cfg, device)
         log_line(run_dir, f"[{tag}] {note}")
+    # 표준화 통계는 **학습 분할에서만** 재고 모델 버퍼에 남는다 (체크포인트 자기완결).
+    # init_from 뒤에 둬서 현재 분할의 통계가 항상 이긴다.
+    if getattr(model, "x_mean", None) is not None:
+        model.set_input_stats(x_t)
+        log_line(run_dir, f"[{tag}] 입력 채널별 표준화 — 통계는 학습 {len(x_t):,}행에서")
     # 물리 손실은 설정을 먼저 검증해 잘못된 config가 학습 시작 전에 걸리게 한다.
     # RNG를 소모하지 않으므로 beta=0 대조군의 학습 경로는 물리 항 도입 전과 같다.
     physics = build_physics_loss(train_cfg, device=device)
@@ -301,6 +328,8 @@ def train_one_model_gpu(
     best_metrics: dict[str, float] = {}
     best_pred: np.ndarray | None = None
     best_val_phys: float | None = None
+    ema_state: dict[str, Tensor] | None = None
+    ema_steps = 0
     start_epoch = 1
     wall_prev = 0.0
 
@@ -352,6 +381,8 @@ def train_one_model_gpu(
                     state["best_pred"].cpu().numpy() if state["best_pred"] is not None else None
                 )
                 best_val_phys = state.get("best_val_phys")
+                ema_state = state.get("ema")
+                ema_steps = int(state.get("ema_steps", 0))
                 torch.set_rng_state(state["torch_rng"].cpu())
                 if device.type == "cuda" and state.get("cuda_rng") is not None:
                     torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda_rng"]])
@@ -364,6 +395,12 @@ def train_one_model_gpu(
                     f"[{tag}] resume: epoch {state['epoch']}까지 완료 상태에서 재개"
                     f" (best {best_mae:.4f} @ ep {best_epoch})",
                 )
+
+    # state_dict()는 파라미터·버퍼의 참조(저장소 공유)라 한 번만 잡아 두면 이후 in-place
+    # 갱신이 그대로 보인다. load_state_dict도 in-place copy_라 참조가 유지된다.
+    live_state = model.state_dict()
+    if ema_decay and ema_state is None:
+        ema_state = {k: v.detach().clone() for k, v in live_state.items()}
 
     t_start = time.perf_counter()
 
@@ -385,24 +422,47 @@ def train_one_model_gpu(
         beta_now = 0.0
         for start in range(0, n, batch_size):
             idx = perm[start : start + batch_size]
+            x_b = x_t[idx]
+            if noise_aug > 0.0:
+                x_b = x_b + (torch.rand_like(x_b) * (2.0 * noise_aug) - noise_aug)
+            pred = model(x_b)
             if physics is None:
-                loss = l1_loss(model(x_t[idx]), y_t[idx])
+                loss = l1_loss(pred, y_t[idx])
                 sup_value = loss.item()
             else:
                 # 전역 스텝을 epoch에서 유도한다 — resume 후에도 워밍업 위치가 이어진다.
+                # 관측 R은 증강본이 아니라 원본이다 (물리 항이 맞춰야 할 대상).
                 step = (epoch - 1) * steps_per_epoch + start // batch_size
-                parts = physics(model(x_t[idx]), y_t[idx], x_t[idx], step)
+                parts = physics(pred, y_t[idx], x_t[idx], step)
                 loss, sup_value, beta_now = parts.total, parts.sup.item(), parts.beta
                 phys_sum += parts.phys.item() * len(idx)
+            if l2_weight > 0.0:
+                loss = loss + l2_weight * mse_loss(pred, y_t[idx])
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
-            # train_l1은 물리 항을 뺀 지도 항만 — run 사이 비교 가능해야 한다
+            if ema_state is not None:
+                ema_steps += 1
+                decay_now = min(ema_decay, (1.0 + ema_steps) / (10.0 + ema_steps))
+                with torch.no_grad():
+                    for key, value in live_state.items():
+                        if value.dtype.is_floating_point:
+                            ema_state[key].mul_(decay_now).add_(value, alpha=1.0 - decay_now)
+                        else:  # num_batches_tracked 등 정수 버퍼는 평균이 뜻이 없다
+                            ema_state[key].copy_(value)
+            # train_l1은 물리 항·꼬리 항을 뺀 지도 항만 — run 사이 비교 가능해야 한다
             loss_sum += sup_value * len(idx)
 
-        val_pred = predict_on_device(model, x_v)
+        if ema_state is None:
+            val_pred = predict_on_device(model, x_v)
+        else:
+            # 평가·체크포인트는 EMA 가중치를 쓴다. 학습 상태는 되돌려 다음 에폭이 이어진다.
+            live_backup = {k: v.detach().clone() for k, v in live_state.items()}
+            model.load_state_dict(ema_state)
+            val_pred = predict_on_device(model, x_v)
+            model.load_state_dict(live_backup)
         val_metrics = mae_per_layer(val_pred, y_val)
         val_phys: float | None = None
         if physics is not None:
@@ -421,7 +481,7 @@ def train_one_model_gpu(
         if improved:
             best_mae = val_metrics["overall"]
             # copy=True: CPU 텐서여도 참조가 아닌 복사본을 남긴다 (이후 학습이 덮어쓰지 않게)
-            state_now = model.state_dict()
+            state_now = ema_state if ema_state is not None else model.state_dict()
             best_state = {k: v.detach().to("cpu", copy=True) for k, v in state_now.items()}
             best_epoch = epoch
             best_metrics = val_metrics
@@ -455,6 +515,8 @@ def train_one_model_gpu(
                 "best_metrics": best_metrics,
                 "best_pred": torch.from_numpy(best_pred) if best_pred is not None else None,
                 "best_val_phys": best_val_phys,
+                "ema": ema_state,
+                "ema_steps": ema_steps,
                 "torch_rng": torch.get_rng_state(),
                 "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
                 "numpy_rng": np.random.get_state(),  # noqa: NPY002

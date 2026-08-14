@@ -416,3 +416,35 @@ def test_build_winner_skip_mlp_from_config_dict() -> None:
     model = build_model(config)
     assert isinstance(model, WinnerSkipMLP)
     assert model(_batch()).shape == (B, 4)
+
+
+# ---------------------------------------------------------------------------
+# 입력 표준화 (cnn_recipe) — 통계는 버퍼라 체크포인트를 따라다닌다
+# ---------------------------------------------------------------------------
+def test_input_norm_off_leaves_forward_and_state_dict_untouched() -> None:
+    """기본값에서는 버퍼도 연산도 늘지 않아야 한다 (기존 체크포인트 로드 계약)."""
+    model = CNN1D(channels=[8, 16], strides=[1, 2])
+    assert model.x_mean is None and model.x_std is None
+    assert not any(k.startswith("x_") for k in model.state_dict())
+    with pytest.raises(RuntimeError, match="input_norm=False"):
+        model.set_input_stats(torch.zeros(4, 226))
+
+
+def test_set_input_stats_standardizes_the_given_rows() -> None:
+    """통계를 채우면 그 표본이 평균 0·표준편차 1로 들어간다."""
+    torch.manual_seed(0)
+    model = CNN1D(channels=[8, 16], strides=[1, 2], input_norm=True).eval()
+    x = torch.rand(64, 226) * 3.0 + 5.0
+
+    assert torch.allclose(model.x_mean, torch.zeros(226))  # 채우기 전에는 항등
+    model.set_input_stats(x)
+    z = (x - model.x_mean) / model.x_std
+    assert torch.allclose(z.mean(dim=0), torch.zeros(226), atol=1e-5)
+    assert torch.allclose(z.std(dim=0), torch.ones(226), atol=1e-5)
+    assert set(model.state_dict()) >= {"x_mean", "x_std"}
+
+
+def test_set_input_stats_rejects_wrong_shape() -> None:
+    model = CNN1D(channels=[8, 16], strides=[1, 2], input_norm=True)
+    with pytest.raises(ValueError, match="226"):
+        model.set_input_stats(torch.zeros(4, 100))
