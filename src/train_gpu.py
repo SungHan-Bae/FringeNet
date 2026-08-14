@@ -306,15 +306,23 @@ def train_one_model_gpu(
 
     if resume:
         if not resume_path.exists() and mirror_dir is not None:
-            # 새 VM: 미러에 남은 상태에서 복원
-            restored: list[str] = []
-            for name in (RESUME_NAME, "train.log", f"{tag}.pt"):
-                src = mirror_dir / name
-                if src.exists():
-                    shutil.copy2(src, run_dir / name)
-                    restored.append(name)
-            if restored:
+            # 새 VM: 미러에 남은 상태에서 복원. **resume.pt가 있을 때만** 가져온다 —
+            # 없으면 이어 달릴 상태가 없고, 그때 train.log·{tag}.pt를 끌어오면 **다른 run의
+            # 중단된 기록을 물려받는다** (라운드 3에서 8에폭 run의 로그 3줄이 그렇게 섞였다).
+            if (mirror_dir / RESUME_NAME).exists():
+                restored: list[str] = []
+                for name in (RESUME_NAME, "train.log", f"{tag}.pt"):
+                    src = mirror_dir / name
+                    if src.exists():
+                        shutil.copy2(src, run_dir / name)
+                        restored.append(name)
                 log_line(run_dir, f"[{tag}] 미러에서 복원: {restored}")
+            elif any((mirror_dir / n).exists() for n in ("train.log", f"{tag}.pt")):
+                log_line(
+                    run_dir,
+                    f"[{tag}] 미러에 재개 상태(resume.pt)가 없어 복원하지 않는다 —"
+                    " 남은 파일은 중단된 다른 run의 기록이다. 처음부터 학습",
+                )
         if resume_path.exists():
             try:
                 # resume.pt는 이 모듈이 만든 자기 산출물 — RNG 상태 등 비텐서 객체 포함

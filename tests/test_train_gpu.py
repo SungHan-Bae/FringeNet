@@ -687,3 +687,46 @@ def test_stale_config_keys_reports_nested_paths_and_ignores_run_name() -> None:
     # 한쪽에만 있는 키도 잡는다 (물리 항을 뺀 재실행 등)
     c = {"run_name": "x", "seed": 0, "train": {"epochs": 8}}
     assert stale_config_keys(a, c) == ["train.physics"]
+
+
+def test_mirror_restore_requires_resume_state(tmp_path: Path) -> None:
+    """미러에 resume.pt가 없으면 train.log·model.pt를 끌어오지 않는다.
+
+    이어 달릴 상태가 없는데 가져오면 **중단된 다른 run의 기록을 물려받는다** — 라운드 3에서
+    8에폭 run의 로그 3줄이 40에폭 run의 train.log에 섞여 분석이 깨졌다.
+    """
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    (mirror / "train.log").write_text("[model] epoch   3/8  train_l1 2.5  val_mae 4.1\n")
+    (mirror / "model.pt").write_bytes(b"stale")  # 로드되면 안 되므로 내용은 쓰레기여도 된다
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["epochs"] = 1
+    _train(run_dir, cfg, mirror_dir=mirror)
+
+    log = (run_dir / "train.log").read_text()
+    assert "epoch   3/8" not in log, "중단된 다른 run의 로그를 물려받았다"
+    assert "복원하지 않는다" in log
+    assert "epoch   1/1" in log  # 처음부터 학습했다
+
+
+def test_mirror_restore_still_works_with_resume_state(tmp_path: Path) -> None:
+    """resume.pt가 있으면 기존 복원 계약은 그대로다 (새 VM 재개)."""
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["epochs"] = 3
+    full_dir = tmp_path / "full"
+    full_dir.mkdir()
+    full = _train(full_dir, cfg)
+
+    run_dir, mirror = tmp_path / "run", tmp_path / "mirror"
+    run_dir.mkdir()
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(run_dir, cfg, mirror_dir=mirror, mirror_resume_every=1, _abort_after_epoch=2)
+    shutil.rmtree(run_dir)
+    run_dir.mkdir()
+    resumed = _train(run_dir, cfg, mirror_dir=mirror, mirror_resume_every=1)
+
+    assert "미러에서 복원" in (run_dir / "train.log").read_text()
+    assert resumed["val_mae"] == pytest.approx(full["val_mae"], abs=1e-6)
