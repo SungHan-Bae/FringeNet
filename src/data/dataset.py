@@ -158,6 +158,28 @@ class FringeDataset(Dataset):
         return self.x[idx], self.y[idx]
 
 
+def subsample_indices(n: int, rows: int | None, *, seed: int = 0) -> np.ndarray:
+    """평가 표본을 줄일 때 쓰는 시드 고정 **무작위** 인덱스 (앞머리 자르기 금지).
+
+    holdout 인덱스는 분할 방식마다 순서가 다르다 — 무작위 split은 permutation 슬라이스라
+    앞머리도 표본이지만, held-out 두께 값 split은 `np.flatnonzero`라 오름차순이다.
+    train 행이 (layer_1..4) 사전식 정렬이므로 후자에서 앞머리를 자르면 layer_1 = 10 nm
+    구석만 보게 된다. 두 경우를 한 함수로 덮는다.
+
+    Args:
+        n: 전체 행 수. rows: 뽑을 행 수 (None이거나 n 이상이면 전체). seed: 난수 시드.
+
+    Returns:
+        (min(rows, n),) 정렬된 인덱스 — 정렬해 두면 원본 배열의 지역성이 유지된다.
+    """
+    if rows is None or rows >= n:
+        return np.arange(n)
+    if rows <= 0:
+        raise ValueError(f"rows는 1 이상이어야 한다 (받은 값: {rows})")
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(n, size=rows, replace=False))
+
+
 def random_split_indices(
     n: int, val_frac: float = 0.1, seed: int = 42
 ) -> tuple[np.ndarray, np.ndarray]:

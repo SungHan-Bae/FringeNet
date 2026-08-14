@@ -1,0 +1,187 @@
+"""동결 forward 모델의 두께 역해 — 배치 Levenberg–Marquardt.
+
+두 곳이 같은 최적화를 쓰되 **출발점이 다르고, 그 차이가 측정의 전부**다.
+
+- Stage A 게이트 (d): `d_true`에서 출발 → 재는 것은 전역 탐색 난이도가 아니라 디코더의
+  **내재 편향**이다 (forward 모델 오차가 두께 추정을 얼마나 밀어내는가). 라벨을 쓰므로
+  경쟁 성능 수치로 쓸 수 없다.
+- 역산 refinement: `d_hat`(신경망 예측)에서 출발 → **추론 후 보정**. 라벨을 쓰지 않으므로
+  test·실계측에도 그대로 적용된다.
+
+야코비안은 중앙차분이다. 디코더는 미분가능하지만 (M, W, L) 야코비안을 autograd로 뽑으려면
+출력 채널마다 backward가 필요하고, L=4에서는 forward 2L회가 훨씬 싸다.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+import numpy as np
+import torch
+from torch import Tensor, nn
+
+__all__ = [
+    "DEFAULT_BOX_NM",
+    "PHYSICAL_RANGE_NM",
+    "inversion_stats",
+    "lm_invert",
+    "residual_l1_rows",
+]
+
+# 두께 격자의 물리 범위 [nm]. 상자 제약(아래)은 의도적으로 이보다 넓다.
+PHYSICAL_RANGE_NM = (10.0, 300.0)
+# 해의 상자 제약 [nm] — 라벨의 사전지식을 역해에 넣지 않는 보수적 선택이다.
+# 좁히면 수치가 좋아지는 방향이므로, 대신 범위 밖 해의 비율을 함께 보고한다.
+DEFAULT_BOX_NM = (1.0, 400.0)
+
+
+def _device_of(model: nn.Module) -> torch.device:
+    """model이 올라가 있는 장치. 파라미터가 없는 모듈(FrozenDecoder)도 버퍼로 잡힌다."""
+    for tensor in (*model.parameters(), *model.buffers()):
+        return tensor.device
+    return torch.device("cpu")
+
+
+@torch.no_grad()
+def lm_invert(
+    model: nn.Module,
+    x: np.ndarray,
+    d_init: np.ndarray,
+    *,
+    iters: int = 30,
+    step_nm: float = 1e-3,
+    box: tuple[float, float] = DEFAULT_BOX_NM,
+    damping: Literal["batch", "row"] = "batch",
+    chunk: int | None = None,
+) -> np.ndarray:
+    """관측 R에 맞도록 두께를 역해한다 — d_init에서 출발하는 배치 LM.
+
+    **장치·dtype은 model을 따라간다** — `model.to("cuda")`로 올리면 여기도 GPU에서 돈다.
+    작업 dtype도 model의 출력 dtype이다 (complex64 디코더면 float32). 별도 인자를 두지 않는
+    이유는 model과 어긋난 값을 받을 자리를 아예 없애기 위해서다.
+
+    Args:
+        model: 동결 forward 모델. d (M, L) → R (M, W).
+        x: (M, W) 관측 반사율.
+        d_init: (M, L) 출발 두께 [nm]. **이 인자가 무엇이냐가 실험의 정의다** (모듈 설명).
+        iters: LM 반복 수. step_nm: 중앙차분 보폭 [nm]. box: 해의 상자 제약 [nm].
+            float32에서는 step_nm이 너무 작으면 야코비안이 자릿수를 잃는다 (두께 100 nm에
+            보폭 1e-3이면 상대 섭동 1e-5, float32 유효자리는 약 1e-7).
+        damping: 감쇠항 스케일을 배치 평균으로 잡을지(`"batch"`) 행별로 잡을지(`"row"`).
+            `"batch"`는 한 행의 갱신이 같은 배치의 다른 행에 의존하므로 **청크 구성에 결과가
+            달라진다** — Stage A 게이트 (d)가 쓰는 기존 동작이라 기본값으로 남긴다.
+            `"row"`는 행이 독립이라 청크 불변이고, 출발점이 행마다 제각각인 refinement에 맞다.
+        chunk: 행을 이 크기로 끊어 처리한다 (중간 텐서가 (M, L, W)라 8만 행은 10 GB가 넘는다).
+
+    Returns:
+        d_hat: (M, L) float64 [nm] — 작업 dtype과 무관하게 항상 CPU float64로 돌려준다.
+
+    Raises:
+        ValueError: 행 수가 어긋나거나, 청크와 배치 감쇠를 함께 쓴 경우.
+    """
+    if len(x) != len(d_init):
+        raise ValueError(f"x {len(x)}행과 d_init {len(d_init)}행이 다르다")
+    if chunk is not None and damping == "batch" and chunk < len(x):
+        raise ValueError(
+            "damping='batch'는 청크 구성에 결과가 의존한다 — 청크를 쓰려면 damping='row'"
+        )
+    if chunk is not None and chunk < len(x):
+        parts = [
+            lm_invert(
+                model,
+                x[s : s + chunk],
+                d_init[s : s + chunk],
+                iters=iters,
+                step_nm=step_nm,
+                box=box,
+                damping=damping,
+                chunk=None,
+            )
+            for s in range(0, len(x), chunk)
+        ]
+        return np.concatenate(parts)
+
+    device = _device_of(model)
+    d = torch.from_numpy(np.asarray(d_init, dtype=np.float64)).to(device)
+    work = model(d[:1]).dtype  # 작업 dtype = model의 출력 dtype (complex64 디코더면 float32)
+    d = d.to(work)
+    obs = torch.from_numpy(np.asarray(x, dtype=np.float64)).to(device=device, dtype=work)
+    n_layers = d.shape[1]
+    eye_l = torch.eye(n_layers, dtype=work, device=device)
+    lam_damp = torch.full((len(d), 1, 1), 1e-3, dtype=work, device=device)
+
+    resid = model(d) - obs  # (M, W)
+    cost = (resid**2).sum(dim=1)
+    for _ in range(iters):
+        jac = torch.stack(
+            [
+                (model(d + step_nm * eye_l[j]) - model(d - step_nm * eye_l[j])) / (2.0 * step_nm)
+                for j in range(n_layers)
+            ],
+            dim=-1,
+        )  # (M, W, L)
+        jtj = jac.transpose(1, 2) @ jac  # (M, L, L)
+        jtr = (jac.transpose(1, 2) @ resid.unsqueeze(-1)).squeeze(-1)  # (M, L)
+        diag = jtj.diagonal(dim1=1, dim2=2)  # (M, L)
+        scale = diag.mean() if damping == "batch" else diag.mean(dim=1).reshape(-1, 1, 1)
+        damped = jtj + lam_damp * eye_l.expand_as(jtj) * scale
+        delta = torch.linalg.solve(damped, -jtr.unsqueeze(-1)).squeeze(-1)
+        cand = (d + delta).clamp(*box)
+        resid_c = model(cand) - obs
+        cost_c = (resid_c**2).sum(dim=1)
+        # 비용이 내려간 행만 갱신하고, 그 행의 감쇠를 낮춘다 (실패한 행은 높인다).
+        better = cost_c < cost
+        d = torch.where(better.unsqueeze(-1), cand, d)
+        resid = torch.where(better.unsqueeze(-1), resid_c, resid)
+        cost = torch.where(better, cost_c, cost)
+        lam_damp = torch.where(
+            better.reshape(-1, 1, 1), (lam_damp * 0.3).clamp(min=1e-9), lam_damp * 3.0
+        )
+    return d.double().cpu().numpy()
+
+
+def inversion_stats(
+    d_hat: np.ndarray, d_true: np.ndarray, *, box: tuple[float, float] = DEFAULT_BOX_NM
+) -> dict[str, Any]:
+    """역해 결과의 nm 단위 오차 통계와 [0, 1] 비율들.
+
+    Args:
+        d_hat: (M, L) 역해 두께 [nm]. d_true: (M, L) 참 두께 [nm]. box: `lm_invert`에 쓴 상자.
+    """
+    err = np.asarray(d_hat, dtype=np.float64) - np.asarray(d_true, dtype=np.float64)
+    abs_err = np.abs(err)
+    return {
+        "mae": float(abs_err.mean()),
+        "mae_per_layer": [float(v) for v in abs_err.mean(axis=0)],
+        "bias_per_layer": [float(v) for v in err.mean(axis=0)],
+        "rmse_nm": float(np.sqrt((err**2).mean())),
+        # 평균은 중앙값과 꼬리가 섞인 혼합값이라 규제자 신뢰도를 두 성분으로 나눠 말할 수 없다.
+        "abs_err_median": float(np.median(abs_err)),
+        "abs_err_p99": float(np.percentile(abs_err, 99)),
+        "abs_err_max": float(abs_err.max()),
+        "out_of_physical": float(
+            ((d_hat < PHYSICAL_RANGE_NM[0]) | (d_hat > PHYSICAL_RANGE_NM[1])).mean()
+        ),
+        "at_box_boundary": float((np.isclose(d_hat, box[0]) | np.isclose(d_hat, box[1])).mean()),
+    }
+
+
+def residual_l1_rows(
+    model: nn.Module, d: np.ndarray, x: np.ndarray, *, chunk: int = 4096
+) -> np.ndarray:
+    """행별 재구성 L1 |R_model(d) − R_obs| — 라벨을 쓰지 않는 신뢰도 지표 (README §3.4).
+
+    Args:
+        model: 동결 forward 모델. d: (M, L) [nm]. x: (M, W) 관측. chunk: 배치 크기.
+
+    Returns:
+        (M,) float64.
+    """
+    d_t = torch.from_numpy(np.asarray(d, dtype=np.float64))
+    obs = torch.from_numpy(np.asarray(x, dtype=np.float64))
+    out = np.empty(len(d_t), dtype=np.float64)
+    with torch.no_grad():
+        for s in range(0, len(d_t), chunk):
+            pred: Tensor = model(d_t[s : s + chunk])
+            out[s : s + chunk] = (pred - obs[s : s + chunk]).abs().mean(dim=1).numpy()
+    return out

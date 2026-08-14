@@ -21,6 +21,7 @@ from src.data.dataset import (
     prepare_from_config,
     prepare_train_arrays,
     random_split_indices,
+    subsample_indices,
     thickness_holdout_indices,
 )
 
@@ -58,6 +59,26 @@ def test_random_split_is_a_partition_and_reproducible() -> None:
 
     other = random_split_indices(n, val_frac=0.1, seed=7)
     assert not np.array_equal(val_idx, other[1])
+
+
+def test_subsample_is_random_sorted_and_reproducible() -> None:
+    """평가 표본은 앞머리가 아니라 무작위여야 한다 — train이 두께 사전식 정렬이라서다."""
+    idx = subsample_indices(1000, 50, seed=0)
+
+    assert len(idx) == 50
+    assert len(np.unique(idx)) == 50
+    assert np.array_equal(idx, np.sort(idx))  # 정렬 = 원본 배열 접근의 지역성 유지
+    assert not np.array_equal(idx, np.arange(50))  # 앞머리 자르기가 아니다
+    assert np.array_equal(idx, subsample_indices(1000, 50, seed=0))
+    assert not np.array_equal(idx, subsample_indices(1000, 50, seed=1))
+
+
+def test_subsample_returns_everything_when_rows_is_none_or_large() -> None:
+    assert np.array_equal(subsample_indices(20, None), np.arange(20))
+    assert np.array_equal(subsample_indices(20, 20), np.arange(20))
+    assert np.array_equal(subsample_indices(20, 99), np.arange(20))
+    with pytest.raises(ValueError):
+        subsample_indices(20, 0)
 
 
 def test_random_split_rejects_invalid_fraction() -> None:

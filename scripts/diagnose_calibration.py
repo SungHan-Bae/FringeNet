@@ -59,6 +59,7 @@ from src.physics.dispersion import (  # noqa: E402
     si3n4_n,
     sio2_n,
 )
+from src.physics.invert import DEFAULT_BOX_NM, inversion_stats, lm_invert  # noqa: E402
 
 FIG_PATH = REPO_ROOT / "reports" / "figures" / "fig_stage_a.png"
 GATE_PATH = REPO_ROOT / "reports" / "stage_a_gate.md"
@@ -147,15 +148,14 @@ def invert_thickness(
     *,
     iters: int = 30,
     step_nm: float = 1e-3,
-    box: tuple[float, float] = (1.0, 400.0),
+    box: tuple[float, float] = DEFAULT_BOX_NM,
 ) -> dict[str, Any]:
-    """디코더를 두께로 역해한다 — 배치 Levenberg–Marquardt, d_true에서 출발.
+    """게이트 (d) — 디코더를 두께로 역해한다. **d_true에서 출발한다.**
 
-    d_true에서 출발하므로 재는 것은 전역 탐색 난이도가 아니라 **디코더의 내재 편향**이다
-    (forward 모델 오차가 두께 추정을 얼마나 밀어내는가). 상자 제약은 **의도적으로 물리
-    범위보다 넓다** ([1, 400] vs 격자 [10, 300]) — 라벨의 사전지식을 역해에 넣지 않는
-    보수적 선택이고, 조이면 값이 좋아지는 방향이다. 대신 물리 범위를 벗어난 해의 비율을
-    함께 보고해 그 비용이 보이게 한다.
+    출발점이 참값이므로 재는 것은 전역 탐색 난이도가 아니라 디코더의 **내재 편향**이다
+    (forward 모델 오차가 두께 추정을 얼마나 밀어내는가). 라벨을 쓰므로 경쟁 성능 수치가
+    아니고, Stage B의 물리 손실이 강제할 수 있는 정확도의 **상한**으로 읽는다.
+    같은 최적화를 d_hat에서 출발시키는 것이 역산 refinement다 (`scripts/refine_inversion.py`).
 
     Args:
         model: 캘리브레이션된 디코더. x: (M, W) R_obs. d_true: (M, 4) [nm].
@@ -164,54 +164,8 @@ def invert_thickness(
     Returns:
         nm 단위 오차 통계와 [0, 1] 비율들 (mae / mae_per_layer / 분위 / 범위 밖 비율).
     """
-    d = torch.from_numpy(d_true.astype(np.float64)).clone()
-    obs = torch.from_numpy(x.astype(np.float64))
-    lam_damp = torch.full((len(d), 1, 1), 1e-3, dtype=torch.float64)
-    with torch.no_grad():
-        resid = model(d) - obs  # (M, W)
-        cost = (resid**2).sum(dim=1)
-        for _ in range(iters):
-            jac = torch.stack(
-                [
-                    (
-                        model(d + step_nm * torch.eye(4, dtype=torch.float64)[j])
-                        - model(d - step_nm * torch.eye(4, dtype=torch.float64)[j])
-                    )
-                    / (2.0 * step_nm)
-                    for j in range(4)
-                ],
-                dim=-1,
-            )  # (M, W, 4)
-            jtj = jac.transpose(1, 2) @ jac  # (M, 4, 4)
-            jtr = (jac.transpose(1, 2) @ resid.unsqueeze(-1)).squeeze(-1)  # (M, 4)
-            eye = torch.eye(4, dtype=torch.float64).expand_as(jtj)
-            damped = jtj + lam_damp * eye * jtj.diagonal(dim1=1, dim2=2).mean()
-            delta = torch.linalg.solve(damped, -jtr.unsqueeze(-1)).squeeze(-1)
-            cand = (d + delta).clamp(*box)
-            resid_c = model(cand) - obs
-            cost_c = (resid_c**2).sum(dim=1)
-            better = cost_c < cost
-            d = torch.where(better.unsqueeze(-1), cand, d)
-            resid = torch.where(better.unsqueeze(-1), resid_c, resid)
-            cost = torch.where(better, cost_c, cost)
-            lam_damp = torch.where(
-                better.reshape(-1, 1, 1), (lam_damp * 0.3).clamp(min=1e-9), lam_damp * 3.0
-            )
-    d_hat = d.numpy()
-    err = (d - torch.from_numpy(d_true.astype(np.float64))).numpy()
-    abs_err = np.abs(err)
-    return {
-        "mae": float(abs_err.mean()),
-        "mae_per_layer": [float(v) for v in abs_err.mean(axis=0)],
-        "bias_per_layer": [float(v) for v in err.mean(axis=0)],
-        "rmse_nm": float(np.sqrt((err**2).mean())),
-        # 평균은 중앙값과 꼬리가 섞인 혼합값이라 규제자 신뢰도를 두 성분으로 나눠 말할 수 없다.
-        "abs_err_median": float(np.median(abs_err)),
-        "abs_err_p99": float(np.percentile(abs_err, 99)),
-        "abs_err_max": float(abs_err.max()),
-        "out_of_physical": float(((d_hat < 10.0) | (d_hat > 300.0)).mean()),
-        "at_box_boundary": float((np.isclose(d_hat, box[0]) | np.isclose(d_hat, box[1])).mean()),
-    }
+    d_hat = lm_invert(model, x, d_true, iters=iters, step_nm=step_nm, box=box, damping="batch")
+    return inversion_stats(d_hat, d_true, box=box)
 
 
 def _table_label(filename: str) -> str:
