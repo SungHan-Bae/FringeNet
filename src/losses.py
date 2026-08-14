@@ -2,30 +2,16 @@
 
     L = MAE(d_hat, d_true) + beta(step) * L1(R_dec(d_hat), R_obs)
 
-Stage A에서 게이트 판정을 마친 forward 모델을 **동결**해 디코더로 쓰고, beta ablation
-(beta=0 대조군 포함)으로 물리 항의 기여를 정량화한다. 학습 진입점은 GPU 경로
-`src/train_gpu.py`이고(CPU 경로 `src/train.py`는 baseline 재현용으로 보존한다) 손실을
-이 모듈로 분리해 로컬 CPU에서 단위 테스트가 가능하게 한다.
+조용히 깨질 수 있는 세 가지를 여기에 적는다 (계약은 CLAUDE.md).
 
-동결 계약 — 두 겹으로 강제한다
-------------------------------
-`PhysicalStack.theta`는 `nn.Parameter`라 학습 모델의 서브모듈로 들어가면
-`model.parameters()`를 통째로 옵티마이저에 넘기는 순간 동결이 조용히 깨진다.
-`FrozenDecoder`는 (1) 로드 직후 `requires_grad_(False)`로 명시 동결하고 (2) 상수인
-분광량만 버퍼로 들어 **파라미터를 하나도 보유하지 않는다**. 학습 모델의 형제 객체로 두므로
-체크포인트 state_dict에도 섞이지 않는다 (`evaluate.py`의 로드 계약 유지).
-
-dtype — 상수 프리컴퓨트
-----------------------
-theta가 동결이면 (lam, n_layers, n_s)는 상수다. 매 스텝 Sellmeier·스플라인을 다시 돌
-이유가 없으므로 1회 계산해 버퍼로 캐시하고 학습 dtype(complex64)으로 캐스팅한다.
-소비자 GPU의 float64 처리율이 float32의 1/32라 이 캐스팅이 물리 항의 실용성을 가른다.
-gradient는 d로만 흐른다. 캐스팅 오차는 float64 대조로 고정한다 (tests/test_losses.py).
-
-beta=0 대조군
--------------
-beta가 0이면 물리 항은 gradient 그래프에 들어가지 않고 진단값으로만 기록된다 — 대조군의
-학습 경로가 물리 항 도입 전과 정확히 같아야 ablation의 차이를 물리 항에 귀속할 수 있다.
+1. **동결**: `PhysicalStack.theta`는 `nn.Parameter`라 학습 모델의 서브모듈이 되면
+   `model.parameters()`를 옵티마이저에 넘기는 순간 풀린다. `FrozenDecoder`는
+   `requires_grad_(False)`에 더해 **파라미터를 하나도 보유하지 않고**(상수 분광량만 버퍼)
+   학습 모델의 형제로 둔다 — 체크포인트 state_dict에도 섞이지 않는다.
+2. **dtype**: theta가 동결이면 (lam, n_layers, n_s)가 상수이므로 1회 계산해 complex64로
+   캐시한다. 소비자 GPU의 float64 처리율이 1/32라 이 캐스팅이 물리 항의 실용성을 가른다.
+3. **beta=0**: 물리 항을 그래프에 넣지 않고 진단으로만 기록한다 — 대조군의 학습 경로가
+   물리 항 도입 전과 같아야 ablation 차이를 물리 항에 귀속할 수 있다.
 """
 
 from __future__ import annotations

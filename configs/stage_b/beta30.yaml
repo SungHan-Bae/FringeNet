@@ -1,8 +1,5 @@
 # stage_b — 물리 손실 beta ablation (beta = 30). 조작 변인은 train.physics.beta 하나.
-#
-# 백본은 Level 1 확정(flatten-dilated-bound, holdout 2.346 nm), 대조군은 beta0.yaml.
-# 스케일 감각: 지도 항은 nm 단위로 O(2), 물리 항은 참 두께에서 E|ε| = 0.0075다
-# (균등 ±0.015). beta 30 → 물리 항 기여가 0.22 수준으로 지도 항의 1/10 규모다.
+# 백본·대조군·사전등록은 beta0.yaml 참조. beta 30 = 물리 항 기여가 지도 항의 1/10 규모.
 seed: 42
 experiment: stage_b
 run_name: beta30
