@@ -1,0 +1,47 @@
+run stage_b/ft-heldout-beta300: 행 810,000 = 학습 531,441 + holdout 278,559 / mode=holdout / device=cuda
+[model] warm start: runs/stage_b/heldout-thickness-beta0/model.pt (출처 val MAE 4.0612 nm, best epoch 28) / 분할 일치 확인
+[model] 물리 손실 beta 300 (워밍업 300 스텝) / 동결 디코더 runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt (자유도 7, Stage A RMSE 0.009573, 위반율 9.9938%)
+[model] epoch   1/40  train_l1 2.6614  val_mae 4.2662  train_phys 0.038434  val_phys 0.048192  beta 300  lr 9.98e-05  14.4s *
+[model] epoch   2/40  train_l1 2.6694  val_mae 4.2648  train_phys 0.035652  val_phys 0.046621  beta 300  lr 9.94e-05  14.5s *
+[model] epoch   3/40  train_l1 2.6837  val_mae 4.2802  train_phys 0.034555  val_phys 0.045966  beta 300  lr 9.86e-05  14.5s
+[model] epoch   4/40  train_l1 2.6944  val_mae 4.2662  train_phys 0.033774  val_phys 0.044819  beta 300  lr 9.76e-05  14.5s
+[model] epoch   5/40  train_l1 2.6944  val_mae 4.3549  train_phys 0.033182  val_phys 0.046636  beta 300  lr 9.62e-05  14.5s
+[model] epoch   6/40  train_l1 2.6904  val_mae 4.3187  train_phys 0.032538  val_phys 0.044176  beta 300  lr 9.46e-05  14.5s
+[model] epoch   7/40  train_l1 2.6959  val_mae 4.3288  train_phys 0.032209  val_phys 0.044088  beta 300  lr 9.26e-05  14.6s
+[model] epoch   8/40  train_l1 2.6913  val_mae 4.2733  train_phys 0.031707  val_phys 0.044052  beta 300  lr 9.05e-05  14.5s
+[model] epoch   9/40  train_l1 2.6824  val_mae 4.2691  train_phys 0.031256  val_phys 0.043575  beta 300  lr 8.80e-05  14.5s
+[model] epoch  10/40  train_l1 2.6809  val_mae 4.2632  train_phys 0.030955  val_phys 0.043609  beta 300  lr 8.54e-05  14.5s *
+[model] epoch  11/40  train_l1 2.6734  val_mae 4.2282  train_phys 0.030719  val_phys 0.042067  beta 300  lr 8.25e-05  14.5s *
+[model] epoch  12/40  train_l1 2.6651  val_mae 4.2367  train_phys 0.030277  val_phys 0.042364  beta 300  lr 7.94e-05  14.5s
+[model] epoch  13/40  train_l1 2.6597  val_mae 4.2421  train_phys 0.030006  val_phys 0.041812  beta 300  lr 7.61e-05  14.6s
+[model] epoch  14/40  train_l1 2.6545  val_mae 4.2150  train_phys 0.029706  val_phys 0.042088  beta 300  lr 7.27e-05  14.4s *
+[model] epoch  15/40  train_l1 2.6474  val_mae 4.2454  train_phys 0.029438  val_phys 0.041596  beta 300  lr 6.91e-05  14.5s
+[model] epoch  16/40  train_l1 2.6381  val_mae 4.1963  train_phys 0.029143  val_phys 0.041937  beta 300  lr 6.55e-05  14.5s *
+[model] epoch  17/40  train_l1 2.6250  val_mae 4.1995  train_phys 0.028878  val_phys 0.041174  beta 300  lr 6.17e-05  14.5s
+[model] epoch  18/40  train_l1 2.6173  val_mae 4.1967  train_phys 0.028681  val_phys 0.041054  beta 300  lr 5.78e-05  14.5s
+[model] epoch  19/40  train_l1 2.6094  val_mae 4.1722  train_phys 0.028356  val_phys 0.040885  beta 300  lr 5.39e-05  14.5s *
+[model] epoch  20/40  train_l1 2.6011  val_mae 4.1756  train_phys 0.028098  val_phys 0.040486  beta 300  lr 5.00e-05  14.5s
+[model] epoch  21/40  train_l1 2.5963  val_mae 4.2224  train_phys 0.027909  val_phys 0.040715  beta 300  lr 4.61e-05  14.4s
+[model] epoch  22/40  train_l1 2.5859  val_mae 4.1726  train_phys 0.027721  val_phys 0.040461  beta 300  lr 4.22e-05  14.6s
+[model] epoch  23/40  train_l1 2.5767  val_mae 4.1715  train_phys 0.027512  val_phys 0.040576  beta 300  lr 3.83e-05  14.5s *
+[model] epoch  24/40  train_l1 2.5732  val_mae 4.1344  train_phys 0.027277  val_phys 0.040059  beta 300  lr 3.45e-05  14.6s *
+[model] epoch  25/40  train_l1 2.5632  val_mae 4.1604  train_phys 0.027097  val_phys 0.039982  beta 300  lr 3.09e-05  14.5s
+[model] epoch  26/40  train_l1 2.5547  val_mae 4.1660  train_phys 0.026922  val_phys 0.040345  beta 300  lr 2.73e-05  14.6s
+[model] epoch  27/40  train_l1 2.5538  val_mae 4.1641  train_phys 0.026825  val_phys 0.039900  beta 300  lr 2.39e-05  14.5s
+[model] epoch  28/40  train_l1 2.5439  val_mae 4.1310  train_phys 0.026604  val_phys 0.039700  beta 300  lr 2.06e-05  14.5s *
+[model] epoch  29/40  train_l1 2.5428  val_mae 4.1367  train_phys 0.026498  val_phys 0.039599  beta 300  lr 1.75e-05  14.5s
+[model] epoch  30/40  train_l1 2.5334  val_mae 4.1395  train_phys 0.026325  val_phys 0.039553  beta 300  lr 1.46e-05  14.5s
+[model] epoch  31/40  train_l1 2.5247  val_mae 4.1258  train_phys 0.026145  val_phys 0.039508  beta 300  lr 1.20e-05  14.6s *
+[model] epoch  32/40  train_l1 2.5249  val_mae 4.1116  train_phys 0.026097  val_phys 0.039323  beta 300  lr 9.55e-06  14.5s *
+[model] epoch  33/40  train_l1 2.5205  val_mae 4.1216  train_phys 0.026002  val_phys 0.039378  beta 300  lr 7.37e-06  14.5s
+[model] epoch  34/40  train_l1 2.5159  val_mae 4.1270  train_phys 0.025905  val_phys 0.039422  beta 300  lr 5.45e-06  14.5s
+[model] epoch  35/40  train_l1 2.5137  val_mae 4.1255  train_phys 0.025798  val_phys 0.039323  beta 300  lr 3.81e-06  14.5s
+[model] epoch  36/40  train_l1 2.5100  val_mae 4.1139  train_phys 0.025763  val_phys 0.039288  beta 300  lr 2.45e-06  14.5s
+[model] epoch  37/40  train_l1 2.5063  val_mae 4.1235  train_phys 0.025657  val_phys 0.039258  beta 300  lr 1.38e-06  14.6s
+[model] epoch  38/40  train_l1 2.5062  val_mae 4.1125  train_phys 0.025639  val_phys 0.039260  beta 300  lr 6.16e-07  14.6s
+[model] epoch  39/40  train_l1 2.5065  val_mae 4.1283  train_phys 0.025636  val_phys 0.039380  beta 300  lr 1.54e-07  14.6s
+[model] epoch  40/40  train_l1 2.5026  val_mae 4.1186  train_phys 0.025603  val_phys 0.039336  beta 300  lr 0.00e+00  14.6s
+
+[model] holdout MAE 4.1116 nm  (layer_1=2.464  layer_2=6.011  layer_3=4.394  layer_4=3.578) (best epoch 32)
+
+산출물: /content/FringeNet/runs/stage_b/ft-heldout-beta300/ (metrics.json, train.log, model.pt)
