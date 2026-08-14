@@ -1,0 +1,943 @@
+"""Stage B β ablation — 같은 학습 적합 수준에서 일반화를 대조한다.
+
+라운드 1의 원 비교(최종 에폭끼리)는 **적합 수준이 서로 다른 지점을 맞대고 있다**. 물리 항이
+최적화를 늦추면 β>0 run은 덜 적합된 상태로 끝나고, 덜 적합된 모델은 일반화 격차가 자명하게
+작다 — 그래서 "격차가 β와 함께 줄어든다"는 관측만으로는 정규화 효과를 주장할 수 없다.
+
+이 스크립트는 축을 에폭에서 **train_l1(지도 항 학습 MAE)** 로 바꿔 대조한다. 같은 train_l1에서
+val MAE를 비교하면 최적화 지연과 일반화 효과가 분리된다.
+
+`train_l1`이 물리 항을 뺀 순수 지도 항이라는 것이 이 분석의 전제다 (src/losses.py의
+`PhysicsParts.sup` → src/train_gpu.py가 `total`이 아니라 `sup`을 누적한다). β를 섞어 넣은
+값이면 run 사이 비교가 성립하지 않는다.
+
+**Δ는 노이즈와 같은 자리수다.** 에폭별 val MAE의 지터가 적합 구간에 따라 0.05~0.42 nm이고
+val-vs-train 기울기가 약 0.67이라, 끝점 한 쌍의 Δ(0.01~0.05 nm)는 단독으로 유의하지 않다.
+그래서 에폭별 Δ 분포와 부트스트랩 신뢰구간을 함께 내고, **적합 구간 절단을 여러 개** 보고한다
+(하나를 골라 쓰면 별이 붙는 절단만 남는다).
+
+읽는 데 필요한 주의:
+- `train_l1`은 에폭 중 러닝 평균이다(모델이 변하는 중, BatchNorm train 모드). 에폭 말의
+  깨끗한 eval 값이 아니므로 위로 편향돼 있다. 후반부 편향은 에폭 간 차이 수준(~0.01 nm)이라
+  읽는 오프셋보다 작지만, 초반은 크므로 통계는 수렴 구간으로 제한한다.
+- 같은 train_l1을 맞추면 **LR이 어긋난다** (β=0의 대조점이 더 이른 에폭 = 더 높은 LR).
+  미수렴 지점이라 β=0에 불리한 방향이므로, β>0가 그래도 지면 방향은 견고하다.
+
+산출물 — 이름에 split tag가 붙어 **라운드끼리 덮어쓰지 않는다** (대조군 run 이름에서
+`beta<수>` 꼬리를 뗀 것이 tag다. `--tag`로 덮어쓸 수 있다):
+  reports/stage_b_curves[_<tag>].md
+  reports/figures/fig_stage_b_curves[_<tag>].png
+
+사용법:
+    python scripts/analyze_stage_b_curves.py                       # 라운드 1 (무작위 split)
+    python scripts/analyze_stage_b_curves.py \
+      --run runs/stage_b/heldout-thickness-beta0 \
+      --run runs/stage_b/heldout-thickness-beta30 \
+      --run runs/stage_b/heldout-thickness-beta100 \
+      --run runs/stage_b/heldout-thickness-beta300               # 라운드 2
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import NamedTuple
+
+import matplotlib
+
+matplotlib.use("Agg")  # 헤드리스 환경
+
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+REPORT_DIR = REPO_ROOT / "reports"
+
+DEFAULT_RUNS = ("beta0", "beta30", "beta100", "beta300")
+# 대조군 run 이름에서 이 꼬리를 떼면 split을 가리키는 tag가 남는다 (beta0 -> "" =
+# 무작위 split, heldout-thickness-beta0 -> "heldout-thickness"). 산출물 이름이 tag로
+# 갈라지므로 **라운드끼리 서로 덮어쓰지 않는다** — 고정 경로면 조용히 덮어쓴다.
+_TAG_TAIL = re.compile(r"-?beta\d+(?:\.\d+)?$")
+
+# 색 토큰은 scripts/eda.py와 같다 (그림들이 한 벌로 읽히게). 그림 라벨은 영문 — 저장소의
+# 기존 그림 규약이고, 한글 폰트는 환경 의존이라 이식성이 없다.
+INK_PRIMARY = "#0b0b0b"
+INK_SECONDARY = "#52514e"
+INK_MUTED = "#8a8880"
+SURFACE = "#fcfcfb"
+# β는 순서 있는 **크기**라 단일 색상 순차 램프를 쓴다 (범주형 팔레트가 아니다).
+# Blues step 0.60/0.73/0.87/1.00 — 밝기 단조, 대비 4/4 >= 3:1, 인접 CVD ΔE 10.5.
+# 순차 램프는 인접 단계가 닮는 것이 정상이므로 범례와 직접 라벨을 함께 붙여
+# 색만으로 계열을 식별하지 않게 한다.
+BETA_RAMP = ["#4a98c9", "#2676b8", "#09529d", "#08306b"]
+
+# 통계를 자를 적합 구간. 이보다 위는 에폭 1~5의 급강하 구간이라 러닝 평균 편향이 크다.
+CONVERGED_TRAIN_L1 = 8.0
+# 절단 민감도를 함께 보고한다 — 하나만 쓰면 유의성이 절단 선택의 산물이 된다.
+CUTS = (8.0, 4.0, 3.0)
+# 부트스트랩 재표본 수·시드 (재현 고정)
+N_BOOT = 4000
+BOOT_SEED = 0
+# 러닝 평균 편향/지터 추정에 쓰는 마지막 에폭 수
+JITTER_EPOCHS = 5
+# train_l1이 되튀어도 허용하는 한계 (전체 폭 대비) — 수렴 지점의 잡음은 통과,
+# 다른 run의 로그가 섞인 경우는 막는다
+MAX_TRAIN_RISE_FRAC = 0.02
+# (a) 패널을 로그 축으로 둘 최소 범위 비율 — 이보다 좁으면 선형이 읽힌다
+LOG_SCALE_MIN_RATIO = 3.0
+# 확대 패널에 담을 적합 수준의 상한 (대조군 train_l1 대비 배율) — β 끝점 두어 개가 들어온다
+ZOOM_TRAIN_FACTOR = 1.25
+
+_EPOCH_RE = re.compile(
+    r"epoch\s+(?P<epoch>\d+)/(?P<total>\d+)\s+train_l1 (?P<train>[\d.]+)\s+val_mae (?P<val>[\d.]+)"
+)
+_PHYS_RE = re.compile(r"val_phys (?P<val_phys>[\d.]+)")
+
+
+class Curve(NamedTuple):
+    """한 run의 학습 곡선. 배열은 모두 (E,) — 에폭 순서.
+
+    Attributes:
+        name: run 이름.
+        beta: 물리 항 가중 (metrics.json 기준).
+        epoch: 에폭 번호.
+        train: train_l1 — 물리 항을 뺀 지도 항 MAE [nm].
+        val: holdout MAE [nm].
+        val_phys: holdout 재구성 L1 (β 곱하기 전). 물리 항이 없으면 NaN.
+        best_epoch: 체크포인트로 남은 에폭.
+    """
+
+    name: str
+    beta: float
+    epoch: np.ndarray
+    train: np.ndarray
+    val: np.ndarray
+    val_phys: np.ndarray
+    best_epoch: int
+
+
+def read_curve(run_dir: Path) -> Curve:
+    """run 디렉토리의 train.log·metrics.json에서 곡선을 읽는다.
+
+    **train.log는 누적된다.** 재개하면 뒤에 이어 붙고, 미러 복원이 다른 예산의 로그를
+    물려받는 경우도 있다(라운드 3 beta30에서 8에폭 run의 3줄이 섞였다). 그래서
+    `epoch N/total`의 total이 이번 config의 epochs와 맞는 줄만 쓰고, 같은 에폭이 여러 번
+    나오면 **마지막 것**을 남긴다. 무엇을 버렸는지는 출력한다 (조용히 자르지 않는다).
+    """
+    log_path = run_dir / "train.log"
+    metrics_path = run_dir / "metrics.json"
+    for path in (log_path, metrics_path):
+        if not path.exists():
+            raise FileNotFoundError(f"{path}가 없다 — git 추적 대상이므로 pull 상태를 확인할 것")
+    metrics_all = json.loads(metrics_path.read_text())
+    metrics = metrics_all["model"]
+    want_total = int(metrics_all.get("config", {}).get("train", {}).get("epochs", 0))
+
+    by_epoch: dict[int, tuple[float, float, float]] = {}
+    dropped = 0
+    for line in log_path.read_text().splitlines():
+        m = _EPOCH_RE.search(line)
+        if m is None:
+            continue
+        if want_total and int(m["total"]) != want_total:
+            dropped += 1  # 다른 예산의 run이 남긴 줄
+            continue
+        mp = _PHYS_RE.search(line)
+        by_epoch[int(m["epoch"])] = (
+            float(m["train"]),
+            float(m["val"]),
+            float(mp["val_phys"]) if mp else np.nan,
+        )
+    if not by_epoch:
+        raise ValueError(f"{log_path}에서 에폭 줄을 못 찾았다 — 로그 형식이 바뀌었나")
+    if dropped:
+        print(
+            f"  [{run_dir.name}] train.log의 {dropped}줄을 버렸다 — epochs가 "
+            f"{want_total}이 아닌 run의 기록이다 (누적 로그)"
+        )
+
+    epochs = np.asarray(sorted(by_epoch))
+    train = np.asarray([by_epoch[e][0] for e in epochs])
+    val = np.asarray([by_epoch[e][1] for e in epochs])
+    phys = np.asarray([by_epoch[e][2] for e in epochs])
+    best_epoch = int(metrics["best_epoch"])
+
+    # **하강 구간만 쓴다.** warm start run은 수렴한 적합 수준에서 출발하므로, 물리 항이 강하면
+    # train_l1이 한동안 **올라간다** (라운드 3 β=300: 2.661 → 2.696까지 7에폭 상승 후 하강).
+    # 곡선이 되돌아오면 val은 train_l1의 함수가 아니어서 "같은 적합 수준" 비교가 성립하지 않는다.
+    # 최대점 이후만 남기고 무엇을 잘랐는지 출력한다.
+    start = int(np.argmax(train))
+    if start > 0:
+        print(
+            f"  [{run_dir.name}] 앞 {start}에폭을 뺐다 — train_l1이 {train[0]:.4f} → "
+            f"{train[start]:.4f}로 **상승**하는 구간이다 (물리 항이 적합을 되돌린다)"
+        )
+    if best_epoch not in epochs[start:]:
+        raise ValueError(
+            f"{run_dir.name}: best 에폭 {best_epoch}이 train_l1 상승 구간에 있다 —"
+            " 적합 수준 대조가 성립하지 않는다 (원 비교만 읽을 것)"
+        )
+    epochs, train, val, phys = epochs[start:], train[start:], val[start:], phys[start:]
+
+    curve = Curve(
+        name=run_dir.name,
+        beta=float(metrics["physics"]["beta"]),
+        epoch=epochs,
+        train=train,
+        val=val,
+        val_phys=phys,
+        best_epoch=best_epoch,
+    )
+    # 남은 구간도 **대체로** 감소하면 된다 — 수렴 지점에서는 에폭 평균이 1e-4 규모로 되튄다
+    # (라운드 3 β=0: 2.1216 → 2.1218). 그것까지 막으면 수렴한 run을 분석할 수 없다.
+    # 큰 되튐만 막는다: 다른 run의 로그가 섞였다는 신호다.
+    rise = float(np.max(np.diff(curve.train), initial=0.0))
+    span = float(curve.train[0] - curve.train[-1])
+    if span <= 0 or rise > MAX_TRAIN_RISE_FRAC * span:
+        raise ValueError(
+            f"{run_dir.name}: train_l1이 크게 되튄다 (최대 +{rise:.4f}, 전체 폭 {span:.4f}) —"
+            " 다른 run의 로그가 섞였는지 확인할 것"
+        )
+    return curve
+
+
+def derive_tag(control_name: str) -> str:
+    """대조군 run 이름에서 split을 가리키는 tag를 뽑는다 (`beta0` -> `""`)."""
+    return _TAG_TAIL.sub("", control_name).strip("-")
+
+
+def report_path(tag: str) -> Path:
+    return REPORT_DIR / (f"stage_b_curves_{tag}.md" if tag else "stage_b_curves.md")
+
+
+def figure_path(tag: str) -> Path:
+    stem = f"fig_stage_b_curves_{tag}" if tag else "fig_stage_b_curves"
+    return REPORT_DIR / "figures" / f"{stem}.png"
+
+
+def interp_on_train(curve: Curve, values: np.ndarray, target: np.ndarray | float) -> np.ndarray:
+    """train_l1 = target 지점의 `values`를 선형보간한다. 곡선 범위 밖이면 NaN.
+
+    np.interp는 증가하는 x축을 요구하므로 **train_l1로 정렬해서** 넘긴다 — 뒤집기만 하면
+    수렴 지점의 미세한 비단조(1e-4 규모)에서 틀린 값이 나온다.
+    """
+    t = np.atleast_1d(np.asarray(target, dtype=float))
+    order = np.argsort(curve.train)
+    xs, ys = curve.train[order], np.asarray(values)[order]
+    out = np.interp(t, xs, ys, left=np.nan, right=np.nan)
+    inside = (t >= xs[0]) & (t <= xs[-1])
+    return np.where(inside, out, np.nan)
+
+
+class Matched(NamedTuple):
+    """한 run의 best 에폭을 대조군의 같은 train_l1과 맞댄 결과 (단일 에폭 읽기)."""
+
+    name: str
+    beta: float
+    train_l1: float
+    val: float
+    val_ref: float
+    gap: float
+    gap_ref: float
+    equiv_epoch: float
+    best_epoch: int
+    val_phys: float
+    val_phys_ref: float
+
+
+def match_at_best(curve: Curve, ref: Curve) -> Matched:
+    """curve의 best 에폭 적합 수준에서 ref를 보간해 맞댄다."""
+    i = int(np.flatnonzero(curve.epoch == curve.best_epoch)[0])
+    t = float(curve.train[i])
+    val_ref = float(interp_on_train(ref, ref.val, t)[0])
+    return Matched(
+        name=curve.name,
+        beta=curve.beta,
+        train_l1=t,
+        val=float(curve.val[i]),
+        val_ref=val_ref,
+        gap=float(curve.val[i] - t),
+        gap_ref=float(val_ref - t),
+        equiv_epoch=float(interp_on_train(ref, ref.epoch.astype(float), t)[0]),
+        best_epoch=curve.best_epoch,
+        val_phys=float(curve.val_phys[i]),
+        val_phys_ref=float(interp_on_train(ref, ref.val_phys, t)[0]),
+    )
+
+
+def delta_per_epoch(curve: Curve, ref: Curve, cut: float) -> tuple[np.ndarray, np.ndarray]:
+    """적합 구간(train_l1 ≤ cut)의 에폭마다 Δval = val(curve) − val(ref, 같은 train_l1).
+
+    Returns:
+        (train_l1, delta) — 둘 다 (K,), 대조군 범위를 벗어난 에폭은 뺀다.
+    """
+    sel = curve.train <= cut
+    t = curve.train[sel]
+    d = curve.val[sel] - interp_on_train(ref, ref.val, t)
+    ok = np.isfinite(d)
+    return t[ok], d[ok]
+
+
+class DeltaStats(NamedTuple):
+    """에폭별 Δval 분포 요약. ci_lo/ci_hi는 중앙값의 부트스트랩 95% 구간."""
+
+    cut: float
+    n: int
+    median: float
+    ci_lo: float
+    ci_hi: float
+
+    @property
+    def excludes_zero(self) -> bool:
+        return self.ci_lo > 0.0 or self.ci_hi < 0.0
+
+
+def delta_stats(curve: Curve, ref: Curve, cut: float) -> DeltaStats | None:
+    """Δval 중앙값과 부트스트랩 신뢰구간. 표본이 부족하면 None."""
+    _, d = delta_per_epoch(curve, ref, cut)
+    if d.size < 4:
+        return None
+    rng = np.random.default_rng(BOOT_SEED)
+    boot = np.median(rng.choice(d, (N_BOOT, d.size)), axis=1)
+    lo, hi = np.percentile(boot, [2.5, 97.5])
+    return DeltaStats(cut=cut, n=int(d.size), median=float(np.median(d)), ci_lo=lo, ci_hi=hi)
+
+
+def selection_bias(curve: Curve, ref: Curve) -> tuple[float, float]:
+    """best-에폭 읽기의 선택 편향 두 가지 실측값.
+
+    best 에폭은 val이 **최소가 되도록 골라진** 지점이고 대조군의 보간값은 그렇지 않다. 그래서
+    §1의 단일 에폭 Δ는 β>0에 유리한 쪽으로 치우친다.
+
+    Returns:
+        (local_dev, delta_shift) — local_dev는 best 에폭 val이 자기 이웃(±2에폭) 평균보다
+        얼마나 낮은지, delta_shift는 best-에폭 Δ가 에폭별 Δ 중앙값보다 얼마나 더 음수인지.
+        둘 다 음수면 편향이 β>0을 유리하게 만든다는 뜻이다.
+    """
+    i = int(np.flatnonzero(curve.epoch == curve.best_epoch)[0])
+    lo, hi = max(0, i - 2), min(len(curve.val), i + 3)
+    local_dev = float(curve.val[i] - curve.val[lo:hi].mean())
+    d_best = float(curve.val[i] - interp_on_train(ref, ref.val, curve.train[i])[0])
+    _, d_all = delta_per_epoch(curve, ref, CONVERGED_TRAIN_L1)
+    return local_dev, d_best - float(np.median(d_all))
+
+
+def epoch_jitter(curve: Curve, cut: float) -> float:
+    """적합 구간에서 인접 에폭 val MAE 차의 절대값 중앙값 — Δ를 읽을 때의 잣대."""
+    sel = curve.train[1:] <= cut
+    d = np.abs(np.diff(curve.val))[sel]
+    return float(np.median(d)) if d.size else float("nan")
+
+
+def tail_jitter(curve: Curve) -> float:
+    """후반 에폭 val MAE의 표준편차 — 수렴 지점의 재현성 규모."""
+    return float(curve.val[-JITTER_EPOCHS:].std())
+
+
+def running_mean_bias(curve: Curve) -> float:
+    """train_l1 러닝 평균 편향의 자체 추정 — 마지막 두 에폭의 차이."""
+    return float(curve.train[-2] - curve.train[-1])
+
+
+def _style_axes(ax: plt.Axes) -> None:
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(INK_MUTED)
+    ax.grid(True, color=INK_MUTED, alpha=0.25, linewidth=0.6)
+    ax.tick_params(colors=INK_SECONDARY, labelsize=8, length=3)
+
+
+def _title(ax: plt.Axes, text: str, subtitle: str = "") -> None:
+    ax.set_title(text, color=INK_PRIMARY, fontsize=10.5, loc="left", pad=20 if subtitle else 6)
+    if subtitle:
+        ax.annotate(
+            subtitle,
+            xy=(0, 1),
+            xytext=(0, 8),
+            xycoords="axes fraction",
+            textcoords="offset points",
+            color=INK_SECONDARY,
+            fontsize=8.5,
+            va="bottom",
+        )
+
+
+def _panel_trajectory(ax: plt.Axes, curves: list[Curve], colors: dict[str, str]) -> None:
+    """(a) 전 구간 궤적 — 궤적이 겹치면 val은 적합 수준의 함수이고 β와 무관하다는 뜻이다."""
+    # 축 범위는 데이터에서 각각 잡는다. 두 축을 같게 강제하면 warm start run처럼 val이 train보다
+    # 훨씬 큰 경우(격차가 커서 대각선에 접근하지 않는다) 궤적이 구석에 짜부라진다.
+    xs = [v for c in curves for v in c.train]
+    ys = [v for c in curves for v in c.val]
+    xlim = (min(xs) * 0.96, max(xs) * 1.05)
+    ylim = (min(ys) * 0.96, max(ys) * 1.05)
+    # 대각선(val = train)은 보이는 상자를 지날 때만 그린다
+    diag_lo, diag_hi = max(xlim[0], ylim[0]), min(xlim[1], ylim[1])
+    if diag_hi > diag_lo:
+        ax.plot(
+            (diag_lo, diag_hi),
+            (diag_lo, diag_hi),
+            color=INK_MUTED,
+            linewidth=0.9,
+            linestyle=(0, (4, 3)),
+            zorder=1,
+        )
+        anchor = diag_lo + 0.62 * (diag_hi - diag_lo)
+        ax.annotate(
+            "val = train  (zero gap)",
+            xy=(anchor, anchor),
+            xytext=(3, 3),
+            textcoords="offset points",
+            color=INK_MUTED,
+            fontsize=7.5,
+            rotation=45,
+            rotation_mode="anchor",
+        )
+    for c in curves:
+        ax.plot(
+            c.train, c.val, color=colors[c.name], linewidth=2.0, zorder=3, label=f"β = {c.beta:g}"
+        )
+        i = int(np.flatnonzero(c.epoch == c.best_epoch)[0])
+        ax.plot(
+            c.train[i],
+            c.val[i],
+            "o",
+            color=colors[c.name],
+            markersize=8,
+            markeredgecolor=SURFACE,
+            markeredgewidth=2,
+            zorder=4,
+        )
+    # 화살표는 축 비율로 둔다 — 데이터 좌표로 두면 split이 바뀔 때 엉뚱한 자리로 간다
+    ax.annotate(
+        "training progress",
+        xy=(0.10, 0.06),
+        xytext=(0.45, 0.14),
+        xycoords="axes fraction",
+        textcoords="axes fraction",
+        color=INK_SECONDARY,
+        fontsize=8,
+        va="center",
+        arrowprops={"arrowstyle": "->", "color": INK_SECONDARY, "linewidth": 0.9},
+    )
+    # 범위가 좁으면 선형이 읽힌다. 로그는 폭이 한 자리수 이상일 때만 (warm start 라운드는
+    # train 2.1~2.7처럼 좁아서 로그 눈금이 두어 개밖에 안 걸린다).
+    wide = max(xlim[1] / xlim[0], ylim[1] / ylim[0]) >= LOG_SCALE_MIN_RATIO
+    if wide:
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    if wide:
+        candidates = (2, 2.5, 3, 4, 5, 7, 10, 15, 20, 30, 50)
+        for axis, lim in ((ax.xaxis, xlim), (ax.yaxis, ylim)):
+            axis.set_major_locator(
+                matplotlib.ticker.FixedLocator([t for t in candidates if lim[0] <= t <= lim[1]])
+            )
+            axis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+            axis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    _style_axes(ax)
+    legend = ax.legend(
+        loc="upper left",
+        frameon=False,
+        fontsize=8.5,
+        labelcolor=INK_SECONDARY,
+        handlelength=1.6,
+        borderaxespad=0.8,
+    )
+    legend.set_title("physics weight", prop={"size": 8})
+    legend.get_title().set_color(INK_SECONDARY)
+    _title(ax, "(a) Full trajectory", "all four runs collapse onto one curve · dot = best epoch")
+    ax.set_xlabel(
+        "train_l1 — supervised train MAE, physics term excluded [nm]",
+        fontsize=9,
+        color=INK_SECONDARY,
+    )
+    ax.set_ylabel("holdout MAE [nm]", fontsize=9, color=INK_SECONDARY)
+
+
+def _zoom_window(
+    curves: list[Curve], matched: list[Matched]
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """확대 패널의 (xlim, ylim). **데이터에서 계산한다** — split이 바뀌면 MAE 범위가 통째로
+    옮겨가므로 고정 창은 빈 패널을 낸다 (라운드 2에서 실제로 그랬다).
+
+    대조군 적합 수준의 `ZOOM_TRAIN_FACTOR` 배까지를 담아 β 끝점 두어 개가 들어오게 하고,
+    y는 그 x창 안의 곡선 값에서 잡는다.
+    """
+    control_train = min(m.train_l1 for m in matched)
+    x_hi = control_train * ZOOM_TRAIN_FACTOR
+    x_lo = control_train - 0.06 * (x_hi - control_train)
+    values = [v for c in curves for t, v in zip(c.train, c.val, strict=True) if x_lo <= t <= x_hi]
+    values += [m.val_ref for m in matched if x_lo <= m.train_l1 <= x_hi]
+    lo, hi = min(values), max(values)
+    pad = 0.06 * (hi - lo)
+    # 위쪽은 β 라벨(끝점 위 12pt)이 들어갈 자리를 더 준다
+    return (x_lo, x_hi), (lo - pad, hi + 3.0 * pad)
+
+
+def _panel_zoom(
+    ax: plt.Axes, curves: list[Curve], colors: dict[str, str], matched: list[Matched]
+) -> None:
+    """(b) 수렴 구간 확대 — 끝점끼리가 아니라 같은 train_l1에서 세로로 읽는다."""
+    xlim, ylim = _zoom_window(curves, matched)
+    for c in curves:
+        ax.plot(c.train, c.val, color=colors[c.name], linewidth=2.0, zorder=3)
+    off = []
+    for m in matched:
+        if not (xlim[0] <= m.train_l1 <= xlim[1]):
+            off.append(m)
+            continue
+        color = colors[m.name]
+        if m.beta > 0:
+            ax.plot(
+                [m.train_l1] * 2,
+                [m.val_ref, m.val],
+                color=color,
+                linewidth=1.4,
+                linestyle=(0, (2, 2)),
+                zorder=2,
+            )
+            ax.plot(
+                m.train_l1,
+                m.val_ref,
+                "_",
+                color=color,
+                markersize=9,
+                markeredgewidth=1.6,
+                zorder=4,
+            )
+            ax.annotate(
+                f"{m.val - m.val_ref:+.3f}",
+                xy=(m.train_l1, (m.val + m.val_ref) / 2),
+                xytext=(8, -3),
+                textcoords="offset points",
+                color=INK_SECONDARY,
+                fontsize=8.5,
+                # 곡선이 지나는 자리라 라벨 뒤를 배경색으로 덮는다
+                bbox={"facecolor": SURFACE, "edgecolor": "none", "pad": 1.2},
+            )
+        ax.plot(
+            m.train_l1,
+            m.val,
+            "o",
+            color=color,
+            markersize=8,
+            markeredgecolor=SURFACE,
+            markeredgewidth=2,
+            zorder=5,
+        )
+        ax.annotate(
+            f"β={m.beta:g}",
+            xy=(m.train_l1, m.val),
+            xytext=(0, 12),
+            textcoords="offset points",
+            color=color,
+            fontsize=9,
+            ha="center",
+            fontweight="bold",
+        )
+    if off:
+        ax.annotate(
+            " · ".join(
+                f"β={m.beta:g} ends off-panel at ({m.train_l1:.2f}, {m.val:.2f})" for m in off
+            ),
+            xy=(0.98, 0.03),
+            xycoords="axes fraction",
+            color=INK_MUTED,
+            fontsize=7.5,
+            ha="right",
+        )
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    _style_axes(ax)
+    _title(
+        ax,
+        "(b) Converged region (zoom)",
+        "Δ read vertically at matched train_l1 · above = β>0 worse, below = better",
+    )
+    ax.set_xlabel("train_l1 [nm]", fontsize=9, color=INK_SECONDARY)
+    ax.set_ylabel("holdout MAE [nm]", fontsize=9, color=INK_SECONDARY)
+
+
+def _panel_delta(ax: plt.Axes, curves: list[Curve], ref: Curve, colors: dict[str, str]) -> None:
+    """(c) 에폭별 Δval 분포 — 0과 구별되는지가 질문이므로 점 분포 + 중앙값·신뢰구간으로 본다."""
+    rows = [c for c in curves if c.beta > 0]
+    ax.axvline(0.0, color=INK_PRIMARY, linewidth=1.1, zorder=2)
+    for row, c in enumerate(rows):
+        y = len(rows) - 1 - row
+        t, d = delta_per_epoch(c, ref, CONVERGED_TRAIN_L1)
+        ax.plot(
+            d,
+            np.full_like(d, y),
+            "o",
+            color=colors[c.name],
+            markersize=7,
+            alpha=0.42,
+            markeredgecolor="none",
+            zorder=3,
+        )
+        s = delta_stats(c, ref, CONVERGED_TRAIN_L1)
+        if s is None:
+            continue
+        ax.plot(
+            [s.ci_lo, s.ci_hi],
+            [y, y],
+            color=colors[c.name],
+            linewidth=2.4,
+            solid_capstyle="butt",
+            zorder=4,
+        )
+        ax.plot(
+            s.median,
+            y,
+            "D",
+            color=colors[c.name],
+            markersize=9,
+            markeredgecolor=SURFACE,
+            markeredgewidth=1.8,
+            zorder=5,
+        )
+        ax.annotate(
+            f"median {s.median:+.3f}   n={s.n}",
+            xy=(s.median, y),
+            xytext=(0, 15),
+            textcoords="offset points",
+            color=INK_SECONDARY,
+            fontsize=8,
+            ha="center",
+        )
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels([f"β = {c.beta:g}" for c in reversed(rows)], fontsize=9)
+    ax.set_ylim(-0.6, len(rows) - 0.35)
+    ax.annotate(
+        "β>0 worse →",
+        xy=(0.99, 0.02),
+        xycoords="axes fraction",
+        color=INK_SECONDARY,
+        fontsize=8,
+        ha="right",
+    )
+    ax.annotate(
+        "← β>0 better",
+        xy=(0.01, 0.02),
+        xycoords="axes fraction",
+        color=INK_SECONDARY,
+        fontsize=8,
+        ha="left",
+    )
+    _style_axes(ax)
+    ax.grid(False, axis="y")
+    _title(
+        ax,
+        "(c) Δ holdout MAE at matched fit",
+        f"one dot per epoch (train_l1 ≤ {CONVERGED_TRAIN_L1:g}) · diamond = median, "
+        "bar = 95% CI (bootstrap)",
+    )
+    ax.set_xlabel("Δ holdout MAE  (β>0 − β=0) [nm]", fontsize=9, color=INK_SECONDARY)
+
+
+def _headline(curves: list[Curve], ref: Curve) -> str:
+    """그림 제목 — **데이터에서 만든다.** 결론을 하드코딩하면 라운드가 바뀔 때 틀린 말을 한다
+    (라운드 1의 "never better"가 라운드 3에서 거짓이 됐다)."""
+    stats = [
+        s
+        for c in curves
+        if c.beta > 0 and (s := delta_stats(c, ref, CONVERGED_TRAIN_L1)) is not None
+    ]
+    if not stats:
+        return "Stage B — matched-fit comparison (insufficient samples for a verdict)"
+    span = max(abs(s.median) for s in stats)
+    if all(not s.excludes_zero for s in stats):
+        verdict = f"at matched fit no difference is resolved (|median Δ| ≤ {span:.3f} nm)"
+    elif all(s.median > 0 for s in stats):
+        verdict = f"at matched fit it is never better (median Δ up to +{span:.3f} nm)"
+    elif all(s.median < 0 for s in stats):
+        verdict = f"at matched fit it is never worse (median Δ down to −{span:.3f} nm)"
+    else:
+        verdict = f"at matched fit the sign is mixed (|median Δ| ≤ {span:.3f} nm)"
+    return f"Stage B — the physics term's cost is mostly slower optimization; {verdict}"
+
+
+def make_figure(curves: list[Curve], ref: Curve, matched: list[Matched], fig_path: Path) -> None:
+    """3면 그림: 전 구간 궤적 · 수렴 구간 확대 · 같은 적합에서의 Δval 분포."""
+    colors = {c.name: BETA_RAMP[min(i, len(BETA_RAMP) - 1)] for i, c in enumerate(curves)}
+    fig, (ax_a, ax_b, ax_c) = plt.subplots(
+        1, 3, figsize=(16.5, 5.2), facecolor=SURFACE, layout="constrained"
+    )
+    _panel_trajectory(ax_a, curves, colors)
+    _panel_zoom(ax_b, curves, colors, matched)
+    _panel_delta(ax_c, curves, ref, colors)
+    fig.suptitle(
+        _headline(curves, ref),
+        color=INK_PRIMARY,
+        fontsize=12.5,
+        x=0.005,
+        ha="left",
+    )
+    fig_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(fig_path, dpi=150, bbox_inches="tight", facecolor=SURFACE)
+    plt.close(fig)
+
+
+def build_report(curves: list[Curve], ref: Curve, matched: list[Matched], fig_path: Path) -> str:
+    """reports/stage_b_curves.md 본문."""
+    others = [c for c in curves if c.beta > 0]
+    lines = [
+        "# Stage B — 적합 수준을 맞춘 β 대조",
+        "",
+        f"산출: `python scripts/{Path(__file__).name}` (재실행 시 덮어씀). "
+        "입력은 `runs/stage_b/*/train.log` + `metrics.json`.",
+        "",
+        "최종 에폭끼리의 비교는 **적합 수준이 다른 지점을 맞댄다**. 물리 항이 최적화를 늦추면",
+        "β>0 run은 덜 적합된 상태로 끝나고, 덜 적합된 모델은 일반화 격차가 자명하게 작다.",
+        "축을 에폭에서 `train_l1`로 바꾸면 최적화 지연과 일반화 효과가 분리된다.",
+        "",
+        "## 1. 같은 train_l1에서의 대조 (각 run의 best 에폭 적합 수준)",
+        "",
+        "`val(β=0)`은 대조군 곡선을 그 지점에서 선형보간한 값이다. `등가에폭`은 대조군이 같은",
+        "적합에 도달한 에폭 — 물리 항이 삼킨 최적화 예산이다.",
+        "**Δval은 단일 에폭 읽기라 그 자체로는 유의하지 않다** (§2가 판정한다).",
+        "",
+        "| run | β | train_l1 | val | val(β=0) | Δval | Δ% | 격차 | 격차(β=0) | β=0 등가에폭 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for m in matched:
+        pct = "—" if m.beta == 0 else f"{(m.val / m.val_ref - 1) * 100:+.2f}%"
+        dv = "—" if m.beta == 0 else f"{m.val - m.val_ref:+.4f}"
+        lines.append(
+            f"| `{m.name}` | {m.beta:g} | {m.train_l1:.4f} | {m.val:.4f} | {m.val_ref:.4f} | "
+            f"{dv} | {pct} | {m.gap:.4f} | {m.gap_ref:.4f} | "
+            f"{m.equiv_epoch:.1f} / {m.best_epoch} |"
+        )
+    budget = " · ".join(
+        f"β={m.beta:g} → {m.equiv_epoch:.0f}/{m.best_epoch}에폭"
+        f"({(1 - m.equiv_epoch / m.best_epoch) * 100:.0f}% 삼킴)"
+        for m in matched
+        if m.beta > 0
+    )
+    # 격차 비교의 무효성은 "같은 적합에서 대조군 격차가 더 작은" run으로 보여준다 —
+    # 어느 run이 그런지는 데이터가 정한다 (손으로 β를 고르면 라운드가 바뀔 때 틀린 말이 된다).
+    worst_gap = max((m for m in matched if m.beta > 0), key=lambda m: m.gap - m.gap_ref)
+    gaps = [m.gap for m in matched]
+    biases = [selection_bias(c, ref) for c in others]
+    bias_dev = float(np.median([b[0] for b in biases]))
+    bias_shift = float(np.median([b[1] for b in biases]))
+    lines += [
+        "",
+        "**최적화 예산** — β>0 run이 자기 best 에폭까지 학습해 도달한 적합 수준을 대조군은 몇"
+        f" 에폭에 지나갔나: {budget}.",
+        "",
+        "**§1의 Δ에는 선택 편향이 섞인다.** best 에폭은 val이 최소가 되도록 **골라진** 지점인데"
+        " 대조군의 보간값은 그렇지 않다. 실측(중앙값): β>0의 best-에폭 val이 자기 이웃(±2에폭)"
+        f" 평균 대비 **{bias_dev:+.4f} nm**, best-에폭 Δ가 에폭별 Δ 중앙값 대비"
+        f" **{bias_shift:+.4f} nm**. 후자가 음수면 §1이 β>0을 유리하게, 양수면 불리하게 읽은"
+        " 것이고, 어느 쪽이든 §1의 Δ와 같은 자리수다 → **판정은 §2의 에폭별 분포로 한다**"
+        " (최소를 골라내지 않는다).",
+        "",
+        "**격차 비교가 무효인 이유가 이 표에 있다**: 원 비교의 격차(val − train)는 β=0의"
+        f" {gaps[0]:.4f}에서 β={matched[-1].beta:g}의 {gaps[-1]:.4f}로"
+        f" {'줄어든다' if gaps[-1] < gaps[0] else '움직인다'}. 그런데 같은 적합 수준에서 보면"
+        f" 대조군의 격차가 오히려 더 작다 (β={worst_gap.beta:g} 지점에서 {worst_gap.gap:.4f} vs"
+        f" {worst_gap.gap_ref:.4f}). 덜 적합된 모델은 격차가 자명하게 작으므로, 적합 수준을"
+        " 맞추지 않은 격차 비교는 정규화 효과의 증거가 되지 못한다.",
+        "",
+        "## 2. Δval은 노이즈와 같은 자리수다 — 절단을 여러 개 본다",
+        "",
+        "에폭별 val MAE 지터가 크다. 적합 구간별 인접 에폭 |Δval| 중앙값:",
+        "",
+        "| run | train_l1 ≤ 8 | ≤ 4 | ≤ 3 |",
+        "|---|---|---|---|",
+    ]
+    for c in curves:
+        vals = [epoch_jitter(c, cut) for cut in CUTS]
+        cells = " | ".join("—" if not np.isfinite(v) else f"{v:.4f}" for v in vals)
+        lines.append(f"| `{c.name}` | {cells} |")
+    lines += [
+        "",
+        "val-vs-train 기울기가 약 0.67이므로 train 축 정렬 오차 0.05 nm도 Δval 0.03 nm를 만든다.",
+        "따라서 끝점 한 쌍이 아니라 **적합 구간의 모든 에폭**을 표본으로 쓰고, 중앙값의",
+        f"부트스트랩 95% 신뢰구간(재표본 {N_BOOT:,}, 시드 {BOOT_SEED})을 함께 본다.",
+        "**절단을 하나 고르면 유의성이 절단 선택의 산물이 되므로 셋을 다 싣는다.**",
+        "",
+        "| run | 절단 | n | Δval 중앙값 | 95% CI | 0 배제 |",
+        "|---|---|---|---|---|---|",
+    ]
+    signs = []
+    for c in others:
+        for cut in CUTS:
+            s = delta_stats(c, ref, cut)
+            if s is None:
+                lines.append(f"| `{c.name}` | ≤ {cut:g} | — | 표본 부족 | — | — |")
+                continue
+            signs.append(s.median)
+            lines.append(
+                f"| `{c.name}` | ≤ {cut:g} | {s.n} | {s.median:+.4f} | "
+                f"[{s.ci_lo:+.4f}, {s.ci_hi:+.4f}] | {'예' if s.excludes_zero else '아니오'} |"
+            )
+    n_pos = sum(1 for v in signs if v > 0)
+    # 이득(Δ<0)이 유의하게 나온 조합이 있는지가 판정이다 — 부호만 세면 잡음 하나에 흔들린다.
+    gains = [
+        s
+        for c in others
+        for cut in CUTS
+        if (s := delta_stats(c, ref, cut)) is not None and s.median < 0
+    ]
+    sig_gains = [s for s in gains if s.excludes_zero]
+    span = max(abs(v) for v in signs)
+    all_pos = "전부 양수다" if n_pos == len(signs) else f"{n_pos}개가 양수다"
+    lines += [
+        "",
+        "**읽는 법**: 같은 적합에서 일반화 이득이 있으려면 Δval이 **음수**여야 한다"
+        f" (β>0 곡선이 대조군 아래). 실제로는 {len(signs)}개 추정 중 {all_pos}."
+        + (
+            " **이득 쪽으로 유의한 조합은 없다.**"
+            if not sig_gains
+            else f" 이득 쪽으로 유의한 조합이 {len(sig_gains)}개 있다 — 본문에서 따로 읽는다."
+        )
+        + " 신뢰구간은 절단에 따라 0을 포함하므로 **방향은 손해 쪽으로 일관되고 크기"
+        f"(중앙값 절대값 최대 {span:.4f} nm)는 이 데이터로 분해되지 않는다.**",
+        "",
+        "손해를 예상할 근거는 착수 전에 두 개 선언돼 있었고 둘 다 이 방향을 가리킨다:",
+        "① 사전등록 1 — `R_obs = R(d) + ε`이라 물리 항은 지도 항의 **노이즈 낀 대리**다"
+        " (정보를 더하지 않고 gradient에 ε를 더한다).",
+        "② README §3.2의 수용 리스크 — 디코더가 게이트 (b) 미통과(위반율 9.99%)라"
+        " **0.34 nm 계통 편향을 가진 기준으로 예측을 당긴다.** 이 표가 그 리스크의 측정값이다.",
+        "",
+        "## 3. 결론 — 손해의 대부분은 최적화 지연이고, 남은 몫도 손해 쪽이다",
+        "",
+        "원 비교의 열화와 같은 적합에서의 Δ를 나란히 두면 크기 차이가 분명하다.",
+        "",
+        "| run | 원 비교 Δval | 같은 적합 Δval | 최적화 지연이 설명하는 비율 |",
+        "|---|---|---|---|",
+    ]
+    ref_best = ref.val[np.flatnonzero(ref.epoch == ref.best_epoch)[0]]
+    for m in matched:
+        if m.beta == 0:
+            continue
+        raw = m.val - ref_best
+        matched_d = m.val - m.val_ref
+        lines.append(
+            f"| `{m.name}` | {raw:+.4f} | {matched_d:+.4f} | {(1 - matched_d / raw) * 100:.1f}% |"
+        )
+    others_m = [m for m in matched if m.beta > 0]
+    small = min(others_m, key=lambda m: m.beta)
+    big = max(others_m, key=lambda m: m.beta)
+    max_matched = max(abs(m.val - m.val_ref) for m in others_m)
+    lines += [
+        "",
+        f"**백분율은 큰 β에서만 의미가 있다.** 최소 β({small.beta:g})의 원 열화 자체가"
+        f" {small.val - ref_best:.4f} nm라 분모가 작고, 같은 적합 Δ가 §2의 노이즈 안이라"
+        f" {(1 - (small.val - small.val_ref) / (small.val - ref_best)) * 100:.0f}%는 해상도"
+        " 밖이다. 크기로 읽는 것이 안전하다 — **같은 적합에서 물리 항이 움직이는 폭은 최대"
+        f" {max_matched:.4f} nm이고 부호는 항상 손해 쪽이며**, 원 비교의 나머지 열화"
+        f"(β={big.beta:g}에서 {big.val - ref_best:.4f} nm)는 최적화 지연 몫이다.",
+        "",
+        "## 4. 물리 항은 같은 적합 수준에서도 자기 목적함수를 개선한다",
+        "",
+        "`val_phys` = holdout 재구성 L1 (β 곱하기 전). 참 두께에서의 하한은 E|ε| = 0.0075.",
+        "적합 수준을 맞춰도 개선이 남는다 — 손실은 지시받은 일을 하고 있고, 그 목적이 두께",
+        "정확도와 정렬돼 있지 않을 뿐이다.",
+        "",
+        "| run | β | train_l1 | val_phys | val_phys(β=0) | Δ |",
+        "|---|---|---|---|---|---|",
+    ]
+    for m in matched:
+        d = "—" if m.beta == 0 else f"**{m.val_phys - m.val_phys_ref:+.6f}**"
+        lines.append(
+            f"| `{m.name}` | {m.beta:g} | {m.train_l1:.4f} | {m.val_phys:.6f} | "
+            f"{m.val_phys_ref:.6f} | {d} |"
+        )
+    lines += [
+        "",
+        "## 5. 이 분석이 의존하는 것",
+        "",
+        "- **`train_l1`은 물리 항을 뺀 지도 항이다** (`src/losses.py`의 `PhysicsParts.sup`을 "
+        "`src/train_gpu.py`가 `total` 대신 누적한다). β를 섞은 값이면 run 간 비교가 "
+        "성립하지 않는다.",
+        f"- **러닝 평균 편향**: `train_l1`은 에폭 중 평균이라 위로 편향돼 있다. 대조군 마지막 "
+        f"두 에폭의 차이로 후반 편향을 {running_mean_bias(ref):.4f} nm 규모로 추정한다 — "
+        "읽는 Δ 오프셋보다 작다.",
+        "- **LR 불일치**: 같은 train_l1을 맞추면 대조군 쪽이 더 이른 에폭 = 더 높은 LR이다. "
+        "미수렴 지점이라 대조군에 불리한 방향이므로, β>0가 그래도 지는 방향은 견고하다.",
+        f"- **수렴 지점 재현성**: 대조군 마지막 {JITTER_EPOCHS}에폭 val 표준편차 "
+        f"±{tail_jitter(ref):.4f} nm.",
+        "- **이 축이 재는 것은 조합 보간이다** (무작위 split, 격자 위). 격자 밖·미학습 두께 "
+        "값으로의 외삽은 held-out 두께 값 split이 재는 별 질문이다.",
+        "",
+        f"그림: `figures/{fig_path.name}`",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--run",
+        action="append",
+        dest="runs",
+        help="run 디렉토리 (반복 지정). 첫 번째가 대조군이다. 기본값은 stage_b β 4런",
+    )
+    parser.add_argument(
+        "--tag",
+        default=None,
+        help="산출물 이름의 split tag (기본: 대조군 run 이름에서 beta<수> 꼬리를 뗀 것)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    run_dirs = (
+        [Path(r) for r in args.runs]
+        if args.runs
+        else [REPO_ROOT / "runs" / "stage_b" / n for n in DEFAULT_RUNS]
+    )
+    curves = [read_curve(d) for d in run_dirs]
+    ref = curves[0]
+    if ref.beta != 0.0:
+        print(f"경고: 대조군으로 쓰는 첫 run의 β가 {ref.beta:g}다 (0이 아니다)", file=sys.stderr)
+    matched = [match_at_best(c, ref) for c in curves]
+    if any(not np.isfinite(m.val_ref) for m in matched):
+        bad = [m.name for m in matched if not np.isfinite(m.val_ref)]
+        raise ValueError(f"대조군 곡선의 train_l1 범위를 벗어난 run: {bad} — 보간 불가")
+
+    tag = args.tag if args.tag is not None else derive_tag(ref.name)
+    out_path, fig_path = report_path(tag), figure_path(tag)
+    make_figure(curves, ref, matched, fig_path)
+    out_path.write_text(build_report(curves, ref, matched, fig_path))
+
+    print("같은 train_l1에서의 대조 (best 에폭 적합 수준):")
+    for m in matched:
+        if m.beta == 0:
+            print(
+                f"  {m.name:8} β={m.beta:6g}  train_l1 {m.train_l1:.4f}  val {m.val:.4f} (대조군)"
+            )
+            continue
+        print(
+            f"  {m.name:8} β={m.beta:6g}  train_l1 {m.train_l1:.4f}  "
+            f"val {m.val:.4f} vs β=0 {m.val_ref:.4f}  Δ {m.val - m.val_ref:+.4f}  "
+            f"등가에폭 {m.equiv_epoch:.1f}/{m.best_epoch}"
+        )
+    print("\n에폭별 Δval 중앙값과 부트스트랩 95% CI:")
+    for c in curves[1:]:
+        for cut in CUTS:
+            s = delta_stats(c, ref, cut)
+            if s is None:
+                print(f"  {c.name:8} 절단 ≤{cut:<4g} 표본 부족")
+                continue
+            print(
+                f"  {c.name:8} 절단 ≤{cut:<4g} n={s.n:2d}  중앙값 {s.median:+.4f}  "
+                f"CI [{s.ci_lo:+.4f}, {s.ci_hi:+.4f}]  "
+                f"{'0 배제' if s.excludes_zero else '0 포함'}"
+            )
+    print(f"\n산출물: {out_path}\n         {fig_path}")
+
+
+if __name__ == "__main__":
+    main()

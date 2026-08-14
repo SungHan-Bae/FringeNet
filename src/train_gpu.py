@@ -51,7 +51,7 @@ from typing import Any
 import numpy as np
 import torch
 import yaml
-from torch import Tensor
+from torch import Tensor, nn
 from torch.nn.functional import l1_loss
 
 from src.data.dataset import REPO_ROOT, prepare_from_config
@@ -116,6 +116,58 @@ def _fingerprint(cfg: dict[str, Any], seed: int, n_train: int) -> str:
         sort_keys=True,
         ensure_ascii=False,
         default=str,
+    )
+
+
+def _init_from_checkpoint(model: nn.Module, cfg: dict[str, Any], device: torch.device) -> str:
+    """`train.init_from` 체크포인트의 가중치를 model에 적재한다 (warm start).
+
+    수렴된 모델에서 출발해 물리 항을 켜는 실험용이다 — 랜덤 초기화에서 물리 gradient에
+    끌려가면 잘못된 fringe 차수 분지에 안착할 수 있으므로, 올바른 분지에 이미 들어간
+    지점에서 물리 항을 시험한다.
+
+    **분할이 같아야 한다.** 다른 split에서 학습된 체크포인트로 warm start하면 그 모델이
+    이미 본 행이 이번 run의 holdout에 들어가 누수가 된다. 출처 run의 `metrics.json`이
+    옆에 있으면 `data` 블록을 대조해 막고, 없으면(미러에서 model.pt만 받은 경우) 대조가
+    불가능하다는 사실을 로그에 남긴다.
+
+    Returns:
+        로그에 남길 한 줄 (출처·성능·분할 대조 결과).
+
+    Raises:
+        FileNotFoundError: 체크포인트가 없는 경우.
+        ValueError: 모델 구조 또는 분할이 다른 경우.
+    """
+    path = Path(cfg["train"]["init_from"])
+    if not path.exists():
+        raise FileNotFoundError(
+            f"init_from 체크포인트가 없다: {path}\n"
+            "  runs/는 텍스트 산출물만 git 추적한다 — Drive 미러에서 복사할 것"
+            " (runs/CHECKPOINTS.md)"
+        )
+    ckpt = torch.load(path, map_location=device, weights_only=True)
+    if dict(ckpt["model_cfg"]) != dict(cfg["model"]):
+        raise ValueError(
+            f"init_from의 model 블록이 이번 config와 다르다: {path}\n"
+            "  구조가 다르면 warm start가 성립하지 않는다 (state_dict 키·shape 불일치)"
+        )
+    model.load_state_dict(ckpt["state_dict"])
+
+    split_note = "분할 대조 불가 (출처 metrics.json 없음 — 같은 split인지 직접 확인할 것)"
+    metrics_path = path.parent / "metrics.json"
+    if metrics_path.exists():
+        src_data = json.loads(metrics_path.read_text()).get("config", {}).get("data") or {}
+        this_data = cfg.get("data") or {}
+        if src_data != this_data:
+            raise ValueError(
+                f"init_from 출처의 분할이 이번 run과 다르다 — **누수**다: {path}\n"
+                f"  출처 data: {src_data}\n  이번 data: {this_data}\n"
+                "  출처 모델이 이미 본 행이 이번 holdout에 들어간다"
+            )
+        split_note = "분할 일치 확인"
+    return (
+        f"warm start: {path} (출처 val MAE {ckpt['val_mae']:.4f} nm, "
+        f"best epoch {ckpt['best_epoch']}) / {split_note}"
     )
 
 
@@ -193,6 +245,9 @@ def train_one_model_gpu(
     y_t = torch.from_numpy(y_train).to(device)
     x_v = torch.from_numpy(x_val).to(device)
     model = build_model(cfg["model"]).to(device)
+    if train_cfg.get("init_from"):
+        note = _init_from_checkpoint(model, cfg, device)
+        log_line(run_dir, f"[{tag}] {note}")
     # 물리 손실은 설정을 먼저 검증해 잘못된 config가 학습 시작 전에 걸리게 한다.
     # RNG를 소모하지 않으므로 beta=0 대조군의 학습 경로는 물리 항 도입 전과 같다.
     physics = build_physics_loss(train_cfg, device=device)
@@ -251,15 +306,23 @@ def train_one_model_gpu(
 
     if resume:
         if not resume_path.exists() and mirror_dir is not None:
-            # 새 VM: 미러에 남은 상태에서 복원
-            restored: list[str] = []
-            for name in (RESUME_NAME, "train.log", f"{tag}.pt"):
-                src = mirror_dir / name
-                if src.exists():
-                    shutil.copy2(src, run_dir / name)
-                    restored.append(name)
-            if restored:
+            # 새 VM: 미러에 남은 상태에서 복원. **resume.pt가 있을 때만** 가져온다 —
+            # 없으면 이어 달릴 상태가 없고, 그때 train.log·{tag}.pt를 끌어오면 **다른 run의
+            # 중단된 기록을 물려받는다** (라운드 3에서 8에폭 run의 로그 3줄이 그렇게 섞였다).
+            if (mirror_dir / RESUME_NAME).exists():
+                restored: list[str] = []
+                for name in (RESUME_NAME, "train.log", f"{tag}.pt"):
+                    src = mirror_dir / name
+                    if src.exists():
+                        shutil.copy2(src, run_dir / name)
+                        restored.append(name)
                 log_line(run_dir, f"[{tag}] 미러에서 복원: {restored}")
+            elif any((mirror_dir / n).exists() for n in ("train.log", f"{tag}.pt")):
+                log_line(
+                    run_dir,
+                    f"[{tag}] 미러에 재개 상태(resume.pt)가 없어 복원하지 않는다 —"
+                    " 남은 파일은 중단된 다른 run의 기록이다. 처음부터 학습",
+                )
         if resume_path.exists():
             try:
                 # resume.pt는 이 모듈이 만든 자기 산출물 — RNG 상태 등 비텐서 객체 포함
@@ -449,6 +512,31 @@ def _load_completed_metrics(path: Path) -> dict[str, Any] | None:
     return metrics if "model" in metrics else None
 
 
+def stale_config_keys(stored: Any, current: dict[str, Any], prefix: str = "") -> list[str]:
+    """완료 기록의 설정 스냅샷과 현재 config가 다른 지점의 점 표기 키 목록.
+
+    `run_name`은 뺀다 (같은 run을 가리키는 이름이므로 항상 같다). 스냅샷이 없으면
+    (`stored is None`) 대조가 불가능하므로 빈 목록을 돌려준다 — 판정 불가를 불일치로
+    취급하면 스냅샷 이전 run의 재실행이 막힌다.
+    """
+    if stored is None:
+        return []
+    if not isinstance(stored, dict) or not isinstance(current, dict):
+        return [] if stored == current else [prefix.rstrip(".") or "config"]
+    stale: list[str] = []
+    for key in sorted(set(stored) | set(current)):
+        if not prefix and key == "run_name":
+            continue
+        path = f"{prefix}{key}"
+        if key not in stored or key not in current:
+            stale.append(path)
+        elif isinstance(stored[key], dict) and isinstance(current[key], dict):
+            stale.extend(stale_config_keys(stored[key], current[key], f"{path}."))
+        elif stored[key] != current[key]:
+            stale.append(path)
+    return stale
+
+
 def run_config(
     config_path: str | Path,
     *,
@@ -532,6 +620,19 @@ def run_config(
             if done is not None:  # 미러에만 완료 기록이 있으면 산출물을 로컬로 되가져온다
                 _mirror_copy(mirror_run, run_dir, ("metrics.json", "train.log", "model.pt"))
         if done is not None:
+            # **설정이 같을 때만** 건너뛴다. metrics.json이 설정 스냅샷을 겸하므로 대조가
+            # 가능하고, 하지 않으면 config를 고쳐 재실행해도 옛 결과를 조용히 돌려준다
+            # (epochs만 늘린 run이 이전 예산의 수치를 그대로 받는 형태로 걸렸다).
+            stale = stale_config_keys(done.get("config"), cfg)
+            if stale:
+                raise ValueError(
+                    f"run {experiment}/{cfg['run_name']}: 완료 기록의 설정이 현재 config와"
+                    f" 다르다 — 건너뛰면 옛 결과를 반환한다.\n"
+                    f"  다른 키: {', '.join(stale)}\n"
+                    f"  같은 이름으로 다시 돌리려면 {run_dir}"
+                    + (f" 와 미러 {mirror_run}" if mirror_run is not None else "")
+                    + "를 지우고, 둘을 함께 남기려면 run_name을 바꿀 것"
+                )
             print(
                 f"run {experiment}/{cfg['run_name']}: 이미 완료 — 건너뜀"
                 f" (holdout MAE {done['model']['val_mae']:.4f} nm)"

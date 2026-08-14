@@ -29,3 +29,22 @@
 | strong_baseline | `winner-repro-asis` | 813.6 MB | `dbab5d6b1e51958c…` | drive-only | 3/3 OK |
 
 model.pt 합계 833.7 MB / run 9개 (미러 파일 27개)
+
+## Stage B (Task 7) — 라운드 3개, 12 run
+
+학습 중 `train_gpu.py`의 `_mirror_copy`가 미러에 쓴 것이라 이관 작업이 없었다. 그래서 위 표와
+달리 **sha256을 기록하지 않는다** — 대신 각 라운드 노트북의 마지막 검증 셀이 `flush_and_unmount`
+→ 재마운트 후 **미러의 model.pt를 다시 로드해 holdout 재추론**으로 기록된 val MAE를 재현하는지
+확인한다 (sha256 대조보다 강하다). 라운드 1·2는 노트북에 그 출력이 남아 있고, 라운드 3은 검증
+통과가 런타임 자동 반납의 조건이며 반납이 실행됐다(출력은 로컬에 저장되지 않았다).
+
+| 라운드 | run 4개 | split | 비고 |
+|---|---|---|---|
+| 1 | `beta{0,30,100,300}` | 무작위 (val_frac 0.1) | `beta0`은 `level1_cnn/flatten-dilated-bound`와 비트 동일 |
+| 2 | `heldout-thickness-beta{0,30,100,300}` | 두께 70·150·230 제외 | `beta0`이 라운드 3의 warm start 출처 |
+| 3 | `ft-heldout-beta{0,30,100,300}` | 라운드 2와 동일 | 라운드 2 대조군에서 40에폭 fine-tune |
+
+- 미러 경로: `MyDrive/FringeNet/runs_mirror/stage_b/<run>/` (model.pt 각 2.5 MB, 합계 약 30 MB)
+- **회수가 필요한 작업**: `scripts/evaluate_axes.py`(노이즈 강건성·신뢰도 지표)는 model.pt를
+  읽는다. `scripts/analyze_stage_b_curves.py`는 커밋된 `train.log`만 쓰므로 회수가 필요 없다.
+- 미러에서 가져올 때 **model.pt만** 복사한다 — `metrics.json`·`train.log`는 git이 정본이다.
