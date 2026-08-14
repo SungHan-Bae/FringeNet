@@ -401,16 +401,28 @@ RMSE ~0.12에서 정체한 그 지형), **수렴된 CNN은 이미 올바른 분�
 "작은 모델 + 물리"가 지연에서도 싸냐는 질문이 나와 측정했다
 ([reports/inversion_bench.md](../reports/inversion_bench.md), `scripts/bench_invert.py`).
 
-- CPU 8스레드에서 `cnn + LM(complex128, 30회)` = 15.2 ms/행, 213M skip-MLP forward = 2.38 ms/행
-  → **6.4배 손해**. 파라미터 수와 연산량이 갈라지는 자리다: 디코더는 자유 파라미터가 7개인데
-  호출당 226채널 × 4층의 복소 cos/sin을 돌고, LM이 그걸 **행당 270회** 부른다.
-- **🔴 10회로 줄여도 MAE가 같다** (0.6744 vs 0.6752, complex64 기준 4,096행 표본). 30회 고정은
-  근거 없는 예산이었고, 조기 종료 여지가 실측으로 확인됐다 — 10회 + complex64면 3.29 ms/행이다.
-- complex64는 1.38배만 빠르고 MAE는 나빠지지 않았다. 단 판정 수치는 계속 complex128이다.
+파라미터 수와 연산량이 갈라지는 자리다: 디코더는 자유 파라미터가 7개인데 호출당 226채널 ×
+4층의 복소 cos/sin을 돌고, LM이 그걸 **행당 270회** 부른다.
+
+- **`cnn+LM`은 213M skip-MLP forward보다 한 자릿수 느리다** — L4에서 17.26배. 그리고 **GPU가
+  격차를 좁히기는커녕 벌렸다** (Colab CPU 13.16 → L4 17.26). skip-MLP는 GEMM 한 방이라 GPU를
+  온전히 먹고 LM은 덜 먹기 때문이다.
+- **🔴 단일 배수를 인용하면 안 된다** — 같은 코드가 로컬 WSL2에서는 6.4배, Colab CPU에서는
+  13.2배다. skip-MLP GEMM이 Colab CPU에서 3.7배 빨라지는 동안 LM은 1.8배만 빨라졌다
+  (비정형 연산 + 대역폭 바운드라 BLAS·하드웨어 최적화의 혜택을 덜 받는다). 배수는 항상
+  기계와 함께 적는다.
+- **GPU 이득의 절반 이상을 float64가 먹는다** — LM complex128은 10.3배 빨라지는데 complex64는
+  24.5배다(소비자 GPU FP64 1/32, 사전 예상 부합). 절대 시간으로는 c128 0.814 → c64 0.238 ms/행.
+  MAE는 0.6630 vs 0.6653으로 사실상 같다 → **배포 경로는 complex64**, 판정은 complex128.
+- **🔴 반복수를 줄이는 것은 공짜가 아니었다** — 10회는 30회보다 MAE가 0.02~0.03 nm 나쁘다
+  (로컬 +0.024 · Colab CPU +0.020 · L4 +0.031, 같은 dtype끼리 비교). 3배 싸지는 대신 치르는
+  값이고, 0.611 nm 기준 약 5%다. 조기 종료 여지는 있지만 "같다"고 쓸 수 없다.
+- CPU↔GPU는 같은 표본·같은 알고리즘인데 MAE가 1.8% 다르다 (0.6752 vs 0.6630) — 축약 순서와
+  배치 solver 구현 차이다. `CPU↔GPU는 bit 재현이 아니라 MAE 수준에서 비교한다` 규약이 걸리는 자리.
+- **실용적 함의**: 전체 holdout 재생성이 로컬 CPU에서 55분 걸렸는데 L4의 0.814 ms/행을 그대로
+  곱하면(× 81,000행 × 3팔) 3.3분이다. 리포트 재생성을 GPU로 옮기면 반복 실험 비용이 사라진다.
 - 미착수 레버는 해석적 야코비안(디코더가 미분가능한데 정작 역해는 중앙차분을 쓴다) ·
-  조기 종료 · GPU. **안 한 최적화를 근거로 쓰지 않는다** — 리포트는 현재 실측을 싣는다.
-- GPU 측정은 `notebooks/inversion/round1_gpu-bench.ipynb` (Colab). 소비자 GPU의 float64
-  처리율이 1/32라 complex128이 이득을 얼마나 깎는지가 이 라운드의 질문이다.
+  수렴 행 조기 종료. **안 한 최적화를 근거로 쓰지 않는다** — 리포트는 현재 실측을 싣는다.
 
 ---
 
@@ -424,7 +436,7 @@ RMSE ~0.12에서 정체한 그 지형), **수렴된 CNN은 이미 올바른 분�
 | Level 1 확정 = Level 2 백본 | holdout MAE **2.346 nm** (flatten-dilated-bound 1D CNN, 0.66M) | [level1_cnn.md](../reports/level1_cnn.md) |
 | 상한 기준선 | holdout MAE **0.3955 nm** (213M skip-MLP 원본 재현) | [strong_baseline.md](../reports/strong_baseline.md) |
 | Stage A 확정 = Stage B 디코더 | 자유 파라미터 **7개** + Si 표 Schinke 2015 → RMSE **0.009573 (1.106σ)** ✓(a) / 계통오차 0.004085, **역해 MAE 0.340 nm**, 채널 홀드아웃 한계효과 +19.7%, λ 절대 스케일 1.00689. **게이트 (b) 미통과 (9.99%)**. `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt` | [stage_a.md](../reports/stage_a.md) |
-| 역산 refinement (후처리) | holdout MAE **0.6110 nm** (CNN 2.3455에서 −74%). 물리 단독 77.68 실패 · 상한 0.3336 · 추론은 skip-MLP의 6.4배 | [inversion_refine.md](../reports/inversion_refine.md) · [inversion_bench.md](../reports/inversion_bench.md) |
+| 역산 refinement (후처리) | holdout MAE **0.6110 nm** (CNN 2.3455에서 −74%). 물리 단독 77.68 실패 · 상한 0.3336 · 추론은 skip-MLP의 한 자릿수 배 느림(L4 17.26배, 배수는 기계 의존) | [inversion_refine.md](../reports/inversion_refine.md) · [inversion_bench.md](../reports/inversion_bench.md) |
 | 층별 최소 SNR | 10.3 (layer_2) — 사각지대 없음 | eda_notes §2 |
 | 강건성 주입 노이즈 | 균등 ±0.015 기본, "기존 노이즈 위 추가분"으로 표기 | eda_notes §4 |
 
