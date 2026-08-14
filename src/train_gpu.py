@@ -54,7 +54,7 @@ import yaml
 from torch import Tensor
 from torch.nn.functional import l1_loss
 
-from src.data.dataset import REPO_ROOT, prepare_train_arrays
+from src.data.dataset import REPO_ROOT, prepare_from_config
 from src.evaluate import format_mae, mae_per_layer
 from src.losses import build_physics_loss
 from src.models import build_model
@@ -100,9 +100,19 @@ def _mirror_copy(run_dir: Path, mirror_dir: Path | None, names: tuple[str, ...])
 
 
 def _fingerprint(cfg: dict[str, Any], seed: int, n_train: int) -> str:
-    """resume 호환성 판별용 설정 지문 — 다른 설정의 resume.pt를 이어받지 않도록."""
+    """resume 호환성 판별용 설정 지문 — 다른 설정의 resume.pt를 이어받지 않도록.
+
+    data 블록도 넣는다: 분할 옵션(holdout_thickness 등)이 바뀌면 학습 집합의 **내용**이
+    달라지는데 크기(n_train)는 같을 수 있어(값만 바꾼 경우) 크기만으로는 못 거른다.
+    """
     return json.dumps(
-        {"model": cfg["model"], "train": cfg["train"], "seed": seed, "n_train": n_train},
+        {
+            "model": cfg["model"],
+            "train": cfg["train"],
+            "data": cfg.get("data"),
+            "seed": seed,
+            "n_train": n_train,
+        },
         sort_keys=True,
         ensure_ascii=False,
         default=str,
@@ -520,12 +530,7 @@ def run_config(
     dev = resolve_device(device)
     seed = int(cfg["seed"])
     set_seed(seed)
-    data_cfg = cfg.get("data", {})
-    x, y, train_idx, holdout_idx = prepare_train_arrays(
-        val_frac=float(data_cfg.get("val_frac", 0.1)),
-        seed=seed,
-        subset=data_cfg.get("subset"),
-    )
+    x, y, train_idx, holdout_idx = prepare_from_config(cfg)
 
     log_line(
         run_dir,

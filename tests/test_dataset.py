@@ -18,8 +18,10 @@ from src.data.dataset import (
     FringeDataset,
     kfold_indices,
     load_frame,
+    prepare_from_config,
     prepare_train_arrays,
     random_split_indices,
+    thickness_holdout_indices,
 )
 
 requires_raw_data = pytest.mark.skipif(
@@ -155,3 +157,58 @@ def test_train_frame_matches_verified_contract() -> None:
     thickness = head[LAYER_COLS].to_numpy()
     assert ((thickness >= 10) & (thickness <= 300)).all()
     assert (thickness % 10 == 0).all()  # 10 nm 격자
+
+
+# ---------------------------------------------------------------------------
+# held-out 두께 값 split (README §3.5-3) — 무작위 split이 못 재는 두께축 일반화
+# ---------------------------------------------------------------------------
+def _grid(values: list[float]) -> np.ndarray:
+    """값들의 전수 조합 (V^4, 4) — 대회 train과 같은 구조의 축소판."""
+    v = np.array(values, dtype=np.float32)
+    mesh = np.meshgrid(v, v, v, v, indexing="ij")
+    return np.stack([m.ravel() for m in mesh], axis=1)
+
+
+def test_thickness_holdout_removes_value_from_every_layer() -> None:
+    y = _grid([10, 20, 30, 40])  # 4^4 = 256행
+    train_idx, holdout_idx = thickness_holdout_indices(y, [20.0])
+
+    assert len(train_idx) == 3**4  # 20이 어느 층에도 없는 조합만 남는다
+    assert len(train_idx) + len(holdout_idx) == len(y)
+    assert np.intersect1d(train_idx, holdout_idx).size == 0
+    # 한 층에서만 빼면 그 값이 다른 층을 통해 학습에 남는다 — 그러면 "보지 못한 값"이 아니다
+    assert (y[train_idx] != 20.0).all()
+    assert (y[holdout_idx] == 20.0).any(axis=1).all()
+
+
+@pytest.mark.parametrize("values", [[], [25.0]])
+def test_thickness_holdout_rejects_bad_values(values: list[float]) -> None:
+    with pytest.raises(ValueError):
+        thickness_holdout_indices(_grid([10, 20, 30, 40]), values)
+
+
+def test_thickness_holdout_rejects_emptying_train() -> None:
+    with pytest.raises(ValueError, match="학습에 남는 행이 없다"):
+        thickness_holdout_indices(_grid([10, 20]), [10.0, 20.0])
+
+
+@requires_raw_data
+def test_prepare_from_config_defaults_to_random_split() -> None:
+    cfg = {"seed": 42, "data": {"val_frac": 0.1, "subset": 5000}}
+    from_cfg = prepare_from_config(cfg)
+    explicit = prepare_train_arrays(val_frac=0.1, seed=42, subset=5000)
+    for a, b in zip(from_cfg, explicit, strict=True):
+        assert np.array_equal(a, b)
+
+
+@requires_raw_data
+def test_prepare_from_config_thickness_split_on_real_grid() -> None:
+    held = [70, 150, 230]
+    cfg = {"seed": 42, "data": {"holdout_thickness": held}}
+    x, y, train_idx, holdout_idx = prepare_from_config(cfg)
+
+    # 30개 값 중 3개를 빼면 학습은 27^4 전수 조합, 나머지가 holdout이 된다
+    assert len(train_idx) == 27**4
+    assert len(train_idx) + len(holdout_idx) == len(x) == 810_000
+    assert not np.isin(y[train_idx], held).any()
+    assert np.isin(y[holdout_idx], held).any(axis=1).all()

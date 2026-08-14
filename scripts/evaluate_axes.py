@@ -37,7 +37,7 @@ from scipy.stats import spearmanr
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.calibrate import NOISE_SIGMA  # noqa: E402
-from src.data.dataset import REPO_ROOT, prepare_train_arrays  # noqa: E402
+from src.data.dataset import REPO_ROOT, prepare_from_config  # noqa: E402
 from src.evaluate import load_model_checkpoint, mae_per_layer, predict  # noqa: E402
 from src.losses import DEFAULT_DECODER, FrozenDecoder  # noqa: E402
 
@@ -55,12 +55,11 @@ def load_run(run_dir: Path) -> tuple[torch.nn.Module, dict[str, Any]]:
     if not metrics_path.exists():
         raise FileNotFoundError(f"metrics.json이 없다: {metrics_path}")
     if not ckpt_path.exists():
+        rel = ckpt_path.relative_to(REPO_ROOT) if ckpt_path.is_relative_to(REPO_ROOT) else ckpt_path
         raise FileNotFoundError(
             f"체크포인트가 없다: {ckpt_path}\n"
-            "  runs/는 텍스트 산출물만 git 추적한다 — Drive 미러에서 복사하거나\n"
-            "  git show <원본 커밋>:{rel} > {rel} 로 되살릴 것 (runs/CHECKPOINTS.md)".format(
-                rel=ckpt_path.relative_to(REPO_ROOT)
-            )
+            f"  runs/는 텍스트 산출물만 git 추적한다 — Drive 미러에서 복사하거나\n"
+            f"  git show <원본 커밋>:{rel} > {rel} 로 되살릴 것 (runs/CHECKPOINTS.md)"
         )
     return load_model_checkpoint(ckpt_path), json.loads(metrics_path.read_text())
 
@@ -68,9 +67,14 @@ def load_run(run_dir: Path) -> tuple[torch.nn.Module, dict[str, Any]]:
 def holdout_of(cfg: dict[str, Any], cache: dict[tuple, tuple]) -> tuple[np.ndarray, np.ndarray]:
     """config가 정의하는 holdout (x, y). 같은 분할은 한 번만 읽는다 (train 전체가 0.7 GB)."""
     data_cfg = cfg.get("data") or {}
-    key = (float(data_cfg.get("val_frac", 0.1)), int(cfg["seed"]), data_cfg.get("subset"))
+    key = (
+        float(data_cfg.get("val_frac", 0.1)),
+        int(cfg["seed"]),
+        data_cfg.get("subset"),
+        tuple(data_cfg.get("holdout_thickness") or ()),
+    )
     if key not in cache:
-        x, y, _, holdout_idx = prepare_train_arrays(val_frac=key[0], seed=key[1], subset=key[2])
+        x, y, _, holdout_idx = prepare_from_config(cfg)
         cache[key] = (x[holdout_idx], y[holdout_idx])
     return cache[key]
 
@@ -200,18 +204,18 @@ def render(
             f" {c['decile_mae'][-1]:.3f} | {c['capture_top10']:.1%} | {c['residual_median']:.6f} |"
         )
 
-    best = min(confidence, key=lambda c: c["decile_mae"][-1] - c["decile_mae"][0])
+    sharpest = max(confidence, key=lambda c: c["spearman"])
     lines += [
         "",
         f"참 두께에서의 잔차(지표 바닥) = {confidence[0]['residual_at_truth']:.6f}",
         f" — 순수 노이즈 하한 {NOISE_MEAN_ABS}보다 큰 만큼이 Stage A forward 모델의 잔여",
         "계통오차를 반영한다 (노이즈와 합성된 값이라 계통오차 자체와 같지는 않다).",
         "",
-        f"### 잔차 십분위별 실제 MAE — `{best['name']}`",
+        f"### 잔차 십분위별 실제 MAE — `{sharpest['name']}` (순위상관이 가장 높은 run)",
         "",
         "| 십분위 | " + " | ".join(str(i) for i in range(1, 11)) + " |",
         "|---|" + "---|" * 10,
-        "| MAE [nm] | " + " | ".join(f"{v:.3f}" for v in best["decile_mae"]) + " |",
+        "| MAE [nm] | " + " | ".join(f"{v:.3f}" for v in sharpest["decile_mae"]) + " |",
         "",
     ]
     return lines

@@ -16,7 +16,9 @@ train.csv는 810,000행 x 230컬럼(1.9GB)이라 매번 CSV를 파싱하면 느�
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -212,14 +214,58 @@ def kfold_indices(
     return out
 
 
+def thickness_holdout_indices(
+    y: np.ndarray, values: Sequence[float], *, tol: float = 1e-3
+) -> tuple[np.ndarray, np.ndarray]:
+    """held-out 두께 값 split — 지정한 값이 **어느 층에라도** 들어간 행을 통째로 뺀다.
+
+    전수 조합 데이터에서 무작위 split은 모든 두께 값이 학습에 등장하므로 "조합 보간"만
+    측정한다 (README §3.5-3). 이 split은 값 자체를 학습에서 빼므로 두께축을 따라
+    보지 못한 값을 맞히는지 본다. 어느 층에라도 걸리면 빼는 이유는, 한 층에만
+    적용하면 그 값이 다른 층을 통해 학습에 남아 "보지 못한 값"이 아니게 되기 때문이다.
+
+    Args:
+        y: (N, L) 두께 [nm].
+        values: 학습에서 뺄 두께 값들.
+        tol: 부동소수 비교 허용오차 [nm].
+
+    Returns:
+        (train_idx, holdout_idx): 겹치지 않는 인덱스 배열.
+
+    Raises:
+        ValueError: values가 비었거나, 데이터에 없는 값이거나, 학습이 비는 경우.
+    """
+    if len(values) == 0:
+        raise ValueError("values가 비어 있다 — held-out 두께 값을 하나 이상 지정할 것")
+    grid = np.unique(y)
+    picked = np.asarray(values, dtype=np.float64)
+    unknown = [v for v in picked if np.abs(grid - v).min() > tol]
+    if unknown:
+        raise ValueError(f"데이터에 없는 두께 값: {unknown} (가능: {grid.tolist()})")
+    hit = np.abs(y[:, :, None] - picked[None, None, :]).min(axis=2) <= tol  # (N, L)
+    holdout_mask = hit.any(axis=1)
+    if holdout_mask.all():
+        raise ValueError(f"학습에 남는 행이 없다 — held-out 값이 너무 많다: {list(values)}")
+    return np.flatnonzero(~holdout_mask), np.flatnonzero(holdout_mask)
+
+
 def prepare_train_arrays(
-    *, val_frac: float = 0.1, seed: int = 42, subset: int | None = None
+    *,
+    val_frac: float = 0.1,
+    seed: int = 42,
+    subset: int | None = None,
+    holdout_thickness: Sequence[float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """학습 배열과 (train_idx, holdout_idx)를 만든다 — train.py / evaluate.py 공용.
 
     subset을 주면 시드 고정 **무작위** 표본을 먼저 뽑는다. train 행이 (layer_1..4)
     사전식 정렬이라 `x[:N]` 앞머리 자르기는 표본이 아니기 때문이다 (CLAUDE.md
     "표본 추출 주의"). 같은 (seed, subset, val_frac)이면 항상 같은 분할이 나온다.
+
+    Args:
+        holdout_thickness: 주면 무작위 split 대신 **held-out 두께 값 split**을 쓴다
+            (val_frac은 무시된다). 분할 크기가 값 개수로 정해지므로 run 사이 비교는
+            같은 값 집합 안에서만 유효하다.
 
     Returns:
         (x, y, train_idx, holdout_idx):
@@ -231,5 +277,24 @@ def prepare_train_arrays(
         rng = np.random.default_rng(seed)
         pick = rng.choice(len(x), size=int(subset), replace=False)
         x, y = x[pick], y[pick]
-    train_idx, holdout_idx = random_split_indices(len(x), val_frac=val_frac, seed=seed)
+    if holdout_thickness is not None:
+        train_idx, holdout_idx = thickness_holdout_indices(y, holdout_thickness)
+    else:
+        train_idx, holdout_idx = random_split_indices(len(x), val_frac=val_frac, seed=seed)
     return x, y, train_idx, holdout_idx
+
+
+def prepare_from_config(cfg: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """config(또는 metrics.json의 스냅샷)가 정의하는 분할을 그대로 재현한다.
+
+    학습·평가·진단이 같은 함수를 거치게 해서, 분할 옵션이 늘어날 때 한쪽만 갱신되는
+    드리프트를 막는다. **CPU 경로 `src/train.py`는 예외** — baseline 재현용으로 동결돼
+    있어 무작위 split만 쓴다 (holdout_thickness를 쓰는 실험은 GPU 경로 전용).
+    """
+    data_cfg = cfg.get("data") or {}
+    return prepare_train_arrays(
+        val_frac=float(data_cfg.get("val_frac", 0.1)),
+        seed=int(cfg["seed"]),
+        subset=data_cfg.get("subset"),
+        holdout_thickness=data_cfg.get("holdout_thickness"),
+    )
