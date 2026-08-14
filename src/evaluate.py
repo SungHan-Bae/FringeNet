@@ -26,7 +26,7 @@ import pandas as pd
 import torch
 from torch import nn
 
-from src.data.dataset import LAYER_COLS, RAW_DIR, load_test, prepare_train_arrays
+from src.data.dataset import LAYER_COLS, RAW_DIR, load_test, prepare_from_config
 from src.models import build_model
 
 
@@ -122,13 +122,8 @@ def main(argv: list[str] | None = None) -> None:
     models = [load_model_checkpoint(p) for p in ckpt_paths]
     print(f"run {run_dir.name}: 체크포인트 {len(models)}개 — {[p.name for p in ckpt_paths]}")
 
-    # 학습 때와 동일한 seed/subset/val_frac으로 holdout을 재현한다.
-    data_cfg = cfg.get("data", {})
-    x, y, _, holdout_idx = prepare_train_arrays(
-        val_frac=float(data_cfg.get("val_frac", 0.1)),
-        seed=int(cfg["seed"]),
-        subset=data_cfg.get("subset"),
-    )
+    # 학습 때와 동일한 분할로 holdout을 재현한다 (split 옵션은 config 스냅샷이 정본).
+    x, y, _, holdout_idx = prepare_from_config(cfg)
     x_hold, y_hold = x[holdout_idx], y[holdout_idx]
     preds = [predict(m, x_hold, args.batch_size) for m in models]
     for path, pred in zip(ckpt_paths, preds, strict=True):

@@ -191,11 +191,24 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     λ 절대 스케일 검정 통과(1.00689), 물성 전부 문헌 정합(독립 두 방법 0.32~0.74%).
     **게이트 (b) 미통과 (9.99%)** — 잔차는 대역 단파장 끝(Luke 유효범위 밖 외삽)에 몰리고
     그 구간엔 문헌표 불일치가 없다(모델 부족).
-  - **Stage B 디코더 = `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt`**. 착수 시
-    `theta` 7개를 `requires_grad_(False)`로 **명시 동결**할 것 — `nn.Parameter`라
-    `model.parameters()`를 통째로 옵티마이저에 넘기면 동결 계약이 조용히 깨진다.
-- **Stage B `src/train.py --physics`**: `L = MAE(d_hat, d) + beta * L1(R_dec(d_hat), R_obs)`,
-  beta 워밍업. ablation: beta=0 vs beta>0. 사전등록한 예측은 docs/week_1.md TODO.
+  - **Stage B 디코더 = `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt`**
+    (`src.losses.DEFAULT_DECODER`).
+- **Stage B = `src/losses.py` + `src/train_gpu.py`의 `train.physics` 블록**
+  (`configs/stage_b/beta{0,30,100,300}.yaml`):
+  `L = MAE(d_hat, d) + beta(step) * L1(R_dec(d_hat), R_obs)`, beta 선형 워밍업.
+  **CPU 경로 `src/train.py`에는 없다** — GPU가 필요한 실험이므로 수정 금지 규약을 지켜
+  GPU 경로에만 배선했다. 사전등록한 예측은 docs/week_1.md TODO.
+  - **동결은 두 겹**: `theta.requires_grad_(False)` + 디코더가 **파라미터를 아예 보유하지
+    않는다**(상수 분광량만 버퍼). `nn.Parameter`라 `model.parameters()`를 통째로 옵티마이저에
+    넘기면 계약이 조용히 깨지므로, 학습 모델의 서브모듈로 두지 않는다 (체크포인트
+    state_dict에도 섞이지 않아 `evaluate.py` 로드 계약이 유지된다).
+  - **beta=0 대조군은 물리 항을 gradient에 넣지 않고 진단으로만 기록한다** — 학습 경로가
+    물리 항 도입 전과 같아야 차이를 물리 항에 귀속할 수 있다 (테스트가 비트 동일성으로
+    고정, 실데이터 스모크에서도 holdout MAE 10자리 일치).
+  - 학습 dtype은 **complex64**: theta가 동결이라 (λ, n, n_s)는 상수이므로 1회 계산해
+    캐스팅·캐시한다 (float64 대비 오차 max 6.0e-6 = σ의 0.07%, GPU float64는 1/32 처리율).
+  - 진단: 매 에폭 `train_phys`(가중 전 재구성 L1)·`val_phys`를 로그에 남기고 best 에폭
+    값을 metrics.json `val_phys_l1`에 기록한다. 참 두께에서의 하한은 E|ε| = 0.0075.
 - 평가: 전체/층별 MAE, 학습곡선, TMM 재구성 오차 히스토그램(신뢰도 지표), 두께 구간별 오차.
 
 ## 평가 규약 (데이터가 시뮬레이션 격자라서 생기는 함정)
@@ -204,13 +217,21 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   최근접 격자로 반올림하면 MAE가 인위적으로 낮아진다(실측 2.346 → 1.287). 생성 방식의
   누설이지 계측 성능이 아니다 — 기본 리포트는 raw 예측값 기준, 스냅은 별도 행 + 각주.
   **단 test(제출)에는 절대 쓰지 말 것** — 격자 밖이라 MAE가 약 +1.2 nm 악화된다.
-- **split 3종 리포트**: ① random split (조합 보간) ② held-out 두께 값 split (특정 두께를
-  학습에서 통째로 제외) ③ 격자 밖 — **이미 test가 그 평가셋이다**(합성은 라벨 있는 통제
-  실험이 필요할 때 보완).
-- **노이즈 강건성**: 입력 R에 노이즈 주입 시 MAE 열화 곡선. 기본은 데이터와 같은 종류인
-  **균등 ±0.015**, 가우시안은 별개 질문으로 병기. 데이터에 이미 σ = 0.008658이 있으므로
-  주입은 **추가분**임을 명시한다.
-- 위 셋은 Task 7의 측정 도구로 함께 만든다. 좋은 숫자만 고르지 않는다.
+- **split 3종 리포트**: ① random split (조합 보간) ② **held-out 두께 값 split** —
+  `data.holdout_thickness: [70, 150, 230]` (`dataset.thickness_holdout_indices`). 값을
+  **전 층에서** 빼고 그 값이 든 행을 통째로 holdout으로 돌린다 — 한 층에서만 빼면 그 값이
+  다른 층을 통해 학습에 남아 "보지 못한 값"이 아니게 된다. 학습 27⁴ = 531,441행이라
+  **random split run과 MAE를 직접 비교하지 말 것** (같은 split 안의 대조만 유효).
+  ③ 격자 밖 — **이미 test가 그 평가셋이지만 라벨이 없어 리더보드 제출로만 수치가 나온다**.
+  캘리브레이션 forward로 합성하면 **같은 물리로 만든 데이터라 β>0에 유리한 순환**이므로
+  주 판정에 쓰지 않는다 (최종 선택 모델만 제출로 확인).
+- **노이즈 강건성**: 입력 R에 노이즈 주입 시 MAE 열화 곡선 (`scripts/evaluate_axes.py`).
+  기본은 데이터와 같은 종류인 **균등 ±0.015**, 가우시안은 별개 질문으로 병기. 데이터에 이미
+  σ = 0.008658이 있으므로 주입은 **추가분**임을 명시한다. 주입 실현은 수준마다 고정해
+  모든 run이 같은 입력을 본다 (차이를 난수가 아니라 모델에 귀속시킨다).
+- **신뢰도 지표**(README §3.4)도 같은 스크립트가 낸다 — 행별 물리 잔차(라벨 미사용) ↔ 실제
+  오차의 순위상관·십분위 MAE·상위 10% 포착률, 그리고 참 두께에서의 잔차(지표 바닥).
+- 위 축들은 Task 7의 측정 도구다. 좋은 숫자만 고르지 않는다.
 - **실험 관리 — 대실험(experiment) / 변형(run) 2단**: 설정 `configs/<실험>/<변형>.yaml`,
   산출물 `runs/<실험>/<변형>/` = model.pt + train.log + metrics.json 세 가지만
   (metrics.json이 설정 스냅샷을 겸한다). 변형 이름은 번호가 아니라 **무엇이 다른지 드러나는
@@ -265,6 +286,15 @@ python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
 python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yaml  # Stage A (디코더)
 python scripts/diagnose_calibration.py                                            # Stage A 게이트·그림
 python -m src.evaluate --run runs/mlp_baseline/dropout0.0                          # holdout 재평가
+
+# Stage B 물리 손실 — 본 학습은 Colab GPU, 로컬은 스모크만 (약 35초).
+# run-name에 -smoke를 붙이는 것이 필수다 — 서브셋 run이 완료 기록을 남기면 본 run이 스킵된다
+python -m src.train_gpu --config configs/stage_b/beta100.yaml --device cpu \
+  --subset 20000 --epochs 2 --run-name beta100-smoke
+
+# 평가 축 (노이즈 강건성 · 신뢰도 지표) — 학습 없이 체크포인트 위에서 돈다.
+# 체크포인트는 git에 없으므로 Drive 미러에서 복사하거나 git show로 되살린 뒤 실행한다.
+python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta100
 ```
 
 Stage A 경로는 최대 상주 메모리 **약 5 GB**를 쓴다 (조건부 평균이 train 전체를 올린다).

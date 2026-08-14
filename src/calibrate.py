@@ -48,7 +48,7 @@ from src.physics.dispersion import (
 from src.physics.freq_id import describe_identification, identify_wavelength_grid
 from src.physics.tmm import tmm_reflectance
 from src.train import log_line
-from src.train_gpu import _atomic_save
+from src.utils.io import atomic_save
 
 RUNS_DIR = REPO_ROOT / "runs"
 
@@ -517,7 +517,7 @@ def fit_physical(
                 model, data["x_diag"], data["d_diag"], channels=fit_channels
             ),
         }
-    _atomic_save(
+    atomic_save(
         {
             "model_cfg": model.model_cfg,
             "state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},

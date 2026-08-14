@@ -54,10 +54,12 @@ import yaml
 from torch import Tensor
 from torch.nn.functional import l1_loss
 
-from src.data.dataset import REPO_ROOT, prepare_train_arrays
+from src.data.dataset import REPO_ROOT, prepare_from_config
 from src.evaluate import format_mae, mae_per_layer
+from src.losses import build_physics_loss
 from src.models import build_model
 from src.train import RUNS_DIR, build_lr_scheduler, log_line
+from src.utils.io import atomic_save
 from src.utils.seed import set_seed
 
 RESUME_NAME = "resume.pt"
@@ -83,13 +85,6 @@ def predict_on_device(model: torch.nn.Module, x: Tensor, batch_size: int = 8192)
     return np.concatenate(outs, axis=0)
 
 
-def _atomic_save(obj: dict[str, Any], path: Path) -> None:
-    """torch.save를 임시파일→교체로 수행 — 저장 도중 세션이 죽어도 파일이 깨지지 않는다."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    torch.save(obj, tmp)
-    tmp.replace(path)
-
-
 def _mirror_copy(run_dir: Path, mirror_dir: Path | None, names: tuple[str, ...]) -> None:
     """run_dir의 파일들을 미러 디렉토리로 원자적으로 복사한다 (있는 것만)."""
     if mirror_dir is None:
@@ -105,9 +100,19 @@ def _mirror_copy(run_dir: Path, mirror_dir: Path | None, names: tuple[str, ...])
 
 
 def _fingerprint(cfg: dict[str, Any], seed: int, n_train: int) -> str:
-    """resume 호환성 판별용 설정 지문 — 다른 설정의 resume.pt를 이어받지 않도록."""
+    """resume 호환성 판별용 설정 지문 — 다른 설정의 resume.pt를 이어받지 않도록.
+
+    data 블록도 넣는다: 분할 옵션(holdout_thickness 등)이 바뀌면 학습 집합의 **내용**이
+    달라지는데 크기(n_train)는 같을 수 있어(값만 바꾼 경우) 크기만으로는 못 거른다.
+    """
     return json.dumps(
-        {"model": cfg["model"], "train": cfg["train"], "seed": seed, "n_train": n_train},
+        {
+            "model": cfg["model"],
+            "train": cfg["train"],
+            "data": cfg.get("data"),
+            "seed": seed,
+            "n_train": n_train,
+        },
         sort_keys=True,
         ensure_ascii=False,
         default=str,
@@ -133,7 +138,9 @@ def train_one_model_gpu(
 
     src/train.py의 train_one_model과 같은 입출력 계약(반환 키·체크포인트 포맷·로그
     형식)을 따른다. 차이: (1) 데이터·모델이 device에 상주, (2) 체크포인트는 CPU 텐서,
-    (3) best 갱신 즉시 {tag}.pt 저장, (4) 매 에폭 resume.pt 저장(+미러)로 세션 유실 대비.
+    (3) best 갱신 즉시 {tag}.pt 저장, (4) 매 에폭 resume.pt 저장(+미러)로 세션 유실 대비,
+    (5) cfg["train"]["physics"] 블록이 있으면 Stage B 물리 손실을 더한다 (src/losses.py —
+    CPU 경로에는 없다). 블록이 없으면 손실 계산 경로가 물리 항 도입 전과 동일하다.
 
     Args:
         x_train: (N, 226) float32 반사율. y_train: (N, 4) float32 두께 [nm].
@@ -155,7 +162,8 @@ def train_one_model_gpu(
 
     Returns:
         {"tag", "seed", "ckpt_path", "best_epoch", "val_mae", "val_mae_per_layer",
-         "val_pred" (M, 4) np.ndarray, "wall_sec"}
+         "val_pred" (M, 4) np.ndarray, "wall_sec"}. 물리 손실을 쓴 run은 "physics"
+        (설정·디코더 출처 스냅샷)와 "val_phys_l1"(best 에폭의 holdout 재구성 L1)이 붙는다.
     """
     train_cfg = cfg["train"]
     epochs = int(train_cfg["epochs"])
@@ -185,6 +193,18 @@ def train_one_model_gpu(
     y_t = torch.from_numpy(y_train).to(device)
     x_v = torch.from_numpy(x_val).to(device)
     model = build_model(cfg["model"]).to(device)
+    # 물리 손실은 설정을 먼저 검증해 잘못된 config가 학습 시작 전에 걸리게 한다.
+    # RNG를 소모하지 않으므로 beta=0 대조군의 학습 경로는 물리 항 도입 전과 같다.
+    physics = build_physics_loss(train_cfg, device=device)
+    if physics is not None:
+        prov = physics.decoder.provenance
+        log_line(
+            run_dir,
+            f"[{tag}] 물리 손실 beta {physics.beta:g} (워밍업 {physics.warmup_steps} 스텝)"
+            f" / 동결 디코더 {prov['decoder']} (자유도 {len(prov['free'])},"
+            f" Stage A RMSE {prov['stage_a_rmse']:.6f}, 위반율"
+            f" {prov['stage_a_violation_rate']:.4%})",
+        )
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(train_cfg["lr"]),
@@ -208,7 +228,7 @@ def train_one_model_gpu(
     def save_best_checkpoint(
         best_state: dict[str, Tensor], best_epoch: int, best_mae: float
     ) -> None:
-        _atomic_save(
+        atomic_save(
             {
                 "model_cfg": dict(cfg["model"]),
                 "state_dict": best_state,
@@ -225,6 +245,7 @@ def train_one_model_gpu(
     best_epoch = -1
     best_metrics: dict[str, float] = {}
     best_pred: np.ndarray | None = None
+    best_val_phys: float | None = None
     start_epoch = 1
     wall_prev = 0.0
 
@@ -267,6 +288,7 @@ def train_one_model_gpu(
                 best_pred = (
                     state["best_pred"].cpu().numpy() if state["best_pred"] is not None else None
                 )
+                best_val_phys = state.get("best_val_phys")
                 torch.set_rng_state(state["torch_rng"].cpu())
                 if device.type == "cuda" and state.get("cuda_rng") is not None:
                     torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda_rng"]])
@@ -296,18 +318,34 @@ def train_one_model_gpu(
         else:
             perm = torch.randperm(n, device=device)
         loss_sum = 0.0
+        phys_sum = 0.0
+        beta_now = 0.0
         for start in range(0, n, batch_size):
             idx = perm[start : start + batch_size]
-            loss = l1_loss(model(x_t[idx]), y_t[idx])
+            if physics is None:
+                loss = l1_loss(model(x_t[idx]), y_t[idx])
+                sup_value = loss.item()
+            else:
+                # 전역 스텝을 epoch에서 유도한다 — resume 후에도 워밍업 위치가 이어진다.
+                step = (epoch - 1) * steps_per_epoch + start // batch_size
+                parts = physics(model(x_t[idx]), y_t[idx], x_t[idx], step)
+                loss, sup_value, beta_now = parts.total, parts.sup.item(), parts.beta
+                phys_sum += parts.phys.item() * len(idx)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
-            loss_sum += loss.item() * len(idx)
+            # train_l1은 물리 항을 뺀 지도 항만 — run 사이 비교 가능해야 한다
+            loss_sum += sup_value * len(idx)
 
         val_pred = predict_on_device(model, x_v)
         val_metrics = mae_per_layer(val_pred, y_val)
+        val_phys: float | None = None
+        if physics is not None:
+            val_phys = float(
+                physics.decoder.residual_l1(torch.from_numpy(val_pred).to(device), x_v).mean()
+            )
         row = {
             "epoch": epoch,
             "train_l1": loss_sum / n,
@@ -325,15 +363,23 @@ def train_one_model_gpu(
             best_epoch = epoch
             best_metrics = val_metrics
             best_pred = val_pred
+            best_val_phys = val_phys
             marker = " *"
             save_best_checkpoint(best_state, best_epoch, best_mae)  # 갱신 즉시 저장
+        # 물리 항이 없으면 빈 문자열 — 기존 run과 로그 형식이 같다
+        phys_note = (
+            ""
+            if physics is None or val_phys is None
+            else f"train_phys {phys_sum / n:.6f}  val_phys {val_phys:.6f}  beta {beta_now:g}  "
+        )
         log_line(
             run_dir,
             f"[{tag}] epoch {epoch:3d}/{epochs}  train_l1 {row['train_l1']:.4f}  "
-            f"val_mae {row['val_mae']:.4f}  lr {row['lr']:.2e}  {row['sec']:.1f}s{marker}",
+            f"val_mae {row['val_mae']:.4f}  {phys_note}"
+            f"lr {row['lr']:.2e}  {row['sec']:.1f}s{marker}",
         )
 
-        _atomic_save(
+        atomic_save(
             {
                 "fingerprint": fingerprint,
                 "epoch": epoch,
@@ -345,6 +391,7 @@ def train_one_model_gpu(
                 "best_epoch": best_epoch,
                 "best_metrics": best_metrics,
                 "best_pred": torch.from_numpy(best_pred) if best_pred is not None else None,
+                "best_val_phys": best_val_phys,
                 "torch_rng": torch.get_rng_state(),
                 "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
                 "numpy_rng": np.random.get_state(),  # noqa: NPY002
@@ -375,7 +422,7 @@ def train_one_model_gpu(
     out_path = ckpt_path
     if out_path.is_relative_to(REPO_ROOT):  # metrics.json에 로컬 절대경로가 남지 않게
         out_path = out_path.relative_to(REPO_ROOT)
-    return {
+    result: dict[str, Any] = {
         "tag": tag,
         "seed": seed,
         "ckpt_path": str(out_path),
@@ -385,6 +432,10 @@ def train_one_model_gpu(
         "val_pred": best_pred,
         "wall_sec": wall_prev + time.perf_counter() - t_start,
     }
+    if physics is not None:
+        result["physics"] = physics.config
+        result["val_phys_l1"] = best_val_phys
+    return result
 
 
 def _load_completed_metrics(path: Path) -> dict[str, Any] | None:
@@ -479,12 +530,7 @@ def run_config(
     dev = resolve_device(device)
     seed = int(cfg["seed"])
     set_seed(seed)
-    data_cfg = cfg.get("data", {})
-    x, y, train_idx, holdout_idx = prepare_train_arrays(
-        val_frac=float(data_cfg.get("val_frac", 0.1)),
-        seed=seed,
-        subset=data_cfg.get("subset"),
-    )
+    x, y, train_idx, holdout_idx = prepare_from_config(cfg)
 
     log_line(
         run_dir,

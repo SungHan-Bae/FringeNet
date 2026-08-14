@@ -176,6 +176,9 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 
 추론 시 TMM 재구성 오차가 큰 샘플은 모델이 확신하지 못하는 측정으로 플래깅할 수 있다.
 이는 실제 fab의 계측 이상 감지(FDC) 관점과 맞닿아 있으며, 오차 분포 분석을 리포트에 포함한다.
+지표는 **라벨을 쓰지 않으므로** test·실계측에도 그대로 적용된다 — 예측 두께를 동결 디코더로
+되비춰 관측과 비교하는 행별 잔차다. 측정은 `scripts/evaluate_axes.py`(순위상관 · 잔차
+십분위별 실제 오차 · 상위 10% 포착률 · 참 두께에서의 지표 바닥).
 
 ### 3.5 평가 프로토콜 (정직성 규약)
 
@@ -199,11 +202,15 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
    노이즈를 주입한 조건에서의 성능 열화를 함께 보고한다. 주입은 데이터와 같은 종류인
    균등 ±0.015가 기본이고(§2.1), 이미 있는 노이즈 위에 더하는 "추가분"임을 명시한다.
 
-> **구현 현황 (정직하게 밝힌다): 4종 중 1종만 구현돼 있다.** 격자 스냅 분리 보고만
-> `src/evaluate.py`에 있고 2·3·4는 미구현이다. Task 4·5·6은 이 프로토콜 없이 종결됐으므로
-> 그 리포트들은 **격자 밖 외삽 성능이나 노이즈 강건성을 주장하지 않는다**(random split
-> 조합 보간 성능만 보고한다). 남은 셋은 물리 손실의 기여를 재는 축이 정확히 그것이므로
-> Task 7에서 함께 구현한다.
+> **구현 현황 (정직하게 밝힌다): 4종 중 3종이 구현됐고, 수치는 Task 7 라운드에서 나온다.**
+> ① 격자 스냅 분리 보고 `src/evaluate.py` · ③ held-out 두께 값 split
+> `data.holdout_thickness` (전 층에서 값을 빼고 그 값이 든 행을 통째로 holdout) ·
+> ④ 노이즈 강건성 `scripts/evaluate_axes.py` (§3.4 신뢰도 지표와 함께 산출). ②는 test에
+> 라벨이 없어 **리더보드 제출로만** 수치가 나오므로 최종 선택 모델에만 쓴다 — 캘리브레이션
+> forward로 격자 밖을 합성하면 같은 물리로 만든 데이터에서 β>0이 유리해지는 순환이라
+> 주 판정에 쓰지 않는다. Task 4·5·6은 이 프로토콜 없이 종결됐으므로 그 리포트들은
+> **격자 밖 외삽 성능이나 노이즈 강건성을 주장하지 않는다**(random split 조합 보간 성능만
+> 보고한다).
 
 ### 3.6 가정과 한계
 
@@ -247,7 +254,8 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   ├── verify_data.py          # 데이터 계약 검증 (통과 여부를 종료 코드로 반환)
 │   ├── eda.py                  # EDA 그림 3종 + 측정값 생성
 │   ├── measure_noise.py        # 노이즈 σ·유계 상한 측정 (채널축 m차 차분)
-│   └── diagnose_calibration.py # Stage A 게이트 (a)~(f) 진단 + 그림 (§3.2)
+│   ├── diagnose_calibration.py # Stage A 게이트 (a)~(f) 진단 + 그림 (§3.2)
+│   └── evaluate_axes.py        # 평가 축 — 노이즈 강건성(§3.5-4) + 신뢰도 지표(§3.4)
 ├── src/
 │   ├── physics/
 │   │   ├── tmm.py              #   미분가능 TMM — 프로젝트의 물리 코어
@@ -260,17 +268,21 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   │   ├── heads.py            #   공용 출력단 (ThicknessBound 등)
 │   │   ├── cnn.py              #   Level 1 1D CNN — flatten·dilated·bound 플래그 (Task 5 확정)
 │   │   └── winner_skip_mlp.py  #   1등 솔루션 213M skip-MLP 충실 재현 (상한 기준선)
-│   ├── utils/seed.py           # 시드 고정 유틸
+│   ├── utils/
+│   │   ├── seed.py             #   시드 고정 유틸
+│   │   └── io.py               #   원자적 저장 (calibrate·train_gpu 공용)
 │   ├── calibrate.py            # Stage A 캘리브레이션 — 물리 제약 최소제곱 TRF (자유도 1~7)
-│   ├── train.py                # baseline/k-fold 학습 — CPU 경로 (Stage B 물리 손실은 Task 7 예정)
-│   ├── train_gpu.py            # GPU(Colab) 학습 경로 — holdout 전용, 세션 유실 대비 resume+Drive 미러
+│   ├── losses.py               # Stage B 물리 손실 — 동결 TMM 디코더 + beta 워밍업 (§3.2)
+│   ├── train.py                # baseline/k-fold 학습 — CPU 경로 (물리 손실은 GPU 경로에만)
+│   ├── train_gpu.py            # GPU(Colab) 학습 경로 — holdout 전용, resume+Drive 미러, train.physics
 │   └── evaluate.py             # holdout 재평가·제출 파일 생성
 └── tests/
     ├── test_tmm.py             # §3.3 물리 단위 테스트
     ├── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
     ├── test_models.py          # 모델 계약(shape)·bound·미분·재현성·팩토리
     ├── test_train.py           # 지표·제출 파일 정렬·LR 스케줄·학습 스모크
-    ├── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·완료 run 스킵
+    ├── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·물리 손실 배선
+    ├── test_losses.py          # 물리 손실 — 동결 계약·dtype 충실도·beta=0 대조군 동등성·누수
     ├── test_calibrate.py       # Stage A — 파라미터화·분할·주파수 식별 계약
     └── test_dispersion_literature.py  # 코드 상수 ↔ literature/*.yml 원본 대조
 ```
