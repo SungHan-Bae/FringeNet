@@ -1,0 +1,59 @@
+# stage_b — **수렴 후 물리 fine-tune**의 대조군 (라운드 3). 조작 변인은 physics.beta 하나.
+#
+# 가설: 라운드 1·2에서 물리 항의 손해는 대부분 최적화 지연이었다(원 열화의 77~99%). 물리
+# 손실 표면은 fringe 차수마다 국소 최소가 있어 랜덤 초기화에서는 잘못된 분지로 끌려갈 수
+# 있으므로, **이미 올바른 분지에 든 수렴 모델에서 출발해** 물리 항을 시험한다.
+#
+# split·init_from은 네 run이 공유하고, 출처는 라운드 2의 대조군이다 — 같은 split에서 학습된
+# 체크포인트여야 한다 (다른 split이면 출처 모델이 이미 본 행이 holdout에 들어가 누수다.
+# train_gpu가 출처 metrics.json의 data 블록을 대조해 막는다).
+#
+# 라운드 2 대조군은 28에폭에서 best였고 29·30에서 val이 올라갔다(4.0612 → 4.0745 → 4.0797)
+# — **과적합 시작 지점**이다. 그래서 이 split에서는 "물리 항이 정규화로 작동하나"가 처음으로
+# 유효한 질문이 된다. 대조군도 같은 LR로 같은 에폭을 돌므로, 개선이 나오면 그것이 추가 학습
+# 예산 몫인지 물리 항 몫인지 분리된다.
+#
+# **라운드 1·2와 MAE를 직접 비교하지 말 것** — 학습 예산·LR 스케줄이 다르다. 유효한 비교는
+# 이 라운드 안에서의 beta 대조뿐이고, 판정은 `scripts/analyze_stage_b_curves.py`로 적합 수준을
+# 맞춰서 읽는다 (원 비교만 보면 라운드 1과 같은 함정에 빠진다).
+seed: 42
+experiment: stage_b
+run_name: ft-heldout-beta0
+
+data:
+  # 출처 체크포인트와 **같은 split이어야 한다** (위 주석 참조)
+  subset: null
+  holdout_thickness: [70, 150, 230]
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  # 라운드 2 대조군의 best 체크포인트. git에 없으므로(runs/는 텍스트만 추적) Drive 미러에서
+  # 받아와야 한다 — 노트북이 학습 전에 model.pt만 복사한다 (metrics.json은 git이 정본).
+  init_from: runs/stage_b/heldout-thickness-beta0/model.pt
+  epochs: 8
+  batch_size: 512
+  # 수렴 모델에서 출발하므로 원래 LR(1e-3)을 쓰면 첫 에폭에 망친다. 10배 작게.
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 0 # 이미 수렴한 가중치라 LR 워밍업이 필요 없다 (짧은 run에서 예산만 먹는다)
+  num_folds: 0
+  physics:
+    decoder: runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt
+    beta: 0.0
+    # 3,000은 30에폭 처음부터 학습용 값이다. 여기는 총 8,304스텝(531,441/512 x 8)이라
+    # 3,000이면 36%를 먹는다. 게다가 워밍업의 이유(랜덤 모델의 거대한 초기 잔차)가 해당
+    # 안 된다 — 수렴 모델의 재구성 L1은 이미 0.05 수준이다. 3.6%만 쓴다.
+    warmup_steps: 300

@@ -216,6 +216,11 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     캐스팅·캐시한다 (float64 대비 오차 max 6.0e-6 = σ의 0.07%, GPU float64는 1/32 처리율).
   - 진단: 매 에폭 `train_phys`(가중 전 재구성 L1)·`val_phys`를 로그에 남기고 best 에폭
     값을 metrics.json `val_phys_l1`에 기록한다. 참 두께에서의 하한은 E|ε| = 0.0075.
+  - **`train.init_from`** = 체크포인트 warm start (수렴 후 물리 fine-tune용,
+    `configs/stage_b/ft-heldout-beta*.yaml`). **분할이 같아야 한다** — 다른 split의 체크포인트로
+    warm start하면 출처 모델이 이미 본 행이 holdout에 들어가 누수다. `train_gpu`가 출처
+    `metrics.json`의 `data` 블록을 대조해 막고, 미러에서 model.pt만 받아 metrics.json이 없으면
+    대조 불가를 로그에 남긴다. config에 있으므로 resume 지문이 cold start와 갈라진다.
 - 평가: 전체/층별 MAE, 학습곡선, TMM 재구성 오차 히스토그램(신뢰도 지표), 두께 구간별 오차.
 
 ## 평가 규약 (데이터가 시뮬레이션 격자라서 생기는 함정)

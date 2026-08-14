@@ -51,7 +51,7 @@ from typing import Any
 import numpy as np
 import torch
 import yaml
-from torch import Tensor
+from torch import Tensor, nn
 from torch.nn.functional import l1_loss
 
 from src.data.dataset import REPO_ROOT, prepare_from_config
@@ -116,6 +116,58 @@ def _fingerprint(cfg: dict[str, Any], seed: int, n_train: int) -> str:
         sort_keys=True,
         ensure_ascii=False,
         default=str,
+    )
+
+
+def _init_from_checkpoint(model: nn.Module, cfg: dict[str, Any], device: torch.device) -> str:
+    """`train.init_from` 체크포인트의 가중치를 model에 적재한다 (warm start).
+
+    수렴된 모델에서 출발해 물리 항을 켜는 실험용이다 — 랜덤 초기화에서 물리 gradient에
+    끌려가면 잘못된 fringe 차수 분지에 안착할 수 있으므로, 올바른 분지에 이미 들어간
+    지점에서 물리 항을 시험한다.
+
+    **분할이 같아야 한다.** 다른 split에서 학습된 체크포인트로 warm start하면 그 모델이
+    이미 본 행이 이번 run의 holdout에 들어가 누수가 된다. 출처 run의 `metrics.json`이
+    옆에 있으면 `data` 블록을 대조해 막고, 없으면(미러에서 model.pt만 받은 경우) 대조가
+    불가능하다는 사실을 로그에 남긴다.
+
+    Returns:
+        로그에 남길 한 줄 (출처·성능·분할 대조 결과).
+
+    Raises:
+        FileNotFoundError: 체크포인트가 없는 경우.
+        ValueError: 모델 구조 또는 분할이 다른 경우.
+    """
+    path = Path(cfg["train"]["init_from"])
+    if not path.exists():
+        raise FileNotFoundError(
+            f"init_from 체크포인트가 없다: {path}\n"
+            "  runs/는 텍스트 산출물만 git 추적한다 — Drive 미러에서 복사할 것"
+            " (runs/CHECKPOINTS.md)"
+        )
+    ckpt = torch.load(path, map_location=device, weights_only=True)
+    if dict(ckpt["model_cfg"]) != dict(cfg["model"]):
+        raise ValueError(
+            f"init_from의 model 블록이 이번 config와 다르다: {path}\n"
+            "  구조가 다르면 warm start가 성립하지 않는다 (state_dict 키·shape 불일치)"
+        )
+    model.load_state_dict(ckpt["state_dict"])
+
+    split_note = "분할 대조 불가 (출처 metrics.json 없음 — 같은 split인지 직접 확인할 것)"
+    metrics_path = path.parent / "metrics.json"
+    if metrics_path.exists():
+        src_data = json.loads(metrics_path.read_text()).get("config", {}).get("data") or {}
+        this_data = cfg.get("data") or {}
+        if src_data != this_data:
+            raise ValueError(
+                f"init_from 출처의 분할이 이번 run과 다르다 — **누수**다: {path}\n"
+                f"  출처 data: {src_data}\n  이번 data: {this_data}\n"
+                "  출처 모델이 이미 본 행이 이번 holdout에 들어간다"
+            )
+        split_note = "분할 일치 확인"
+    return (
+        f"warm start: {path} (출처 val MAE {ckpt['val_mae']:.4f} nm, "
+        f"best epoch {ckpt['best_epoch']}) / {split_note}"
     )
 
 
@@ -193,6 +245,9 @@ def train_one_model_gpu(
     y_t = torch.from_numpy(y_train).to(device)
     x_v = torch.from_numpy(x_val).to(device)
     model = build_model(cfg["model"]).to(device)
+    if train_cfg.get("init_from"):
+        note = _init_from_checkpoint(model, cfg, device)
+        log_line(run_dir, f"[{tag}] {note}")
     # 물리 손실은 설정을 먼저 검증해 잘못된 config가 학습 시작 전에 걸리게 한다.
     # RNG를 소모하지 않으므로 beta=0 대조군의 학습 경로는 물리 항 도입 전과 같다.
     physics = build_physics_loss(train_cfg, device=device)

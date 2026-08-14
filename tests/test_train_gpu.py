@@ -521,3 +521,97 @@ def test_physics_warmup_override_reaches_training(tmp_path: Path, monkeypatch) -
 
     assert captured["cfg"]["train"]["physics"]["warmup_steps"] == 10
     assert captured["cfg"]["train"]["physics"]["beta"] == 100.0  # beta는 건드리지 않는다
+
+
+# --- train.init_from (warm start) -------------------------------------------------
+# 라운드 3의 전제: 수렴된 CNN에서 출발해 물리 항을 켠다. 랜덤 초기화에서 물리 gradient에
+# 끌려가면 잘못된 fringe 차수 분지에 안착할 수 있어, 올바른 분지에 이미 든 지점에서 시험한다.
+
+
+def _mkdir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _seed_checkpoint(tmp_path: Path, *, data: dict | None = None) -> Path:
+    """warm start 출처가 될 run 하나를 실제로 학습해 만든다."""
+    src = tmp_path / "src_run"
+    src.mkdir()
+    cfg = _tiny_cnn_cfg()
+    if data is not None:
+        cfg["data"] = data
+    _train(src, cfg)
+    metrics = {"config": {"data": cfg.get("data", {})}}
+    (src / "metrics.json").write_text(json.dumps(metrics))
+    return src / "model.pt"
+
+
+def test_init_from_loads_weights_and_logs_provenance(tmp_path: Path) -> None:
+    ckpt_path = _seed_checkpoint(tmp_path)
+    source = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["init_from"] = str(ckpt_path)
+    cfg["train"]["epochs"] = 1
+    cfg["train"]["lr"] = 0.0  # LR 0이면 가중치가 그대로여야 한다 — 적재 자체를 본다
+    out = _train(_mkdir(tmp_path / "warm"), cfg)
+
+    # 파라미터만 대조한다 — BatchNorm 러닝 통계는 버퍼라 lr=0에서도 forward가 갱신한다
+    warm_params = dict(load_model_checkpoint(tmp_path / "warm" / "model.pt").named_parameters())
+    src_model = load_model_checkpoint(ckpt_path)
+    for key, value in src_model.named_parameters():
+        torch.testing.assert_close(warm_params[key], value)
+    assert out["val_mae"] == pytest.approx(source["val_mae"], abs=1e-2)
+    log = (tmp_path / "warm" / "train.log").read_text()
+    assert "warm start" in log and "분할 일치 확인" in log
+
+
+def test_init_from_rejects_split_mismatch(tmp_path: Path) -> None:
+    """다른 split에서 학습된 체크포인트로 warm start하면 누수다 — 학습 전에 막는다."""
+    ckpt_path = _seed_checkpoint(tmp_path, data={"holdout_thickness": [70, 150, 230]})
+    cfg = _tiny_cnn_cfg()
+    cfg["data"] = {"val_frac": 0.1}
+    cfg["train"]["init_from"] = str(ckpt_path)
+    with pytest.raises(ValueError, match="누수"):
+        _train(_mkdir(tmp_path / "warm"), cfg)
+
+
+def test_init_from_rejects_architecture_mismatch(tmp_path: Path) -> None:
+    ckpt_path = _seed_checkpoint(tmp_path)
+    cfg = _tiny_cnn_cfg()
+    cfg["model"] = {"name": "mlp", "hidden_dims": [8]}
+    cfg["train"]["init_from"] = str(ckpt_path)
+    with pytest.raises(ValueError, match="model 블록"):
+        _train(_mkdir(tmp_path / "warm"), cfg)
+
+
+def test_init_from_missing_checkpoint_names_recovery(tmp_path: Path) -> None:
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["init_from"] = str(tmp_path / "nope.pt")
+    with pytest.raises(FileNotFoundError, match="Drive 미러"):
+        _train(_mkdir(tmp_path / "warm"), cfg)
+
+
+def test_init_from_warns_when_source_metrics_absent(tmp_path: Path) -> None:
+    """미러에서 model.pt만 받아온 경우 — 대조가 불가능하다는 사실을 로그에 남긴다."""
+    ckpt_path = _seed_checkpoint(tmp_path)
+    (ckpt_path.parent / "metrics.json").unlink()
+    cfg = _tiny_cnn_cfg()
+    cfg["train"]["init_from"] = str(ckpt_path)
+    cfg["train"]["epochs"] = 1
+    _train(_mkdir(tmp_path / "warm"), cfg)
+    assert "분할 대조 불가" in (tmp_path / "warm" / "train.log").read_text()
+
+
+def test_init_from_changes_resume_fingerprint(tmp_path: Path) -> None:
+    """warm start run이 cold start run의 resume.pt를 이어받으면 안 된다."""
+    ckpt_path = _seed_checkpoint(tmp_path)
+    cold = _tiny_cnn_cfg()
+    cold["train"]["epochs"] = 2
+    with pytest.raises(RuntimeError, match="중단"):
+        _train(_mkdir(tmp_path / "run"), cold, _abort_after_epoch=1)
+    warm = _tiny_cnn_cfg()
+    warm["train"]["epochs"] = 2
+    warm["train"]["init_from"] = str(ckpt_path)
+    with pytest.raises(ValueError, match="config"):
+        _train(tmp_path / "run", warm)
