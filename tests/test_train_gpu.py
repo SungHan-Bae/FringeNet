@@ -451,3 +451,73 @@ def test_physics_config_typo_raises_before_training(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="physics"):
         _train(tmp_path, cfg)
     assert not (tmp_path / "model.pt").exists()
+
+
+def test_physics_warmup_override_requires_physics_block(tmp_path: Path) -> None:
+    import yaml
+
+    cfg = {
+        "seed": 0,
+        "experiment": "exp",
+        "run_name": "no-physics",
+        "model": {"name": "cnn", "channels": [8], "strides": [1]},
+        "train": {"epochs": 1, "batch_size": 64, "lr": 1e-3},
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(ValueError, match="physics 블록이 없는"):
+        run_config(path, device="cpu", physics_warmup_steps=10, runs_root=tmp_path / "runs")
+
+
+def test_physics_warmup_override_reaches_training(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """스모크 손잡이가 실제 학습 설정까지 전달되는지 — 데이터·GPU 없이 검증한다.
+
+    서브셋 스모크는 총 스텝이 본 학습의 1/600이라 기본 워밍업(3,000)이면 유효 beta가
+    목표의 2%에 그친다. 그 상태로 "물리 손실 경로를 확인했다"고 넘어가면 안 된다.
+    """
+    import yaml
+
+    from src import train_gpu as tg
+
+    cfg = {
+        "seed": 0,
+        "experiment": "exp",
+        "run_name": "phys",
+        "model": {"name": "cnn", "channels": [8], "strides": [1]},
+        "train": {
+            "epochs": 1,
+            "batch_size": 64,
+            "lr": 1e-3,
+            "physics": {"beta": 100.0, "warmup_steps": 3000},
+        },
+    }
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+
+    captured: dict = {}
+
+    def fake_prepare(_cfg: dict) -> tuple:
+        x = np.zeros((8, 226), dtype=np.float32)
+        y = np.zeros((8, 4), dtype=np.float32)
+        return x, y, np.arange(6), np.arange(6, 8)
+
+    def fake_train(*args: object, **kwargs: object) -> dict:
+        captured["cfg"] = args[4]  # train_one_model_gpu(x_tr, y_tr, x_v, y_v, cfg, ...)
+        per_layer = {f"layer_{i}": 1.0 for i in range(1, 5)} | {"overall": 1.0}
+        return {
+            "tag": "model",
+            "seed": 0,
+            "ckpt_path": "model.pt",
+            "best_epoch": 1,
+            "val_mae": 1.0,
+            "val_mae_per_layer": per_layer,
+            "val_pred": np.zeros((2, 4), dtype=np.float32),
+            "wall_sec": 0.1,
+        }
+
+    monkeypatch.setattr(tg, "prepare_from_config", fake_prepare)
+    monkeypatch.setattr(tg, "train_one_model_gpu", fake_train)
+    tg.run_config(path, device="cpu", physics_warmup_steps=10, runs_root=tmp_path / "runs")
+
+    assert captured["cfg"]["train"]["physics"]["warmup_steps"] == 10
+    assert captured["cfg"]["train"]["physics"]["beta"] == 100.0  # beta는 건드리지 않는다

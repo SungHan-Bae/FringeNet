@@ -459,6 +459,7 @@ def run_config(
     lr: float | None = None,
     weight_decay: float | None = None,
     subset: int | None = None,
+    physics_warmup_steps: int | None = None,
     resume: bool = True,
     mirror_dir: str | Path | None = None,
     mirror_resume_every: int = 5,
@@ -478,11 +479,14 @@ def run_config(
         mirror_dir: 세션 유실 대비 미러 루트 (예: Drive 경로). 실제 미러는
             <mirror_dir>/<experiment>/<run_name>/에 쌓인다.
         mirror_resume_every: resume.pt 미러 복사 간격(에폭) — train_one_model_gpu 참조.
+        physics_warmup_steps: 물리 항 워밍업 스텝 수 덮어쓰기. **스모크 전용 손잡이**다 —
+            서브셋 스모크는 총 스텝이 본 학습의 1/600이라 기본 워밍업(3,000)이면 유효
+            beta가 목표의 2%에 그쳐 물리 항이 사실상 꺼진 채로 지나간다.
         runs_root: 산출물 루트 (기본 runs/ — 테스트용 오버라이드).
 
     Raises:
-        ValueError: config가 k-fold 모드(num_folds >= 2)인 경우 —
-            GPU 경로는 holdout 단일 모드만 지원한다.
+        ValueError: config가 k-fold 모드(num_folds >= 2)인 경우 (GPU 경로는 holdout 단일
+            모드만 지원), 또는 physics 블록이 없는 config에 physics_warmup_steps를 준 경우.
     """
     cfg: dict[str, Any] = yaml.safe_load(Path(config_path).read_text())
     if run_name is not None:
@@ -497,6 +501,13 @@ def run_config(
         cfg["train"]["weight_decay"] = weight_decay
     if subset is not None:
         cfg.setdefault("data", {})["subset"] = subset
+    if physics_warmup_steps is not None:
+        if "physics" not in cfg["train"]:
+            raise ValueError(
+                "physics 블록이 없는 config에 physics_warmup_steps를 줄 수 없다 — "
+                f"{config_path}에 train.physics를 두거나 인자를 빼라"
+            )
+        cfg["train"]["physics"]["warmup_steps"] = int(physics_warmup_steps)
 
     if int(cfg["train"].get("num_folds", 0)) >= 2:
         raise ValueError("GPU 경로는 holdout 단일 모드만 지원한다 — k-fold는 src/train.py 참조")
