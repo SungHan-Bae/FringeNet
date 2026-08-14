@@ -1,5 +1,5 @@
 # stage_b — **수렴 후 물리 fine-tune** (라운드 3, beta = 300).
-# 조작 변인은 physics.beta 하나이고, 가설·split·init_from·LR 근거는
+# 조작 변인은 physics.beta 하나이고, 가설·split·init_from·LR·에폭 근거는
 # ft-heldout-beta0.yaml 참조. beta 300 = 물리 항이 지도 항을 압도하는 상한 쪽 끝점.
 
 seed: 42
@@ -28,7 +28,7 @@ train:
   # 라운드 2 대조군의 best 체크포인트. git에 없으므로(runs/는 텍스트만 추적) Drive 미러에서
   # 받아와야 한다 — 노트북이 학습 전에 model.pt만 복사한다 (metrics.json은 git이 정본).
   init_from: runs/stage_b/heldout-thickness-beta0/model.pt
-  epochs: 8
+  epochs: 40
   batch_size: 512
   # 수렴 모델에서 출발하므로 원래 LR(1e-3)을 쓰면 첫 에폭에 망친다. 10배 작게.
   lr: 1.0e-4
@@ -39,7 +39,7 @@ train:
   physics:
     decoder: runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt
     beta: 300.0
-    # 3,000은 30에폭 처음부터 학습용 값이다. 여기는 총 8,304스텝(531,441/512 x 8)이라
-    # 3,000이면 36%를 먹는다. 게다가 워밍업의 이유(랜덤 모델의 거대한 초기 잔차)가 해당
-    # 안 된다 — 수렴 모델의 재구성 L1은 이미 0.05 수준이다. 3.6%만 쓴다.
+    # 워밍업의 이유(랜덤 모델의 거대한 초기 잔차)가 여기엔 해당 안 된다 — 수렴 모델의
+    # 재구성 L1은 이미 0.05 수준이다. 총 41,520스텝(531,441/512 x 40)의 0.7%만 써서
+    # 물리 항이 run의 99%에서 켜져 있게 한다 (효과를 β에 귀속시키기 위해).
     warmup_steps: 300

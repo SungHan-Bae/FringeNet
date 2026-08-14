@@ -615,3 +615,75 @@ def test_init_from_changes_resume_fingerprint(tmp_path: Path) -> None:
     warm["train"]["init_from"] = str(ckpt_path)
     with pytest.raises(ValueError, match="config"):
         _train(tmp_path / "run", warm)
+
+
+# --- 완료 run 스킵의 설정 대조 -----------------------------------------------------
+# metrics.json이 설정 스냅샷을 겸하므로 대조가 가능하다. 하지 않으면 config를 고쳐
+# 재실행해도 옛 결과를 조용히 돌려준다 (epochs만 늘린 run이 이전 예산의 수치를 받는 형태).
+
+
+def _completed_run(tmp_path: Path, cfg: dict, snapshot: dict | None) -> Path:
+    """완료 기록만 있는 run 디렉토리를 만든다 (학습하지 않는다)."""
+    import yaml
+
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True))
+    run_dir = tmp_path / "runs" / cfg["experiment"] / cfg["run_name"]
+    run_dir.mkdir(parents=True)
+    done: dict = {
+        "experiment": cfg["experiment"],
+        "run_name": cfg["run_name"],
+        "model": {"val_mae": 1.23},
+    }
+    if snapshot is not None:
+        done["config"] = snapshot
+    (run_dir / "metrics.json").write_text(json.dumps(done, ensure_ascii=False))
+    return cfg_path
+
+
+def _skip_cfg(epochs: int = 1) -> dict:
+    return {
+        "seed": 0,
+        "experiment": "exp",
+        "run_name": "done",
+        "model": {"name": "mlp", "hidden_dims": [8]},
+        "train": {"epochs": epochs, "batch_size": 64, "lr": 1e-3},
+    }
+
+
+def test_completed_skip_requires_matching_config(tmp_path: Path) -> None:
+    """설정이 같으면 기존대로 건너뛴다 (학습·데이터 로드 없이 옛 결과 반환)."""
+    cfg = _skip_cfg()
+    cfg_path = _completed_run(tmp_path, cfg, snapshot=cfg)
+    out = run_config(cfg_path, device="cpu", runs_root=tmp_path / "runs")
+    assert out["model"]["val_mae"] == 1.23
+
+
+def test_completed_skip_raises_on_changed_config(tmp_path: Path) -> None:
+    """epochs만 늘려 재실행하면 옛 예산의 수치를 돌려주면 안 된다."""
+    cfg_path = _completed_run(tmp_path, _skip_cfg(epochs=8), snapshot=_skip_cfg(epochs=8))
+    changed = _skip_cfg(epochs=40)
+    cfg_path.write_text(__import__("yaml").safe_dump(changed, allow_unicode=True))
+    with pytest.raises(ValueError, match="train.epochs"):
+        run_config(cfg_path, device="cpu", runs_root=tmp_path / "runs")
+
+
+def test_completed_skip_allows_missing_snapshot(tmp_path: Path) -> None:
+    """스냅샷 이전 run은 대조가 불가능하다 — 막으면 재실행이 못 된다."""
+    cfg = _skip_cfg()
+    cfg_path = _completed_run(tmp_path, cfg, snapshot=None)
+    out = run_config(cfg_path, device="cpu", runs_root=tmp_path / "runs")
+    assert out["model"]["val_mae"] == 1.23
+
+
+def test_stale_config_keys_reports_nested_paths_and_ignores_run_name() -> None:
+    from src.train_gpu import stale_config_keys
+
+    a = {"run_name": "x", "seed": 0, "train": {"epochs": 8, "physics": {"beta": 30.0}}}
+    b = {"run_name": "y", "seed": 0, "train": {"epochs": 40, "physics": {"beta": 30.0}}}
+    assert stale_config_keys(a, b) == ["train.epochs"]
+    assert stale_config_keys(a, a) == []
+    assert stale_config_keys(None, b) == []
+    # 한쪽에만 있는 키도 잡는다 (물리 항을 뺀 재실행 등)
+    c = {"run_name": "x", "seed": 0, "train": {"epochs": 8}}
+    assert stale_config_keys(a, c) == ["train.physics"]

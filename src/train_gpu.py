@@ -504,6 +504,31 @@ def _load_completed_metrics(path: Path) -> dict[str, Any] | None:
     return metrics if "model" in metrics else None
 
 
+def stale_config_keys(stored: Any, current: dict[str, Any], prefix: str = "") -> list[str]:
+    """완료 기록의 설정 스냅샷과 현재 config가 다른 지점의 점 표기 키 목록.
+
+    `run_name`은 뺀다 (같은 run을 가리키는 이름이므로 항상 같다). 스냅샷이 없으면
+    (`stored is None`) 대조가 불가능하므로 빈 목록을 돌려준다 — 판정 불가를 불일치로
+    취급하면 스냅샷 이전 run의 재실행이 막힌다.
+    """
+    if stored is None:
+        return []
+    if not isinstance(stored, dict) or not isinstance(current, dict):
+        return [] if stored == current else [prefix.rstrip(".") or "config"]
+    stale: list[str] = []
+    for key in sorted(set(stored) | set(current)):
+        if not prefix and key == "run_name":
+            continue
+        path = f"{prefix}{key}"
+        if key not in stored or key not in current:
+            stale.append(path)
+        elif isinstance(stored[key], dict) and isinstance(current[key], dict):
+            stale.extend(stale_config_keys(stored[key], current[key], f"{path}."))
+        elif stored[key] != current[key]:
+            stale.append(path)
+    return stale
+
+
 def run_config(
     config_path: str | Path,
     *,
@@ -587,6 +612,19 @@ def run_config(
             if done is not None:  # 미러에만 완료 기록이 있으면 산출물을 로컬로 되가져온다
                 _mirror_copy(mirror_run, run_dir, ("metrics.json", "train.log", "model.pt"))
         if done is not None:
+            # **설정이 같을 때만** 건너뛴다. metrics.json이 설정 스냅샷을 겸하므로 대조가
+            # 가능하고, 하지 않으면 config를 고쳐 재실행해도 옛 결과를 조용히 돌려준다
+            # (epochs만 늘린 run이 이전 예산의 수치를 그대로 받는 형태로 걸렸다).
+            stale = stale_config_keys(done.get("config"), cfg)
+            if stale:
+                raise ValueError(
+                    f"run {experiment}/{cfg['run_name']}: 완료 기록의 설정이 현재 config와"
+                    f" 다르다 — 건너뛰면 옛 결과를 반환한다.\n"
+                    f"  다른 키: {', '.join(stale)}\n"
+                    f"  같은 이름으로 다시 돌리려면 {run_dir}"
+                    + (f" 와 미러 {mirror_run}" if mirror_run is not None else "")
+                    + "를 지우고, 둘을 함께 남기려면 run_name을 바꿀 것"
+                )
             print(
                 f"run {experiment}/{cfg['run_name']}: 이미 완료 — 건너뜀"
                 f" (holdout MAE {done['model']['val_mae']:.4f} nm)"
