@@ -110,8 +110,16 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
      전 작업 완료+push 성공 시 런타임 자동 반납
 - **Colab 노트북은 라운드(학습 세션)별 1개**: `notebooks/<대실험>/roundN_<내용>.ipynb`.
   완료된 라운드는 실행 로그 보존을 위해 수정·재실행하지 않는다. 새 라운드는 직전 노트북을
-  복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다. **복사 전 원본이 디스크 최신인지
-  확인** — IDE의 옛 버퍼가 저장되면 커밋된 셀 fix를 되돌린다. 필수 셀 규약:
+  복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다.
+  **IDE 옛 버퍼 사고를 두 번 겪었다** — 노트북을 연 채로 커밋이 진행되면 그 뒤 에디터 저장이
+  옛 버퍼 전체로 디스크를 덮어써 커밋된 셀 수정이 조용히 사라진다. JSON diff라 눈으로 못 잡으니
+  **확인을 사람 눈이 아니라 명령에 맡긴다**:
+  - 편집 **전**: `git status --short notebooks/` — 깨끗해야 시작한다. 연 채로 pull/checkout
+    했으면 에디터에서 닫았다 다시 연다 (버퍼를 버린다).
+  - 커밋 **전**: `python scripts/check_notebook_regression.py` — 최근 커밋이 추가한 줄을
+    지우고 있으면 종료코드 1로 알린다. `pytest tests/test_notebooks.py`는 필수 셀 규약을 건다.
+
+  필수 셀 규약 (`tests/test_notebooks.py`가 검사한다):
   1. Drive 마운트는 항상 `force_remount=True` (이전 세션의 stale 마운트 배제)
   2. push 셀 PAT는 정적 소스에서 자동 로드 (env → Colab Secrets → Drive 파일) — 무정지
   3. 런타임 자동 반납의 취소 대기 sleep은 **5초** (긴 대기 금지 — 유휴 과금)
@@ -306,6 +314,7 @@ pytest -q
 ruff check . && ruff format .
 python scripts/verify_data.py
 python scripts/measure_noise.py                                                   # 노이즈 σ·유계 상한
+python scripts/check_notebook_regression.py                                       # 노트북 되돌림 탐지
 python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
 python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yaml  # Stage A (디코더)
 python scripts/diagnose_calibration.py                                            # Stage A 게이트·그림

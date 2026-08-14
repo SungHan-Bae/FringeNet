@@ -20,7 +20,11 @@ import pytest
 NOTEBOOK_DIR = Path(__file__).resolve().parents[1] / "notebooks"
 NOTEBOOKS = sorted(NOTEBOOK_DIR.rglob("*.ipynb"))
 # 정적 PAT 소스 — 이 중 둘 이상을 시도해야 Run-All이 입력 대기 없이 돈다.
-PAT_SOURCES = (r"os\.environ.*GITHUB_PAT|GITHUB_PAT.*os\.environ", r"userdata\.get", r"github_pat\.txt")
+PAT_SOURCES = (
+    r"os\.environ.*GITHUB_PAT|GITHUB_PAT.*os\.environ",
+    r"userdata\.get",
+    r"github_pat\.txt",
+)
 # 반납 셀을 식별하는 표지와, 취소 대기 sleep의 상한 [초].
 TEARDOWN = re.compile(r"kill_session|terminate|unassign", re.I)
 MAX_TEARDOWN_SLEEP = 5
