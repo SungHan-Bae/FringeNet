@@ -1,0 +1,16 @@
+# stage_a — 표본 수 민감도 (위쪽 지렛대). 채택 설정과 **fit_rows만** 다르다.
+#
+# 50,000은 분할 계약의 상한이다 (`_SPLIT_FIT_ROWS`) — 그 위는 판정 표본 20,000행과 겹쳐
+# 피팅·진단 분리가 깨진다. 8k → 50k는 표본 6.25배, 통계오차로는 2.5배 축소에 해당하므로,
+# 여기서 게이트 수치가 움직이지 않으면 train 전체(729,000행)로 늘려도 움직이지 않는다.
+seed: 42
+experiment: stage_a
+run_name: fitrows-50k
+
+data:
+  fit_rows: 50000
+  diag_rows: 20000
+
+model:
+  si_source: Si_nk_Schinke.yml
+  free: [lam_nu0, lam_r1, lam_r2, sin_b1, sin_c1, si_de, si_klog]

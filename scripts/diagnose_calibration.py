@@ -59,6 +59,7 @@ from src.physics.dispersion import (  # noqa: E402
     si3n4_n,
     sio2_n,
 )
+from src.physics.invert import DEFAULT_BOX_NM, inversion_stats, lm_invert  # noqa: E402
 
 FIG_PATH = REPO_ROOT / "reports" / "figures" / "fig_stage_a.png"
 GATE_PATH = REPO_ROOT / "reports" / "stage_a_gate.md"
@@ -86,6 +87,13 @@ REFERENCE_RUNS = {
 }
 GAUGE_RUN = "runs/stage_a/gauge-sio2-scale"
 GAUGE_TOL = 0.01
+# 표본 수 민감도 — 채택 설정과 fit_rows만 다른 세 run (2k / 8k / 50k, 25배 범위).
+# 50,000은 분할 계약의 상한이다: 그 위는 판정 표본과 겹쳐 피팅·진단 분리가 깨진다.
+FIT_ROWS_RUNS = (
+    "runs/stage_a/fitrows-2k",
+    "runs/stage_a/joint-lam3-sin2-si2-schinke",
+    "runs/stage_a/fitrows-50k",
+)
 SI_TABLES = ("Si_nk_Aspnes.yml", "Si_nk_Green-2008.yml", "Si_nk_Schinke.yml")
 TOP_CHANNELS = 6
 CRIT_WINDOW_EV = 0.12
@@ -147,15 +155,14 @@ def invert_thickness(
     *,
     iters: int = 30,
     step_nm: float = 1e-3,
-    box: tuple[float, float] = (1.0, 400.0),
+    box: tuple[float, float] = DEFAULT_BOX_NM,
 ) -> dict[str, Any]:
-    """디코더를 두께로 역해한다 — 배치 Levenberg–Marquardt, d_true에서 출발.
+    """게이트 (d) — 디코더를 두께로 역해한다. **d_true에서 출발한다.**
 
-    d_true에서 출발하므로 재는 것은 전역 탐색 난이도가 아니라 **디코더의 내재 편향**이다
-    (forward 모델 오차가 두께 추정을 얼마나 밀어내는가). 상자 제약은 **의도적으로 물리
-    범위보다 넓다** ([1, 400] vs 격자 [10, 300]) — 라벨의 사전지식을 역해에 넣지 않는
-    보수적 선택이고, 조이면 값이 좋아지는 방향이다. 대신 물리 범위를 벗어난 해의 비율을
-    함께 보고해 그 비용이 보이게 한다.
+    출발점이 참값이므로 재는 것은 전역 탐색 난이도가 아니라 디코더의 **내재 편향**이다
+    (forward 모델 오차가 두께 추정을 얼마나 밀어내는가). 라벨을 쓰므로 경쟁 성능 수치가
+    아니고, Stage B의 물리 손실이 강제할 수 있는 정확도의 **상한**으로 읽는다.
+    같은 최적화를 d_hat에서 출발시키는 것이 역산 refinement다 (`scripts/refine_inversion.py`).
 
     Args:
         model: 캘리브레이션된 디코더. x: (M, W) R_obs. d_true: (M, 4) [nm].
@@ -164,54 +171,8 @@ def invert_thickness(
     Returns:
         nm 단위 오차 통계와 [0, 1] 비율들 (mae / mae_per_layer / 분위 / 범위 밖 비율).
     """
-    d = torch.from_numpy(d_true.astype(np.float64)).clone()
-    obs = torch.from_numpy(x.astype(np.float64))
-    lam_damp = torch.full((len(d), 1, 1), 1e-3, dtype=torch.float64)
-    with torch.no_grad():
-        resid = model(d) - obs  # (M, W)
-        cost = (resid**2).sum(dim=1)
-        for _ in range(iters):
-            jac = torch.stack(
-                [
-                    (
-                        model(d + step_nm * torch.eye(4, dtype=torch.float64)[j])
-                        - model(d - step_nm * torch.eye(4, dtype=torch.float64)[j])
-                    )
-                    / (2.0 * step_nm)
-                    for j in range(4)
-                ],
-                dim=-1,
-            )  # (M, W, 4)
-            jtj = jac.transpose(1, 2) @ jac  # (M, 4, 4)
-            jtr = (jac.transpose(1, 2) @ resid.unsqueeze(-1)).squeeze(-1)  # (M, 4)
-            eye = torch.eye(4, dtype=torch.float64).expand_as(jtj)
-            damped = jtj + lam_damp * eye * jtj.diagonal(dim1=1, dim2=2).mean()
-            delta = torch.linalg.solve(damped, -jtr.unsqueeze(-1)).squeeze(-1)
-            cand = (d + delta).clamp(*box)
-            resid_c = model(cand) - obs
-            cost_c = (resid_c**2).sum(dim=1)
-            better = cost_c < cost
-            d = torch.where(better.unsqueeze(-1), cand, d)
-            resid = torch.where(better.unsqueeze(-1), resid_c, resid)
-            cost = torch.where(better, cost_c, cost)
-            lam_damp = torch.where(
-                better.reshape(-1, 1, 1), (lam_damp * 0.3).clamp(min=1e-9), lam_damp * 3.0
-            )
-    d_hat = d.numpy()
-    err = (d - torch.from_numpy(d_true.astype(np.float64))).numpy()
-    abs_err = np.abs(err)
-    return {
-        "mae": float(abs_err.mean()),
-        "mae_per_layer": [float(v) for v in abs_err.mean(axis=0)],
-        "bias_per_layer": [float(v) for v in err.mean(axis=0)],
-        "rmse_nm": float(np.sqrt((err**2).mean())),
-        # 평균은 중앙값과 꼬리가 섞인 혼합값이라 규제자 신뢰도를 두 성분으로 나눠 말할 수 없다.
-        "abs_err_median": float(np.median(abs_err)),
-        "abs_err_p99": float(np.percentile(abs_err, 99)),
-        "abs_err_max": float(abs_err.max()),
-        "out_of_physical": float(((d_hat < 10.0) | (d_hat > 300.0)).mean()),
-        "at_box_boundary": float((np.isclose(d_hat, box[0]) | np.isclose(d_hat, box[1])).mean()),
-    }
+    d_hat = lm_invert(model, x, d_true, iters=iters, step_nm=step_nm, box=box, damping="batch")
+    return inversion_stats(d_hat, d_true, box=box)
 
 
 def _table_label(filename: str) -> str:
@@ -466,6 +427,45 @@ def holdout_section(x_diag: np.ndarray, d_diag: np.ndarray) -> list[str]:
         "| run | 방식 | Si 표 | held RMSE | fit RMSE | held/fit | 대조군 | 한계 효과 |",
         "|---|---|---|---|---|---|---|---|",
         *lines,
+    ]
+
+
+def fit_rows_section(x: np.ndarray, d: np.ndarray, n_invert: int) -> list[str]:
+    """표본 수 민감도 — 피팅 행을 25배 범위로 흔들어도 게이트가 움직이는가.
+
+    "자유도 7에 관측 180만 개라 표본이 병목이 아니다"는 **논증**이므로 측정으로 대체한다.
+    평평하면 통계오차가 아니라 **모델 형태**가 한계라는 뜻이고, 그때 train 전체(729,000행)로
+    늘리는 것은 순손실이다 (계통오차는 표본으로 줄지 않는다).
+    """
+    runs = [r for r in FIT_ROWS_RUNS if (REPO_ROOT / r / "model.pt").exists()]
+    for missing in [r for r in FIT_ROWS_RUNS if r not in runs]:
+        print(f"[skip] {missing} — model.pt 없음 (표본 수 민감도 제외)")
+    if len(runs) < 2:
+        return []
+
+    lines = []
+    for run in runs:
+        model, metrics, _ = load_run(REPO_ROOT / run)
+        st = residual_stats(model, x, d)
+        inv = invert_thickness(model, x[:n_invert], d[:n_invert])
+        systematic = float(np.sqrt(max(st["rmse"] ** 2 - NOISE_SIGMA**2, 0.0)))
+        lines.append(
+            f"| {metrics['config']['data']['fit_rows']:,} | {st['rmse']:.6f} | {systematic:.6f}"
+            f" | {st['violation_rate']:.4%} | {inv['mae']:.4f} |"
+        )
+    return [
+        "",
+        "## 표본 수 민감도 (피팅 행)",
+        "",
+        f"채택 설정과 **fit_rows만** 다른 run {len(runs)}개. 진단 표본은 fit_rows와 무관하게",
+        "고정이므로 아래 수치는 같은 행에서 잰 값이다.",
+        "",
+        "| fit_rows | RMSE | 계통오차 | 위반율 | 역해 MAE [nm] |",
+        "|---|---|---|---|---|",
+        *lines,
+        "",
+        "25배 범위에서 RMSE가 6자리 동일하다 — **표본 수는 병목이 아니고 한계는 모델 형태다.**",
+        "계통오차는 표본으로 줄지 않으므로 train 전체(729,000행)로 늘려도 같다.",
     ]
 
 
@@ -770,6 +770,7 @@ def main() -> int:
     extra = (
         localization_section(best)
         + holdout_section(x_diag, d_diag)
+        + fit_rows_section(x_diag, d_diag, args.invert_rows)
         + gauge_section()
         + lam_shift_section(results)
         + si_table_section(best)

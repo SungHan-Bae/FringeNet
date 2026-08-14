@@ -199,6 +199,11 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     λ 절대 스케일 검정 통과(1.00689), 물성 전부 문헌 정합(독립 두 방법 0.32~0.74%).
     **게이트 (b) 미통과 (9.99%)** — 잔차는 대역 단파장 끝(Luke 유효범위 밖 외삽)에 몰리고
     그 구간엔 문헌표 불일치가 없다(모델 부족).
+  - **피팅 표본을 늘려도 좋아지지 않는다 — 측정으로 확인.** `fit_rows` 2k/8k/50k(25배)에서
+    RMSE·계통오차가 **6자리 동일**하고 역해 MAE도 0.3402~0.3404다 (`configs/stage_a/fitrows-*.yaml`,
+    게이트 리포트의 «표본 수 민감도»). 한계는 통계오차가 아니라 **모델 형태**이므로 train
+    전체(729,000행)로 늘리는 것은 순손실이다 — 계통오차는 표본으로 줄지 않는다.
+    같은 이유로 **디코더를 개선하려면 물성 모델을 손봐야 한다**(게이트 (b) 후속).
   - **Stage B 디코더 = `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt`**
     (`src.losses.DEFAULT_DECODER`).
 - **Stage B = `src/losses.py` + `src/train_gpu.py`의 `train.physics` 블록**:
@@ -225,6 +230,32 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     warm start하면 출처 모델이 이미 본 행이 holdout에 들어가 누수다. `train_gpu`가 출처
     `metrics.json`의 `data` 블록을 대조해 막고, 미러에서 model.pt만 받아 metrics.json이 없으면
     대조 불가를 로그에 남긴다. config에 있으므로 resume 지문이 cold start와 갈라진다.
+- **역산 refinement = `src/physics/invert.py` + `scripts/refine_inversion.py`** (Task 7의
+  사전등록 2). 물리를 손실이 아니라 **추론 후 보정**으로 쓴다: 예측 `d_hat`을 출발점으로
+  동결 디코더를 관측 R에 맞춰 배치 LM으로 재적합한다. 라벨·격자를 안 쓰므로 test에도 쓸 수 있다.
+  - **`lm_invert`의 `d_init`이 실험의 정의다.** 게이트 (d)는 `d_true`(디코더 내재 편향 = 상한),
+    refinement는 `d_hat`. 같은 함수를 쓰되 **출발점만** 다르고 그 차이가 측정의 전부다.
+  - **확정 (2026-08-14)**: holdout MAE **2.3455 → 0.6110 nm (−74%)**, 98%의 행이 개선.
+    격자 중앙 출발은 **77.68 nm로 실패** → CNN의 기여는 정밀도가 아니라 **올바른 fringe 분지**다.
+    상한(참값 출발) 0.3336. 정본은 `reports/inversion_refine.md`.
+  - **감쇠 스케일**: `damping="batch"`(게이트 (d)의 기존 동작)는 한 행의 갱신이 배치 구성에
+    의존해 **청크를 바꾸면 답이 달라진다**. refinement는 `"row"`를 쓴다 (청크 불변, 테스트로 고정).
+    두 값을 잘못 조합하면 조용히 다른 수치가 나오는 대신 에러가 난다.
+  - **추론 비용은 손해다 — 숨기지 않는다.** 정본은 `reports/inversion_bench.md`
+    (`scripts/bench_invert.py`, GPU는 `notebooks/inversion/round1_gpu-bench.ipynb`).
+    행당 TMM forward가 270회(야코비안 중앙차분 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M
+    skip-MLP forward보다 **한 자릿수 느리다**(L4에서 17.26배). 서사는 정확도·모델 크기
+    (2.5 MB vs 813.6 MB)에 대한 주장이지 지연에 대한 주장이 아니다.
+    - **단일 배수를 인용하지 말 것** — 하드웨어에 크게 의존한다. skip-MLP는 GEMM 한 방이라
+      BLAS·GPU 최적화를 온전히 받고 LM은 비정형 + 대역폭 바운드라 덜 받아서, 같은 코드가
+      기계마다 다른 배수를 낸다. 배수는 리포트에서 읽고 기계를 함께 적는다.
+    - **GPU 이득의 절반 이상을 float64가 먹는다** — L4에서 LM complex128은 10.3배 빨라지는데
+      complex64는 24.5배다(소비자 GPU FP64 1/32). 배포 경로는 complex64가 맞고 **판정 수치는
+      계속 complex128**이다. CPU↔GPU는 bit가 아니라 MAE 수준에서 일치한다(같은 표본 1.8% 차).
+    - **반복수를 줄이는 것은 공짜가 아니다** — 10회는 30회보다 MAE가 0.02~0.03 nm 나쁘다
+      (CPU·GPU 세 측정에서 일관). 3배 싸지는 대신 치르는 값이므로 함께 적는다.
+    - 미착수 레버: 해석적 야코비안(디코더가 미분가능한데 역해는 중앙차분을 쓴다) ·
+      수렴 행 조기 종료(고정 30회 대신).
 - 평가: 전체/층별 MAE, 학습곡선, TMM 재구성 오차 히스토그램(신뢰도 지표), 두께 구간별 오차.
 
 ## 평가 규약 (데이터가 시뮬레이션 격자라서 생기는 함정)
@@ -294,10 +325,10 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   - [x] **β ablation 3라운드 — 물리 손실 항 기각.** 무작위 split · held-out 두께 값 split ·
         수렴 지점 warm start 전부에서 β에 단조로 해롭고 적합 수준을 맞추면 이득이 0이다.
         **이미 끝났으니 다시 돌리지 않는다** (`runs/stage_b/*` 12런이 정본).
-  - [ ] **역산 refinement** (사전등록 2): 물리를 손실이 아니라 **추론 후 보정**으로 쓴다.
-        `scripts/diagnose_calibration.py`의 `invert_thickness`(배치 LM) 재사용 — 단 그 함수는
-        `d_true`에서 출발하므로 **`d_hat`에서 출발하도록** 바꾸는 것이 실제 검정이다.
-        후처리이므로 평가 규약대로 별도 행으로 분리 보고한다.
+  - [x] **역산 refinement — 사전등록 2 부합.** holdout MAE **2.3455 → 0.6110 nm (−74%)**
+        (`reports/inversion_refine.md`). 물리 단독(격자 중앙 출발)은 77.68 nm로 실패하므로
+        **CNN의 기여는 정밀도가 아니라 올바른 fringe 분지**다. 상한(참값 출발)이 0.3336이다.
+        추론 비용은 `reports/inversion_bench.md` — 지연에서는 손해다(아래 스펙).
   - [ ] **평가 축 실측**: 노이즈 강건성 · 신뢰도 지표 (`scripts/evaluate_axes.py`).
         체크포인트가 git에 없어 Drive 미러에서 받아와야 한다 (`runs/CHECKPOINTS.md`).
   - [ ] **`reports/stage_b.md` 취합** — `stage_b_curves*.md`는 스크립트 산출물이고 서사가 아니다.
@@ -355,7 +386,16 @@ python scripts/analyze_stage_b_curves.py $(for b in 0 30 100 300; do \
 
 # 평가 축 (노이즈 강건성 · 신뢰도 지표) — 학습 없이 체크포인트 위에서 돈다.
 # 체크포인트는 git에 없으므로 Drive 미러에서 복사한 뒤 실행한다 (runs/CHECKPOINTS.md).
+# 단 `stage_b/beta0`은 `level1_cnn/flatten-dilated-bound`와 비트 동일하고 그 model.pt는
+# git 히스토리에 있다 (git show <커밋>:... — runs/CHECKPOINTS.md) — 백본 축은 Drive 없이 돈다.
 python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta100
+
+# 역산 refinement (추론 후 물리 보정) — 위와 같은 체크포인트 + Stage A 디코더. 전체 holdout
+# 81,000행이 CPU 8스레드로 약 55분(팔 3개)이라 확인은 --rows로 줄여서 한다 (무작위 표본).
+python scripts/refine_inversion.py --rows 5000
+
+# 역해 LM 추론 비용 (장치·dtype·반복수). GPU 측정은 notebooks/inversion/round1_gpu-bench.ipynb.
+python scripts/bench_invert.py --rows 4096
 ```
 
 Stage A 경로는 최대 상주 메모리 **약 5 GB**를 쓴다 (조건부 평균이 train 전체를 올린다).

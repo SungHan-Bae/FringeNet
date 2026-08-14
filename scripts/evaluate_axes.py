@@ -31,7 +31,7 @@ from scipy.stats import spearmanr
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.calibrate import NOISE_SIGMA  # noqa: E402
-from src.data.dataset import REPO_ROOT, prepare_from_config  # noqa: E402
+from src.data.dataset import REPO_ROOT, prepare_from_config, subsample_indices  # noqa: E402
 from src.evaluate import load_model_checkpoint, mae_per_layer, predict  # noqa: E402
 from src.losses import DEFAULT_DECODER, FrozenDecoder  # noqa: E402
 
@@ -40,6 +40,8 @@ NOISE_MEAN_ABS = 0.0075
 # 주입 수준 — 균등은 데이터와 같은 종류(기본 ±0.015), 가우시안은 σ의 배수로 별개 병기.
 UNIFORM_LEVELS = (0.0, 0.0075, 0.015, 0.030)
 GAUSSIAN_LEVELS = (0.5, 1.0, 2.0)
+# --rows 표본의 시드 — 노이즈 시드(--seed)와 분리해 주입 수준·run에 걸쳐 같은 행을 본다.
+SUBSAMPLE_SEED = 0
 
 
 def load_run(run_dir: Path) -> tuple[torch.nn.Module, dict[str, Any]]:
@@ -73,6 +75,13 @@ def holdout_of(cfg: dict[str, Any], cache: dict[tuple, tuple]) -> tuple[np.ndarr
     return cache[key]
 
 
+def take(xy: tuple[np.ndarray, np.ndarray], rows: int | None) -> tuple[np.ndarray, np.ndarray]:
+    """holdout에서 rows행을 **무작위로** 뽑는다 — 앞머리 자르기는 표본이 아니다."""
+    x, y = xy
+    idx = subsample_indices(len(x), rows, seed=SUBSAMPLE_SEED)
+    return x[idx], y[idx]
+
+
 def inject(x: np.ndarray, kind: str, scale: float, seed: int) -> np.ndarray:
     """관측 R에 노이즈를 더한다 (기존 노이즈 위 **추가분**). 같은 인자면 항상 같은 실현."""
     if scale == 0.0:
@@ -104,9 +113,7 @@ def noise_curve(
     for i, (kind, scale) in enumerate(levels):
         row: dict[str, Any] = {"kind": kind, "scale": scale, "sigma": total_sigma(kind, scale)}
         for run in runs:
-            x, y = holdout_of(run["cfg"], cache)
-            if rows is not None:
-                x, y = x[:rows], y[:rows]
+            x, y = take(holdout_of(run["cfg"], cache), rows)
             # 수준마다 seed를 달리해 서로 다른 실현을 쓰되, run 사이에는 동일하게 유지한다
             noisy = inject(x, kind, scale, seed + i)
             row[run["name"]] = mae_per_layer(predict(run["model"], noisy), y)["overall"]
@@ -118,9 +125,7 @@ def confidence_metrics(
     run: dict[str, Any], decoder: FrozenDecoder, cache: dict[tuple, tuple], rows: int | None
 ) -> dict[str, Any]:
     """행별 물리 잔차 ↔ 실제 오차. 라벨 없이 계산되는 지표가 오차를 얼마나 짚어내는가."""
-    x, y = holdout_of(run["cfg"], cache)
-    if rows is not None:
-        x, y = x[:rows], y[:rows]
+    x, y = take(holdout_of(run["cfg"], cache), rows)
     pred = predict(run["model"], x)
     x_t = torch.from_numpy(x)
     residual = decoder.residual_l1(torch.from_numpy(pred), x_t).numpy()
@@ -153,7 +158,7 @@ def render(
     rows: int | None,
 ) -> list[str]:
     names = [run["name"] for run in runs]
-    n_rows = rows if rows is not None else len(runs[0]["holdout_y"])
+    n_rows = len(subsample_indices(len(runs[0]["holdout_y"]), rows, seed=SUBSAMPLE_SEED))
     lines = [
         f"# 평가 축 — 노이즈 강건성 · 신뢰도 지표 ({runs[0]['experiment']})",
         "",
@@ -223,7 +228,7 @@ def main() -> int:
     parser.add_argument("--out", default=None, help="리포트 경로 (기본 reports/<실험>_axes.md)")
     parser.add_argument("--seed", type=int, default=0, help="노이즈 주입 시드")
     parser.add_argument(
-        "--rows", type=int, default=None, help="holdout 앞에서 N행만 (빠른 확인용, 기본 전체)"
+        "--rows", type=int, default=None, help="holdout에서 무작위 N행만 (빠른 확인용, 기본 전체)"
     )
     parser.add_argument("--decoder", default=DEFAULT_DECODER, help="동결 디코더 체크포인트")
     args = parser.parse_args()

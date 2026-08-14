@@ -1,0 +1,16 @@
+# stage_a — 표본 수 민감도 (아래쪽 지렛대). 채택 설정과 **fit_rows만** 다르다.
+#
+# 채택 run은 8,000행을 쓴다. "자유도 7에 관측 180만 개라 표본이 병목이 아니다"는 주장을
+# 논증이 아니라 측정으로 확인하기 위한 대조군이고, 2k → 8k → 50k에서 게이트 수치가
+# 평평하면 표본 수는 이미 포화라는 뜻이다 (진단 표본은 fit_rows와 무관하게 고정이다).
+seed: 42
+experiment: stage_a
+run_name: fitrows-2k
+
+data:
+  fit_rows: 2000
+  diag_rows: 20000
+
+model:
+  si_source: Si_nk_Schinke.yml
+  free: [lam_nu0, lam_r1, lam_r2, sin_b1, sin_c1, si_de, si_klog]
