@@ -1,14 +1,9 @@
 # stage_b — 물리 손실 beta ablation의 **대조군**. 조작 변인은 train.physics.beta 하나.
 #
-# 백본은 Level 1 확정(flatten-dilated-bound, holdout 2.346 nm)을 그대로 쓴다. beta=0이면
-# 물리 항은 gradient에 들어가지 않고 재구성 L1을 진단으로만 기록하므로, 학습 경로가 물리 항
-# 도입 전과 같다 (tests/test_train_gpu.py가 비트 동일성으로 고정). 즉 이 run의 holdout MAE는
-# level1_cnn/flatten-dilated-bound의 재현이기도 하다 (GPU 기종이 다르면 MAE 수준에서 비교).
-#
-# 사전등록 예측 (docs/week_1.md): train 라벨이 전수라 R_obs = R(d) + ε는 d에 조건부로
-# 노이즈뿐이므로 물리 항은 지도 항의 노이즈 낀 대리 손실이고 정보를 더하지 않는다. 게다가
-# gradient가 ∂R/∂d에 비례해 민감도가 낮은 구간(얇은 두께, 최저 SNR인 layer_2)에서 학습을
-# 억누를 수 있다 — beta에 대해 단조 열화를 예측한다. 어긋나면 그 사실을 그대로 남긴다.
+# 백본은 Level 1 확정(flatten-dilated-bound). beta=0이면 물리 항이 gradient에 들어가지 않고
+# 진단으로만 기록되므로 학습 경로가 물리 항 도입 전과 같다 — 이 run의 holdout MAE는
+# level1_cnn/flatten-dilated-bound의 재현이기도 하다 (GPU 기종이 다르면 MAE 수준 비교).
+# 사전등록 예측은 docs/week_1.md TODO에 있다.
 seed: 42
 experiment: stage_b
 run_name: beta0
