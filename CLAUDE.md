@@ -390,9 +390,8 @@ python scripts/analyze_stage_b_curves.py $(for b in 0 30 100 300; do \
 # git 히스토리에 있다 (git show <커밋>:... — runs/CHECKPOINTS.md) — 백본 축은 Drive 없이 돈다.
 python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta100
 
-# 역산 refinement (추론 후 물리 보정). --run을 여러 번 주면 **같은 행·같은 디코더**로 나란히
-# 잰다 (분할이 다르면 에러). 로컬 CPU는 전체 holdout에 팔당 약 18분이라 확인은 --rows로 줄이고,
-# 본실행은 GPU에서 돌린다 (notebooks/inversion/round2_refine-strong-baseline.ipynb, 팔당 1분).
+# 역산 refinement (추론 후 물리 보정) — 위와 같은 체크포인트 + Stage A 디코더. 전체 holdout
+# 81,000행이 CPU 8스레드로 약 55분(팔 3개)이라 확인은 --rows로 줄여서 한다 (무작위 표본).
 python scripts/refine_inversion.py --rows 5000
 
 # 역해 LM 추론 비용 (장치·dtype·반복수). GPU 측정은 notebooks/inversion/round1_gpu-bench.ipynb.
