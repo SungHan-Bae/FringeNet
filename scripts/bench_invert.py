@@ -24,7 +24,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import torch
@@ -45,8 +45,34 @@ CNN_RUN = "runs/level1_cnn/flatten-dilated-bound"
 # 비교 대상 = 리더보드 1등 단일 모델. **시간은 가중치 값에 무관**하므로 무작위 초기화로 잰다
 # (813 MB 체크포인트가 Drive에만 있어도 이 표는 만들 수 있다). 설정은 커밋된 스냅샷에서 읽는다.
 STRONG_RUN = "runs/strong_baseline/winner-repro-asis"
-# (dtype, iters) 조합 — complex128 30회가 리포트가 쓰는 설정이다.
-LM_VARIANTS = ((torch.complex128, 30), (torch.complex64, 30), (torch.complex64, 10))
+# 조기 종료 문턱 [nm] — 두께 정확도 0.3 nm 규모보다 세 자리 아래이고, complex64의
+# 유효 분해능(100 nm에서 약 1e-5 nm)보다는 위다.
+EARLY_TOL_NM = 1e-4
+
+
+class LMVariant(NamedTuple):
+    """LM 한 설정. `summary`가 True면 cnn 합계 줄을 따로 낸다 (판정용·배포용 둘)."""
+
+    label: str
+    dtype: torch.dtype
+    iters: int
+    jacobian: str
+    tol_nm: float | None
+    summary: bool = False
+
+
+# 축이 셋이다: dtype · 야코비안 방식 · 반복수. 판정 수치는 complex128 중앙차분이고
+# (커밋된 리포트가 쓴 설정), 배포 후보는 complex64 해석적+조기종료다.
+LM_VARIANTS = (
+    LMVariant("LM 30회 (c128, 중앙차분)", torch.complex128, 30, "fd", None, summary=True),
+    LMVariant("LM 30회 (c128, 해석적)", torch.complex128, 30, "analytic", None),
+    LMVariant("LM 30회 (c128, 해석적+조기종료)", torch.complex128, 30, "analytic", EARLY_TOL_NM),
+    LMVariant("LM 30회 (c64, 중앙차분)", torch.complex64, 30, "fd", None),
+    LMVariant(
+        "LM 30회 (c64, 해석적+조기종료)", torch.complex64, 30, "analytic", EARLY_TOL_NM, True
+    ),
+    LMVariant("LM 10회 (c64, 중앙차분)", torch.complex64, 10, "fd", None),
+)
 
 
 def timed(fn: Callable[[], Any], device: torch.device) -> tuple[float, Any]:
@@ -117,19 +143,27 @@ def bench_device(
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    for dtype, iters in LM_VARIANTS:
-        decoder = FrozenDecoder(decoder_path, dtype=dtype).to(device)
+    for v in LM_VARIANTS:
+        decoder = FrozenDecoder(decoder_path, dtype=v.dtype).to(device)
         dt, d_ref = timed(
-            lambda dec=decoder, it=iters: lm_invert(dec, x, d_hat, iters=it, damping="row"),
+            lambda dec=decoder, var=v: lm_invert(
+                dec,
+                x,
+                d_hat,
+                iters=var.iters,
+                damping="row",
+                jacobian=var.jacobian,
+                tol_nm=var.tol_nm,
+            ),
             device,
         )
-        name = "complex128" if dtype == torch.complex128 else "complex64"
         out.append(
             {
-                "what": f"LM {iters}회 ({name})",
+                "what": v.label,
                 "params": 7,
                 "ms": dt / rows * 1e3,
                 "mae": mae_nm(d_ref, y),
+                "summary": v.summary,
             }
         )
         decoder = None
@@ -149,6 +183,10 @@ def render(results: dict[str, list[dict[str, Any]]], meta: dict[str, Any]) -> li
         "- **skip-MLP는 시간만 잰다** — 가중치 값은 지연에 무관하므로 무작위 초기화다"
         " (813 MB 체크포인트는 Drive 전용). MAE는 `reports/strong_baseline.md`가 정본이다.",
         "- LM은 CNN 예측 `d_hat`에서 출발한다 (실제 워크로드와 같다).",
+        "- 축이 셋이다: dtype · 야코비안(중앙차분 | 해석적) · 반복수. 해석적 도함수는 중앙차분과"
+        " **반올림 수준에서만** 다르다 (tests/test_tmm.py §8이 autograd로 건다).",
+        f"- 조기 종료: 갱신 폭 < {EARLY_TOL_NM:g} nm 가 4회 연속인 행을 작업 집합에서 뺀다."
+        " 행이 독립이라 남은 행의 답은 바뀌지 않는다 — **MAE 열이 그 대가를 보여준다.**",
         "",
     ]
     for device_label, rowset in results.items():
@@ -165,15 +203,14 @@ def render(results: dict[str, list[dict[str, Any]]], meta: dict[str, Any]) -> li
             params = f"{r['params'] / 1e6:.2f}M" if r["params"] > 1000 else str(r["params"])
             lines.append(f"| {r['what']} | {params} | {r['ms']:.3f} | {ratio} | {mae} |")
         cnn = next(r for r in rowset if r["what"] == "CNN forward")
-        for r in rowset:
-            if r["what"].startswith("LM 30회 (complex128)"):
-                total = cnn["ms"] + r["ms"]
-                lines += [
-                    "",
-                    f"**cnn + LM 30회(complex128) 합계 = {total:.3f} ms/행**"
-                    + (f" — skip-MLP의 {total / base:.2f}배" if base else ""),
-                    "",
-                ]
+        lines.append("")
+        for r in (r for r in rowset if r.get("summary")):
+            total = cnn["ms"] + r["ms"]
+            lines.append(
+                f"**cnn + {r['what']} 합계 = {total:.3f} ms/행**"
+                + (f" — skip-MLP의 {total / base:.2f}배" if base else "")
+            )
+        lines.append("")
     return lines
 
 

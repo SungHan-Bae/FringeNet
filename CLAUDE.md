@@ -142,6 +142,9 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 6. 흡수 기판: 복소 ns에서 0 ≤ R < 1, NaN/Inf 없음
 7. **층 순서 고정**: 비대칭 2층을 재귀 프레넬 공식과 대조 — 1~6은 적층 순서를 뒤집어도
    전부 통과해 순서를 고정하지 못한다 (Task 1에서 발견·보강)
+8. **해석적 야코비안** `tmm_reflectance_jacobian`: dR/dd를 **autograd와** 대조한다
+   (유한차분은 절단오차가 있어 참조값이 못 된다, rtol 1e-11). 반환 R은 `tmm_reflectance`와
+   **비트 동일**해야 하고, L=1도 따로 건다 (접두 곱이 항등이라 곱 순서 버그가 안 드러난다)
 
 ## 모델·학습 스펙
 
@@ -241,11 +244,21 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   - **감쇠 스케일**: `damping="batch"`(게이트 (d)의 기존 동작)는 한 행의 갱신이 배치 구성에
     의존해 **청크를 바꾸면 답이 달라진다**. refinement는 `"row"`를 쓴다 (청크 불변, 테스트로 고정).
     두 값을 잘못 조합하면 조용히 다른 수치가 나오는 대신 에러가 난다.
-  - **추론 비용은 손해다 — 숨기지 않는다.** 정본은 `reports/inversion_bench.md`
-    (`scripts/bench_invert.py`, GPU는 `notebooks/inversion/round1_gpu-bench.ipynb`).
-    행당 TMM forward가 270회(야코비안 중앙차분 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M
-    skip-MLP forward보다 **한 자릿수 느리다**(L4에서 17.26배). 서사는 정확도·모델 크기
-    (2.5 MB vs 813.6 MB)에 대한 주장이지 지연에 대한 주장이 아니다.
+  - **야코비안 방식은 비용만 바꾼다** — `jacobian="fd"`는 중앙차분(반복당 forward 2L회),
+    `"analytic"`은 디코더의 `forward_jacobian`(약 2회분). **기본값은 `"fd"`이고 커밋된 리포트가
+    그 설정으로 나왔다** — 바꾸려면 해당 리포트를 함께 재생성한다. 해석적 경로가 정확도를
+    잃지 않는 근거는 물리 테스트 8번이고, **float32에서는 오히려 더 정확하다**: 중앙차분은
+    보폭 1e-3 nm가 상대 섭동 1e-5라 float32 유효자리(1.2e-7)를 먹어 dtype마다 답이 흔들리는데,
+    해석적은 complex64가 complex128과 같은 값을 준다.
+  - **조기 종료 `tol_nm`**: **제안된** 스텝 폭이 문턱 미만인 반복이 `patience`회 연속인 행을
+    작업 집합에서 뺀다. 행이 독립이라 남은 행 답은 불변이고 청크 불변성도 유지된다.
+    기각을 이동 0으로 세면 안 된다 — 감쇠가 오르며 스텝이 되살아나는 LM 특성 때문에 어려운
+    행을 잘라 MAE가 나빠진다(측정: +0.0093 nm). `damping="row"`에서만 허용한다.
+  - **추론 비용은 야코비안 방식에 달려 있다 — 배수를 방식과 함께 적는다.** 정본은
+    `reports/inversion_bench.md` (`scripts/bench_invert.py`, GPU는
+    `notebooks/inversion/round1_gpu-bench.ipynb`). 중앙차분은 행당 TMM forward가 270회
+    (야코비안 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M skip-MLP forward보다 **한 자릿수
+    느리다**(L4에서 17.26배). 해석적+조기종료는 그 비용의 대부분을 걷어낸다.
     - **단일 배수를 인용하지 말 것** — 하드웨어에 크게 의존한다. skip-MLP는 GEMM 한 방이라
       BLAS·GPU 최적화를 온전히 받고 LM은 비정형 + 대역폭 바운드라 덜 받아서, 같은 코드가
       기계마다 다른 배수를 낸다. 배수는 리포트에서 읽고 기계를 함께 적는다.
@@ -253,9 +266,8 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
       complex64는 24.5배다(소비자 GPU FP64 1/32). 배포 경로는 complex64가 맞고 **판정 수치는
       계속 complex128**이다. CPU↔GPU는 bit가 아니라 MAE 수준에서 일치한다(같은 표본 1.8% 차).
     - **반복수를 줄이는 것은 공짜가 아니다** — 10회는 30회보다 MAE가 0.02~0.03 nm 나쁘다
-      (CPU·GPU 세 측정에서 일관). 3배 싸지는 대신 치르는 값이므로 함께 적는다.
-    - 미착수 레버: 해석적 야코비안(디코더가 미분가능한데 역해는 중앙차분을 쓴다) ·
-      수렴 행 조기 종료(고정 30회 대신).
+      (CPU·GPU 세 측정에서 일관). 고정 반복수를 줄이는 대신 **조기 종료를 쓴다** — 같은
+      비용대에서 MAE를 잃지 않는다.
 - 평가: 전체/층별 MAE, 학습곡선, TMM 재구성 오차 히스토그램(신뢰도 지표), 두께 구간별 오차.
 
 ## 평가 규약 (데이터가 시뮬레이션 격자라서 생기는 함정)
@@ -314,7 +326,7 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 - 정리는 사후가 아니라 작성 시점에 한다. 이미 부푼 문서를 줄일 때는 **중복부터** 걷고,
   그래도 길면 근거의 깊이가 아니라 서술을 줄인다.
 
-## 작업 백로그 (순서 준수 — 일일 진행·열린 항목은 docs/week_1.md)
+## 작업 백로그 (순서 준수 — 일일 진행·열린 항목은 docs/week_2.md)
 
 - [x] **Task 0~3** — 스캐폴드 · TMM 모듈+테스트 7종 · 데이터 검증·로더 · EDA
 - [x] **Task 4 — Baseline 학습**: 90/10 val split(시드 고정), MAE 리포트 → 4.599 nm
@@ -328,7 +340,10 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   - [x] **역산 refinement — 사전등록 2 부합.** holdout MAE **2.3455 → 0.6110 nm (−74%)**
         (`reports/inversion_refine.md`). 물리 단독(격자 중앙 출발)은 77.68 nm로 실패하므로
         **CNN의 기여는 정밀도가 아니라 올바른 fringe 분지**다. 상한(참값 출발)이 0.3336이다.
-        추론 비용은 `reports/inversion_bench.md` — 지연에서는 손해다(아래 스펙).
+        추론 비용은 `reports/inversion_bench.md` — 중앙차분 경로에서는 손해다(아래 스펙).
+  - [ ] **추론 지연 레버**: 해석적 야코비안·조기 종료를 `lm_invert`에 배선했고(opt-in) 정확도
+        손실 없이 로컬 CPU 10.85배 절감. 남은 것은 **GPU 정본 표 재생성**(Colab)과 기본값 전환
+        여부다 — 전환하면 `inversion_refine.md`·`stage_a_gate.md`를 함께 재생성한다.
   - [ ] **평가 축 실측**: 노이즈 강건성 · 신뢰도 지표 (`scripts/evaluate_axes.py`).
         체크포인트가 git에 없어 Drive 미러에서 받아와야 한다 (`runs/CHECKPOINTS.md`).
   - [ ] **`reports/stage_b.md` 취합** — `stage_b_curves*.md`는 스크립트 산출물이고 서사가 아니다.
@@ -394,8 +409,10 @@ python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta
 # 81,000행이 CPU 8스레드로 약 55분(팔 3개)이라 확인은 --rows로 줄여서 한다 (무작위 표본).
 python scripts/refine_inversion.py --rows 5000
 
-# 역해 LM 추론 비용 (장치·dtype·반복수). GPU 측정은 notebooks/inversion/round1_gpu-bench.ipynb.
-python scripts/bench_invert.py --rows 4096
+# 역해 LM 추론 비용 (장치·dtype·야코비안·반복수). GPU 측정은
+# notebooks/inversion/round1_gpu-bench.ipynb — 정본 표에는 CPU와 GPU 절이 함께 있어야 하므로
+# 로컬 단독 실행으로 reports/inversion_bench.md를 덮으면 GPU 절이 사라진다 (--out으로 뺄 것).
+python scripts/bench_invert.py --rows 4096 --out /tmp/bench.md
 ```
 
 Stage A 경로는 최대 상주 메모리 **약 5 GB**를 쓴다 (조건부 평균이 train 전체를 올린다).

@@ -8,8 +8,10 @@
 - 역산 refinement: `d_hat`(신경망 예측)에서 출발 → **추론 후 보정**. 라벨을 쓰지 않으므로
   test·실계측에도 그대로 적용된다.
 
-야코비안은 중앙차분이다. 디코더는 미분가능하지만 (M, W, L) 야코비안을 autograd로 뽑으려면
-출력 채널마다 backward가 필요하고, L=4에서는 forward 2L회가 훨씬 싸다.
+야코비안은 두 방식을 고를 수 있고 **비용이 크게 다르다**. 중앙차분(`"fd"`)은 반복마다
+forward 2L회를 쓴다. 해석적(`"analytic"`)은 디코더의 `forward_jacobian`을 불러 cos/sin을
+공유하므로 약 forward 2회에 L개 열을 전부 얻는다 — 반복당 9회가 3회로 줄어든다.
+autograd는 (M, W, L) 야코비안에 출력 채널마다 backward가 필요해 여기서는 셋 중 가장 비싸다.
 """
 
 from __future__ import annotations
@@ -53,6 +55,9 @@ def lm_invert(
     box: tuple[float, float] = DEFAULT_BOX_NM,
     damping: Literal["batch", "row"] = "batch",
     chunk: int | None = None,
+    jacobian: Literal["fd", "analytic"] = "fd",
+    tol_nm: float | None = None,
+    patience: int = 4,
 ) -> np.ndarray:
     """관측 R에 맞도록 두께를 역해한다 — d_init에서 출발하는 배치 LM.
 
@@ -72,19 +77,42 @@ def lm_invert(
             달라진다** — Stage A 게이트 (d)가 쓰는 기존 동작이라 기본값으로 남긴다.
             `"row"`는 행이 독립이라 청크 불변이고, 출발점이 행마다 제각각인 refinement에 맞다.
         chunk: 행을 이 크기로 끊어 처리한다 (중간 텐서가 (M, L, W)라 8만 행은 10 GB가 넘는다).
+        jacobian: `"fd"`는 중앙차분(반복당 forward 2L회), `"analytic"`은 model의
+            `forward_jacobian`(약 2회). 값이 반올림 수준에서 다르므로 커밋된 리포트를
+            재생성할 때는 그 리포트가 쓴 값을 그대로 써야 한다 (모듈 설명).
+        tol_nm: 조기 종료 문턱 [nm]. None이면 끄고 전 행이 `iters`회를 다 돈다. 값을 주면
+            갱신 폭이 이 값 미만인 반복이 `patience`회 연속인 행을 **작업 집합에서 뺀다** —
+            남은 행의 결과는 바뀌지 않는다(행 독립). `damping="row"`에서만 쓸 수 있다.
+        patience: 위 연속 횟수. 기각된 스텝은 갱신 폭 0이라 함께 센다 — 감쇠가 올라가며
+            스텝이 되살아나는 LM 특성 때문에 1~2는 위험하다.
 
     Returns:
         d_hat: (M, L) float64 [nm] — 작업 dtype과 무관하게 항상 CPU float64로 돌려준다.
 
     Raises:
-        ValueError: 행 수가 어긋나거나, 청크와 배치 감쇠를 함께 쓴 경우.
+        ValueError: 행 수가 어긋나거나, 청크·조기 종료를 배치 감쇠와 함께 쓴 경우.
+        TypeError: `jacobian="analytic"`인데 model에 `forward_jacobian`이 없는 경우.
     """
     if len(x) != len(d_init):
         raise ValueError(f"x {len(x)}행과 d_init {len(d_init)}행이 다르다")
+    if jacobian not in ("fd", "analytic"):
+        raise ValueError(f"jacobian은 'fd' | 'analytic' 이어야 한다 (받은 값: {jacobian!r})")
+    if jacobian == "analytic" and not hasattr(model, "forward_jacobian"):
+        raise TypeError(
+            f"jacobian='analytic'은 model에 forward_jacobian이 필요하다"
+            f" ({type(model).__name__}에 없다) — FrozenDecoder를 쓰거나 'fd'로 둘 것"
+        )
     if chunk is not None and damping == "batch" and chunk < len(x):
         raise ValueError(
             "damping='batch'는 청크 구성에 결과가 의존한다 — 청크를 쓰려면 damping='row'"
         )
+    if tol_nm is not None and damping == "batch":
+        raise ValueError(
+            "damping='batch'는 감쇠 스케일이 배치 구성에 의존한다 — 조기 종료로 행이 빠지면"
+            " 남은 행의 답이 조용히 달라진다. tol_nm을 쓰려면 damping='row'"
+        )
+    if patience < 1:
+        raise ValueError(f"patience는 1 이상이어야 한다 (받은 값: {patience})")
     if chunk is not None and chunk < len(x):
         parts = [
             lm_invert(
@@ -96,6 +124,9 @@ def lm_invert(
                 box=box,
                 damping=damping,
                 chunk=None,
+                jacobian=jacobian,
+                tol_nm=tol_nm,
+                patience=patience,
             )
             for s in range(0, len(x), chunk)
         ]
@@ -110,16 +141,27 @@ def lm_invert(
     eye_l = torch.eye(n_layers, dtype=work, device=device)
     lam_damp = torch.full((len(d), 1, 1), 1e-3, dtype=work, device=device)
 
+    # 조기 종료로 빠진 행을 받아 두는 버퍼와, 작업 집합 → 버퍼 위치 대응.
+    out = d.clone()
+    act = torch.arange(len(d), device=device)
+    stall = torch.zeros(len(d), dtype=torch.long, device=device)
+
     resid = model(d) - obs  # (M, W)
     cost = (resid**2).sum(dim=1)
     for _ in range(iters):
-        jac = torch.stack(
-            [
-                (model(d + step_nm * eye_l[j]) - model(d - step_nm * eye_l[j])) / (2.0 * step_nm)
-                for j in range(n_layers)
-            ],
-            dim=-1,
-        )  # (M, W, L)
+        if len(d) == 0:
+            break
+        if jacobian == "analytic":
+            jac = model.forward_jacobian(d)[1]  # (M, W, L)
+        else:
+            jac = torch.stack(
+                [
+                    (model(d + step_nm * eye_l[j]) - model(d - step_nm * eye_l[j]))
+                    / (2.0 * step_nm)
+                    for j in range(n_layers)
+                ],
+                dim=-1,
+            )  # (M, W, L)
         jtj = jac.transpose(1, 2) @ jac  # (M, L, L)
         jtr = (jac.transpose(1, 2) @ resid.unsqueeze(-1)).squeeze(-1)  # (M, L)
         diag = jtj.diagonal(dim1=1, dim2=2)  # (M, L)
@@ -131,13 +173,33 @@ def lm_invert(
         cost_c = (resid_c**2).sum(dim=1)
         # 비용이 내려간 행만 갱신하고, 그 행의 감쇠를 낮춘다 (실패한 행은 높인다).
         better = cost_c < cost
+        # 정체 판정은 **제안된** 이동 폭으로 한다 (수용 여부와 무관). 기각을 이동 0으로
+        # 세면 감쇠가 오르며 스텝이 되살아나는 행을 잘라내 어려운 행에서 정확도를 잃는다.
+        moved = (cand - d).abs().amax(dim=1)
         d = torch.where(better.unsqueeze(-1), cand, d)
         resid = torch.where(better.unsqueeze(-1), resid_c, resid)
         cost = torch.where(better, cost_c, cost)
         lam_damp = torch.where(
             better.reshape(-1, 1, 1), (lam_damp * 0.3).clamp(min=1e-9), lam_damp * 3.0
         )
-    return d.double().cpu().numpy()
+        if tol_nm is None:
+            continue
+        stall = torch.where(moved < tol_nm, stall + 1, torch.zeros_like(stall))
+        done = stall >= patience
+        if bool(done.any()):
+            out[act[done]] = d[done]
+            keep = ~done
+            act, d, obs, resid, cost, lam_damp, stall = (
+                act[keep],
+                d[keep],
+                obs[keep],
+                resid[keep],
+                cost[keep],
+                lam_damp[keep],
+                stall[keep],
+            )
+    out[act] = d
+    return out.double().cpu().numpy()
 
 
 def inversion_stats(

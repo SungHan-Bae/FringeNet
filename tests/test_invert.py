@@ -38,6 +38,23 @@ def _observe(decoder: FrozenDecoder, d: np.ndarray) -> np.ndarray:
         return decoder(torch.from_numpy(d)).numpy()
 
 
+class _CountingDecoder(FrozenDecoder):
+    """처리한 **행 수**를 세는 프록시. 조기 종료는 호출 수가 아니라 행 수를 줄인다."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.rows_forward = 0
+        self.rows_jacobian = 0
+
+    def forward(self, d: torch.Tensor) -> torch.Tensor:
+        self.rows_forward += len(d)
+        return super().forward(d)
+
+    def forward_jacobian(self, d: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        self.rows_jacobian += len(d)
+        return super().forward_jacobian(d)
+
+
 def test_recovers_thickness_from_noiseless_observation(decoder: FrozenDecoder) -> None:
     """디코더 자신이 만든 R이면 근처에서 출발한 LM이 두께를 되찾는다."""
     d_true = _truth()
@@ -89,6 +106,100 @@ def test_box_constraint_is_respected(decoder: FrozenDecoder) -> None:
     assert d_hat.min() >= box[0] - 1e-9
     assert d_hat.max() <= box[1] + 1e-9
     assert DEFAULT_BOX_NM[0] < 10.0 and DEFAULT_BOX_NM[1] > 300.0
+
+
+def test_analytic_jacobian_matches_finite_difference(decoder: FrozenDecoder) -> None:
+    """야코비안 방식은 비용만 바꿔야 한다 — 답은 반올림 수준에서 같다.
+
+    해석적 도함수는 중앙차분보다 **더** 정확하므로(절단오차 없음) 여기서 재는 것은
+    두 경로가 같은 해에 도달하는지다. 정확성 자체는 tests/test_tmm.py §8이 건다.
+    """
+    d_true = _truth(n=10)
+    x = _observe(decoder, d_true) + 0.002
+    d_init = d_true + 2.0
+    fd = lm_invert(decoder, x, d_init, iters=30, damping="row", jacobian="fd")
+    analytic = lm_invert(decoder, x, d_init, iters=30, damping="row", jacobian="analytic")
+    assert np.abs(analytic - fd).max() < 1e-4
+
+
+def test_analytic_uses_jacobian_entry_point(decoder: FrozenDecoder) -> None:
+    """`"analytic"`이면 forward 2L회가 사라진다 — 아니면 비용 주장이 거짓이 된다."""
+    d_true = _truth(n=6)
+    x = _observe(decoder, d_true)
+    counting = _CountingDecoder(dtype=torch.complex128)
+
+    lm_invert(counting, x, d_true + 1.0, iters=5, damping="row", jacobian="fd")
+    fd_rows = counting.rows_forward
+    assert counting.rows_jacobian == 0
+
+    counting.rows_forward = 0
+    lm_invert(counting, x, d_true + 1.0, iters=5, damping="row", jacobian="analytic")
+    # 반복당 forward는 시험 스텝 1회만 남는다 (중앙차분 2L회가 야코비안 호출로 대체된다).
+    assert counting.rows_jacobian == 6 * 5
+    assert counting.rows_forward * 3 < fd_rows
+
+
+def test_analytic_refuses_model_without_jacobian(decoder: FrozenDecoder) -> None:
+    """야코비안 진입점이 없는 모델에 조용히 중앙차분으로 되돌아가지 않는다."""
+    d_true = _truth(n=3)
+    x = _observe(decoder, d_true)
+
+    class _Plain(torch.nn.Module):
+        def __init__(self, inner: FrozenDecoder) -> None:
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, d: torch.Tensor) -> torch.Tensor:
+            return self.inner(d)
+
+    with pytest.raises(TypeError, match="forward_jacobian"):
+        lm_invert(_Plain(decoder), x, d_true, iters=1, damping="row", jacobian="analytic")
+
+
+def test_early_exit_preserves_the_answer_and_cuts_work(decoder: FrozenDecoder) -> None:
+    """수렴한 행을 작업 집합에서 빼도 남은 행의 답은 바뀌지 않는다 (행 독립).
+
+    출발점을 참값 근처로 두어 전 행이 깔끔히 수렴하게 한다 — 여기서 재는 것은 기준의
+    품질이 아니라 **기계적 동등성**이다. 어려운 행에서의 손실은 벤치가 잰다.
+    """
+    d_true = _truth(n=12)
+    x = _observe(decoder, d_true) + 0.001
+    d_init = d_true + 1.5
+    full = lm_invert(decoder, x, d_init, iters=30, damping="row", jacobian="analytic")
+
+    counting = _CountingDecoder(dtype=torch.complex128)
+    early = lm_invert(
+        counting, x, d_init, iters=30, damping="row", jacobian="analytic", tol_nm=1e-4
+    )
+    assert np.abs(early - full).max() < 1e-4
+    # 조기 종료가 실제로 일을 줄였는가 (전 행이 30회를 다 돌면 12*30 = 360행이다).
+    assert counting.rows_jacobian < 12 * 30
+
+
+def test_early_exit_is_chunk_invariant(decoder: FrozenDecoder) -> None:
+    """조기 종료와 청크가 함께 행을 재구성한다 — 둘을 겹쳐도 답이 같아야 한다."""
+    d_true = _truth(n=9)
+    x = _observe(decoder, d_true)
+    d_init = d_true + 1.0
+    kw: dict[str, object] = {"damping": "row", "jacobian": "analytic", "tol_nm": 1e-4}
+    whole = lm_invert(decoder, x, d_init, iters=20, **kw)  # type: ignore[arg-type]
+    chunked = lm_invert(decoder, x, d_init, iters=20, chunk=4, **kw)  # type: ignore[arg-type]
+    assert np.allclose(whole, chunked, rtol=0.0, atol=1e-9)
+
+
+def test_early_exit_refuses_batch_damping(decoder: FrozenDecoder) -> None:
+    """배치 감쇠는 스케일이 배치 구성에 의존한다 — 행이 빠지면 남은 답이 조용히 달라진다."""
+    d_true = _truth(n=5)
+    x = _observe(decoder, d_true)
+    with pytest.raises(ValueError, match="damping='row'"):
+        lm_invert(decoder, x, d_true, iters=2, damping="batch", tol_nm=1e-4)
+
+
+def test_unknown_jacobian_mode_raises(decoder: FrozenDecoder) -> None:
+    d_true = _truth(n=2)
+    x = _observe(decoder, d_true)
+    with pytest.raises(ValueError, match="jacobian"):
+        lm_invert(decoder, x, d_true, iters=1, jacobian="autograd")  # type: ignore[arg-type]
 
 
 def test_row_count_mismatch_raises(decoder: FrozenDecoder) -> None:

@@ -14,7 +14,7 @@ import math
 import pytest
 import torch
 
-from src.physics.tmm import tmm_reflectance, tmm_rt
+from src.physics.tmm import tmm_reflectance, tmm_reflectance_jacobian, tmm_rt
 
 DTYPE_R = torch.float64
 DTYPE_C = torch.complex128
@@ -223,3 +223,49 @@ def test_layer_order_matches_recursive_fresnel() -> None:
     # 순서를 뒤집으면 실제로 달라져야 한다 — 그래야 위 단언이 순서를 고정한다.
     r_swapped = tmm_reflectance(d.flip(1), n_layers.flip(0), n0, ns, lam)
     assert not torch.allclose(r_out, r_swapped, rtol=1e-3, atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# 8. 해석적 야코비안 — autograd와 같아야 하고, R은 forward와 비트 동일해야 한다.
+#    (LM 역해가 두 경로의 R을 같은 잔차 장부에 섞어 쓴다 — invert.lm_invert)
+# ---------------------------------------------------------------------------
+def test_analytic_jacobian_matches_autograd() -> None:
+    torch.manual_seed(4)
+    b, ell, w = 2, 4, 6
+    lam = _lam_grid(w, 300.0, 800.0)
+    n0 = 1.0
+    # 분산·흡수를 모두 켠다 — 복소 n의 부호 관례가 도함수에서 어긋나면 여기서 걸린다.
+    n_layers = _const_n([2.02, 1.46, 2.02, 1.46], w) - 0.01j * torch.rand(ell, 1, dtype=DTYPE_C)
+    ns = torch.full((w,), 3.9 - 0.3j, dtype=DTYPE_C)
+    d = torch.tensor([[95.0, 140.0, 60.0, 210.0], [175.0, 25.0, 285.0, 130.0]], dtype=DTYPE_R)
+
+    r_out, jac = tmm_reflectance_jacobian(d, n_layers, n0, ns, lam)
+    assert jac.shape == (b, w, ell)
+
+    # R은 반올림까지 forward와 같아야 한다 (수학적 동치로는 부족하다).
+    assert torch.equal(r_out, tmm_reflectance(d, n_layers, n0, ns, lam))
+
+    # autograd를 참조값으로 쓴다 — 유한차분과 달리 절단오차가 없다.
+    dg = d.clone().requires_grad_(True)
+    r_graph = tmm_reflectance(dg, n_layers, n0, ns, lam)
+    for i in range(b):
+        for k in range(w):
+            grad = torch.autograd.grad(r_graph[i, k], dg, retain_graph=True)[0]
+            assert torch.allclose(jac[i, k], grad[i], rtol=1e-11, atol=1e-14)
+
+
+def test_analytic_jacobian_handles_single_layer() -> None:
+    """L=1이면 접두 곱이 항등이라 곱 순서 버그가 드러나지 않는다 — 따로 건다."""
+    w = 8
+    lam = _lam_grid(w)
+    n_layers = _const_n([2.02], w)
+    d = torch.tensor([[123.0], [45.0]], dtype=DTYPE_R)
+
+    r_out, jac = tmm_reflectance_jacobian(d, n_layers, 1.0, 3.8, lam)
+    assert jac.shape == (2, w, 1)
+    assert torch.equal(r_out, tmm_reflectance(d, n_layers, 1.0, 3.8, lam))
+
+    dg = d.clone().requires_grad_(True)
+    r_graph = tmm_reflectance(dg, n_layers, 1.0, 3.8, lam)
+    grad = torch.autograd.grad(r_graph.sum(), dg)[0]
+    assert torch.allclose(jac.sum(dim=1), grad, rtol=1e-11, atol=1e-14)

@@ -26,7 +26,7 @@ from torch.nn.functional import l1_loss
 
 from src.calibrate import load_physical_stack
 from src.data.dataset import REPO_ROOT
-from src.physics.tmm import tmm_reflectance
+from src.physics.tmm import tmm_reflectance, tmm_reflectance_jacobian
 
 __all__ = [
     "DEFAULT_DECODER",
@@ -100,6 +100,15 @@ class FrozenDecoder(nn.Module):
     def forward(self, d: Tensor) -> Tensor:
         """두께 d: (B, L) [nm] → 재구성 반사율 R: (B, W). dtype은 버퍼의 실수 dtype."""
         return tmm_reflectance(d, self.n_layers, N0_AIR, self.ns, self.lam)
+
+    def forward_jacobian(self, d: Tensor) -> tuple[Tensor, Tensor]:
+        """d: (B, L) [nm] → (R, dR/dd). R (B, W), J (B, W, L) [1/nm].
+
+        `lm_invert(jacobian="analytic")`가 쓰는 진입점 — 반환 R은 `forward`와 비트
+        동일하다 (`tmm_reflectance_jacobian` 참조). 학습 손실은 autograd를 쓰므로
+        이 메서드가 필요 없다.
+        """
+        return tmm_reflectance_jacobian(d, self.n_layers, N0_AIR, self.ns, self.lam)
 
     @torch.no_grad()
     def reconstruct(self, d: Tensor, *, batch_size: int = 4096) -> Tensor:
