@@ -1,0 +1,40 @@
+# cnn_recipe — 백본은 level1_cnn 확정본(flatten-dilated-bound) 그대로, **학습 예산만** 늘린다.
+#
+# 이 라운드의 사슬: budget100 → +std → +ema → {+noise, +tail}. 각 run은 부모와 변인이
+# **정확히 하나**만 다르므로, 어떤 단계가 이득이 없더라도 대조는 그대로 유효하다.
+# 판정은 val MAE가 아니라 **분지 실패율**로 한다 (post-LM ≈ 0.33 + 실패율 × 약 40 nm).
+#
+# 근거: 확정본은 과소적합이다 — train_l1 2.1943 / val 2.3455 (격차 0.151)이고, best 에폭이
+# 29/30인 채 lr이 0으로 소진돼 끝났다. skip-MLP는 같은 데이터를 train 0.1529까지 맞춘다.
+# 조작 변인은 에폭 하나다: 30 → 100 (배치 512 유지 → 스텝 42,720 → 142,400, 3.3배).
+# **skip-MLP의 batch 2048은 복사하지 않는다** — 그 레시피를 그대로 옮기면 스텝이 35,600으로
+# 오히려 줄어든다. warmup은 스텝 비율(2.3%)을 유지해 1000 → 3300.
+seed: 42
+experiment: cnn_recipe
+run_name: budget100
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

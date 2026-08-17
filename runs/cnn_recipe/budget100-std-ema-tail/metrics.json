@@ -1,0 +1,80 @@
+{
+  "experiment": "cnn_recipe",
+  "run_name": "budget100-std-ema-tail",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "cnn_recipe",
+    "run_name": "budget100-std-ema-tail",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        64,
+        128,
+        200,
+        280
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "dilations": [
+        1,
+        2,
+        4,
+        4,
+        2
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "head": "flatten",
+      "output_bound": true,
+      "channel_shuffle_seed": null,
+      "input_norm": true
+    },
+    "train": {
+      "epochs": 100,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 3300,
+      "ema_decay": 0.999,
+      "l2_weight": 0.1,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/cnn_recipe/budget100-std-ema-tail/model.pt",
+    "best_epoch": 99,
+    "val_mae": 1.9188659191131592,
+    "val_mae_per_layer": {
+      "layer_1": 1.4086111783981323,
+      "layer_2": 2.334855318069458,
+      "layer_3": 2.216047763824463,
+      "layer_4": 1.715949296951294,
+      "overall": 1.9188659191131592
+    },
+    "wall_sec": 1261.8275986960007
+  }
+}

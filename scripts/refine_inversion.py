@@ -203,6 +203,12 @@ def render(
     phys: dict[str, float],
     meta: dict[str, Any],
 ) -> list[str]:
+    # 기본 설정(중앙차분·조기 종료 없음)에서는 문장이 커밋된 리포트와 그대로 같아야 한다 —
+    # 산출 형식이 커밋된 산출물과 어긋나면 재실행 없이 조용히 스테일이 된다.
+    solver = f"중앙차분 {meta['step_nm']} nm" if meta["jacobian"] == "fd" else "해석적 야코비안"
+    if meta["tol_nm"] is not None:
+        solver += f" · 조기 종료 {meta['tol_nm']:g} nm"
+
     lines = [
         "# 역산 refinement — 추론 후 물리 보정 (사전등록 2)",
         "",
@@ -211,7 +217,7 @@ def render(
         f"- 대상 run `{meta['run']}` (holdout MAE {meta['recorded_mae']:.4f} nm), "
         f"평가 {meta['rows']:,}행 / holdout {meta['holdout_rows']:,}행",
         f"- 디코더 `{meta['decoder']}` (Stage A 확정, 동결) · complex128",
-        f"- LM {meta['iters']}회 · 중앙차분 {meta['step_nm']} nm · 상자 {meta['box']} nm · "
+        f"- LM {meta['iters']}회 · {solver} · 상자 {meta['box']} nm · "
         f"감쇠 행별 · 청크 {meta['chunk']:,}",
         "- **후처리이므로 기준선과 별도 행이다.** 격자 스냅은 쓰지 않는다 (평가 규약).",
         "",
@@ -294,6 +300,18 @@ def main() -> int:
     parser.add_argument("--rows", type=int, default=None, help="holdout에서 무작위 N행만")
     parser.add_argument("--iters", type=int, default=30, help="LM 반복 수")
     parser.add_argument("--chunk", type=int, default=4096, help="LM 배치 크기")
+    parser.add_argument(
+        "--jacobian",
+        choices=("fd", "analytic"),
+        default="fd",
+        help="야코비안 방식. 기본 fd가 커밋된 리포트의 설정이다 (바꾸면 리포트를 재생성한다)",
+    )
+    parser.add_argument(
+        "--tol-nm",
+        type=float,
+        default=None,
+        help="조기 종료 문턱 [nm]. 기본은 끔 — 전 행이 --iters를 다 돈다",
+    )
     parser.add_argument("--out", default=None, help=f"리포트 경로 (기본 {OUT_PATH})")
     args = parser.parse_args()
 
@@ -321,7 +339,14 @@ def main() -> int:
     for name, d_init in starts.items():
         t0 = time.perf_counter()
         solved[name] = lm_invert(
-            decoder, x, d_init, iters=args.iters, damping="row", chunk=args.chunk
+            decoder,
+            x,
+            d_init,
+            iters=args.iters,
+            damping="row",
+            chunk=args.chunk,
+            jacobian=args.jacobian,
+            tol_nm=args.tol_nm,
         )
         print(
             f"  {name:10s} MAE {mae_per_layer(solved[name], y)['overall']:.4f} nm"
@@ -346,6 +371,8 @@ def main() -> int:
         "holdout_rows": len(holdout_idx),
         "decoder": decoder.provenance["decoder"],
         "iters": args.iters,
+        "jacobian": args.jacobian,
+        "tol_nm": args.tol_nm,
         "step_nm": 1e-3,
         "box": list(DEFAULT_BOX_NM),
         "chunk": args.chunk,

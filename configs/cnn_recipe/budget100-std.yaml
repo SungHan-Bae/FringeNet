@@ -1,0 +1,35 @@
+# cnn_recipe — 부모 `budget100`에 **입력 채널별 표준화**만 더한다 (변인 하나).
+#
+# "표준화 없음"은 MLP baseline과의 공정 비교 계약이었고 그 ablation(Task 4·5)은 끝났으므로
+# 이제 풀 수 있다. 통계는 **학습 분할에서만** 재고 모델 버퍼로 남는다 — 전처리를 학습
+# 스크립트에 두면 evaluate·역산 경로가 조용히 다른 입력을 본다.
+seed: 42
+experiment: cnn_recipe
+run_name: budget100-std
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+  input_norm: true
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

@@ -4,6 +4,7 @@
     python -m src.evaluate --run runs/mlp_baseline/dropout0.0            # holdout MAE 재계산
     python -m src.evaluate --run runs/mlp_baseline/cv5 --submission      # 앙상블 test 추론 -> csv
     python -m src.evaluate --run runs/mlp_baseline/cv5 --submission --snap  # + 격자 스냅본
+    python -m src.evaluate --run runs/cnn_recipe/budget100 --submission --refine  # 물리 보정 제출
 
 run 디렉토리에는 train.py가 남긴 metrics.json(설정 스냅샷 포함)과 체크포인트(*.pt)가 있어야 한다.
 
@@ -11,7 +12,13 @@ run 디렉토리에는 train.py가 남긴 metrics.json(설정 스냅샷 포함)�
 
 규약(CLAUDE.md 평가 규약): 기본 리포트는 raw 예측 MAE다. 격자 스냅(--snap)은 타깃이
 10 nm 격자 위에 있다는 **생성 방식의 누설**을 이용하는 것이라 주 결과로 쓰지 않으며,
-항상 별도 파일·별도 행으로 분리 표기한다.
+항상 별도 파일·별도 행으로 분리 표기한다. **제출에는 절대 쓰지 않는다** — test 두께는 격자
+밖이라 MAE가 약 +1.2 nm 나빠진다.
+
+`--refine`은 동결 TMM 디코더로 추론 후 물리 보정을 하고(LM 역해 + 라벨 없는 되돌림 규칙)
+그 결과로 제출 파일을 만든다 — `src.physics.invert.refine_with_fallback`이 정의이고 판정
+스크립트(`scripts/judge_recipe.py`)와 **같은 함수를 쓴다**. 라벨을 안 쓰므로 test에 적용
+가능하다는 것이 이 경로의 요점이다.
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ from torch import nn
 
 from src.data.dataset import LAYER_COLS, RAW_DIR, load_test, prepare_from_config
 from src.models import build_model
+from src.physics.invert import PHYSICAL_RANGE_NM, refine_with_fallback
 
 
 @torch.no_grad()
@@ -109,8 +117,66 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="격자 스냅본도 생성/보고 (holdout에서는 누설 — 분리 보고 전용. "
         "**제출에는 쓰지 말 것**: test 두께는 격자 밖이라 MAE가 약 +1.2 nm 나빠진다)",
     )
+    parser.add_argument(
+        "--refine",
+        action="store_true",
+        help="추론 후 물리 보정 (LM 역해 + 라벨 없는 되돌림 규칙). holdout에 리포트하고 "
+        "--submission과 함께 쓰면 보정본 제출 파일도 만든다",
+    )
+    parser.add_argument(
+        "--refine-k-sigma",
+        type=float,
+        default=5.0,
+        help="되돌림 문턱 배수 — **사전등록 값이다** (성능을 보고 고치지 말 것)",
+    )
+    parser.add_argument(
+        "--refine-clip",
+        action="store_true",
+        help=f"보정 결과를 물리 범위 {PHYSICAL_RANGE_NM} nm로 클리핑한 판본도 만든다. "
+        "LM 상자를 넓게 두는 것은 라벨 사전지식을 역해에 넣지 않으려는 결정이므로 "
+        "**기본은 클리핑 없음**이고, 클리핑본은 범위 가정을 쓴다는 사실과 함께 별도 보고한다",
+    )
     parser.add_argument("--batch-size", type=int, default=8192)
     return parser.parse_args(argv)
+
+
+def _refine_report(
+    decoder: nn.Module,
+    x: np.ndarray,
+    pred: np.ndarray,
+    *,
+    k_sigma: float,
+    label: str,
+    y: np.ndarray | None = None,
+    clip: bool = False,
+) -> np.ndarray:
+    """물리 보정을 돌리고 보고한다. y가 없으면(test) 라벨 없는 지표만 낸다.
+
+    잔차 분포를 함께 찍는 이유: holdout(격자 위)과 test(격자 밖)의 분포를 나란히 놓으면
+    **라벨 없이** 전이 여부를 볼 수 있다. 중앙값이 같으면 LM이 test 관측도 똑같이 잘 설명한다는
+    뜻이다 — 단 잔차는 "관측을 설명하는가"만 재므로 **MAE 주장의 근거는 되지 못한다**
+    (관측을 같게 설명하는 등가 분지가 있다). 그 확인은 리더보드뿐이다.
+    """
+    refined, info = refine_with_fallback(decoder, x, pred, k_sigma=k_sigma)
+    res = info["residual"]
+    tail = "  ".join(f"p{q}={np.percentile(res, q):.6f}" for q in (90, 99, 99.9))
+    flag = f"지목 {info['flagged']}행 ({info['flagged_frac']:.2%}, 문턱 {info['threshold']:.6f})"
+    out_of_range = float(
+        ((refined < PHYSICAL_RANGE_NM[0]) | (refined > PHYSICAL_RANGE_NM[1])).mean()
+    )
+    if y is not None:
+        print(
+            f"  [{label}] post-LM {format_mae(mae_per_layer(info['d_lm'], y))}\n"
+            f"  [{label}] 되돌림 후 {format_mae(mae_per_layer(refined, y))}"
+        )
+    print(f"  [{label}] 물리 보정 — {flag} · 범위 밖 값 {out_of_range:.2%}")
+    print(f"  [{label}] post-LM 잔차 중앙값 {np.median(res):.6f}  {tail}")
+    if clip:
+        clipped = np.clip(refined, *PHYSICAL_RANGE_NM)
+        if y is not None:
+            print(f"  [{label}] [범위 가정 사용] 클리핑본 {format_mae(mae_per_layer(clipped, y))}")
+        return clipped
+    return refined
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -135,6 +201,22 @@ def main(argv: list[str] | None = None) -> None:
         snapped = mae_per_layer(snap_to_grid(ensemble), y_hold)
         print(f"  [분리 보고·누설] 격자 스냅 holdout {format_mae(snapped)} — 주 결과 아님")
 
+    decoder = None
+    if args.refine:
+        # 판정 수치는 complex128이다 (CLAUDE.md). 디코더는 Stage A 확정본을 쓴다.
+        from src.losses import FrozenDecoder
+
+        decoder = FrozenDecoder(dtype=torch.complex128)
+        _refine_report(
+            decoder,
+            x_hold,
+            ensemble,
+            k_sigma=args.refine_k_sigma,
+            label="holdout",
+            y=y_hold,
+            clip=args.refine_clip,
+        )
+
     if args.submission:
         ids, x_test = load_test()
         test_pred = np.mean([predict(m, x_test, args.batch_size) for m in models], axis=0)
@@ -142,6 +224,23 @@ def main(argv: list[str] | None = None) -> None:
         out_path = run_dir / f"submission_{run_dir.name}.csv"
         build_submission_frame(ids, test_pred, sample_path).to_csv(out_path, index=False)
         print(f"제출 파일(raw): {out_path}")
+        if decoder is not None:
+            # test는 라벨이 없으므로 지목 통계만 나온다 — 문턱은 **test 행 집합의 잔차 분포**에서
+            # 만들어진다 (transductive). 그것이 이 규칙이 라벨 없이 작동하는 방식이다.
+            refined = _refine_report(
+                decoder,
+                x_test,
+                test_pred,
+                k_sigma=args.refine_k_sigma,
+                label="test",
+                clip=args.refine_clip,
+            )
+            suffix = "_refined_clipped" if args.refine_clip else "_refined"
+            ref_path = run_dir / f"submission_{run_dir.name}{suffix}.csv"
+            build_submission_frame(ids, refined, sample_path).to_csv(ref_path, index=False)
+            print(
+                f"제출 파일(물리 보정{'  + 범위 클리핑' if args.refine_clip else ''}): {ref_path}"
+            )
         if args.snap:
             snap_path = run_dir / f"submission_{run_dir.name}_snap.csv"
             snapped_pred = snap_to_grid(test_pred)

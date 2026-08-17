@@ -1,0 +1,39 @@
+# cnn_recipe — 부모 `budget100-std-ema`에 **노이즈 증강**만 더한다 (변인 하나).
+#
+# 균등 ±0.015는 **데이터의 실제 노이즈와 같은 종류**다 — 측정된 하드 상한이 |eps| <= 0.0152이고
+# 균등분포 가정의 a = sigma*sqrt(3) = 0.014996이다 (reports/eda_notes.md §4). 이미 있는
+# 노이즈 위에 **추가로** 얹는 것이므로 총 잡음은 sqrt(2)배가 된다.
+# 표적은 val MAE가 아니라 분지 실패다: fringe 분지를 노이즈로 흔들어 봐도 같은 분지를
+# 고르는 모델이 LM 뒤에서 이긴다.
+seed: 42
+experiment: cnn_recipe
+run_name: budget100-std-ema-noise
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+  input_norm: true
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  ema_decay: 0.999
+  noise_aug: 0.015
+  num_folds: 0

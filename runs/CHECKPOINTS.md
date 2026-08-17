@@ -48,3 +48,28 @@ model.pt 합계 833.7 MB / run 9개 (미러 파일 27개)
 - **회수가 필요한 작업**: `scripts/evaluate_axes.py`(노이즈 강건성·신뢰도 지표)는 model.pt를
   읽는다. `scripts/analyze_stage_b_curves.py`는 커밋된 `train.log`만 쓰므로 회수가 필요 없다.
 - 미러에서 가져올 때 **model.pt만** 복사한다 — `metrics.json`·`train.log`는 git이 정본이다.
+
+## cnn_recipe (Task 7) — 라운드 1, 5 run
+
+Stage B와 같이 `_mirror_copy`가 학습 중에 쓴 것이라 sha256을 기록하지 않는다 — 라운드 1 노트북의
+Drive 무결성 검증 셀이 **미러의 model.pt를 다시 로드해 holdout 재추론**으로 기록된 val MAE를
+재현했고(5/5 OK), 그 출력이 노트북에 남아 있다.
+
+| run | 변인 (부모 대비) | val MAE [nm] |
+|---|---|---|
+| `budget100` | 에폭 30 → 100 | 1.7185 |
+| `budget100-std` | 입력 채널별 표준화 | 1.7525 |
+| `budget100-std-ema` | 가중치 EMA 0.999 | 1.7476 |
+| `budget100-std-ema-noise` | 균등 ±0.015 주입 | 1.7073 |
+| `budget100-std-ema-tail` | L1 + 0.1·MSE | 1.9189 |
+
+- 미러 경로: `MyDrive/FringeNet/runs_mirror/cnn_recipe/<run>/` (model.pt 각 2.5 MB)
+- **회수가 필요한 작업**: `scripts/judge_recipe.py`(post-LM·분지 실패율 판정) ·
+  `scripts/refine_inversion.py` · `python -m src.evaluate --refine`(제출)이 model.pt를 읽는다.
+  판정과 제출은 체크포인트 없이는 재현되지 않는다.
+- `budget100`은 **git에 완료 기록이 있는데 model.pt는 없다.** `run_config`는 미러에만 완료 기록이
+  있을 때 3종을 되가져오므로, git 기록이 있는 이 run은 자동 회수 경로에 걸리지 않는다 —
+  미러에서 `model.pt`만 직접 복사한다 (텍스트 2종은 git이 정본이라 덮으면 안 된다).
+- **회수 후 재추론으로 무결성을 확인한다**: `python -m src.evaluate --run runs/cnn_recipe/budget100`
+  이 기록된 val MAE와 층별까지 재현해야 한다 (budget100은 1.7185 / 1.175·2.183·1.986·1.530).
+  sha256을 기록하지 않은 run에는 이것이 대조 수단이다.

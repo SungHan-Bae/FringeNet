@@ -1,0 +1,37 @@
+# cnn_recipe — 부모 `budget100-std`에 **가중치 EMA**만 더한다 (변인 하나).
+#
+# 근거: 에폭별 val MAE 지터가 0.02~0.13 nm로 재려는 효과(0.05 nm 규모)와 같은 자리수다
+# (reports/stage_b_curves*.md §2). EMA는 그 지터를 직접 줄인다. 감쇠 0.999는 유효 창이
+# 약 1,000스텝 = 0.7에폭 — 코사인이 lr을 0으로 줄이는 구간을 뭉개지 않는 폭이다.
+# 평가·체크포인트가 EMA 가중치를 쓰므로 리포트 수치도 EMA 모델의 것이다.
+seed: 42
+experiment: cnn_recipe
+run_name: budget100-std-ema
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 200, 280]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+  input_norm: true
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  ema_decay: 0.999
+  num_folds: 0

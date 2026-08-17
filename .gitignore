@@ -12,6 +12,10 @@
 # **예외 — Stage A 물리 디코더는 추적한다** (합계 44 KB): scripts/diagnose_calibration.py가
 # 직접 로드해 reports/stage_a_gate.md를 재생성하므로, 빠지면 문서의 재현 커맨드가 깨진다.
 !/runs/stage_a/*/model.pt
+# 제출 파일도 추적하지 않는다 — `python -m src.evaluate --run ... --submission --refine` 한 줄로
+# 재생성되고, test id가 섞인 산출물을 저장소에 두지 않는다 (데이터 재배포 금지 계약의 취지).
+# 판정에 필요한 수치는 리포트에 있다.
+/runs/*/*/submission*.csv
 
 # --- 파이썬 환경 ---
 .venv/

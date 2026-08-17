@@ -142,6 +142,9 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 6. 흡수 기판: 복소 ns에서 0 ≤ R < 1, NaN/Inf 없음
 7. **층 순서 고정**: 비대칭 2층을 재귀 프레넬 공식과 대조 — 1~6은 적층 순서를 뒤집어도
    전부 통과해 순서를 고정하지 못한다 (Task 1에서 발견·보강)
+8. **해석적 야코비안** `tmm_reflectance_jacobian`: dR/dd를 **autograd와** 대조한다
+   (유한차분은 절단오차가 있어 참조값이 못 된다, rtol 1e-11). 반환 R은 `tmm_reflectance`와
+   **비트 동일**해야 하고, L=1도 따로 건다 (접두 곱이 항등이라 곱 순서 버그가 안 드러난다)
 
 ## 모델·학습 스펙
 
@@ -154,6 +157,15 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   셔플 대조군보다도 나쁘다. sigmoid bound가 격자 끝 오차를 지워 추가 −20%
   (**MLP 때와 반대 결론** — 강한 백본에서는 범위 밖 초과분이 남은 오차를 지배).
   **Level 2 백본 = flatten-dilated-bound.**
+- **학습 예산 (`cnn_recipe`)**: 같은 백본에 **에폭 30 → 100만** 주면 holdout MAE **1.7185 nm**
+  (`runs/cnn_recipe/budget100` — 구조는 동일하다. `reports/cnn_recipe.md`). **이후 평가·제출은
+  이 run을 쓴다.** 여기에 역산 refinement + 되돌림 규칙까지 얹은 것이 프로젝트 최선
+  **0.3880 nm**이고 213M skip-MLP 단독(0.3955)을 넘는다 (아래 역산 스펙). 함께 확정된 것 셋:
+  - **레시피 손잡이 4종은 이득이 없다** (입력 표준화·EMA·노이즈 증강·꼬리 가중 손실). 표준화는
+    2.4σ 순손해이므로 켜지 말 것. 코드·config는 재현을 위해 남기지만 새 변형을 추가하지 않는다.
+  - **100에폭에서 포화한다** (마지막 5에폭 val이 평평) — 예산을 더 늘리지 않는다.
+  - **병목이 최적화에서 용량으로 옮겨갔다**: 일반화 격차가 0.243으로 **skip-MLP와 같다**
+    (30에폭에서는 0.151). 남은 차이는 순수 적합력이고 `train_l1` 1.4754가 이 백본의 벽이다.
 - **상한 기준선**: 리더보드 1등 단일 모델(213.2M skip-MLP) 원본 재현 → holdout MAE
   **0.3955 nm** (`reports/strong_baseline.md`). 0.66M CNN(2.346) 대비 322배 파라미터로 −83%.
   Task 7의 서사는 "작은 모델 + 물리가 이 격차를 얼마나 좁히나".
@@ -238,14 +250,42 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   - **확정 (2026-08-14)**: holdout MAE **2.3455 → 0.6110 nm (−74%)**, 98%의 행이 개선.
     격자 중앙 출발은 **77.68 nm로 실패** → CNN의 기여는 정밀도가 아니라 **올바른 fringe 분지**다.
     상한(참값 출발) 0.3336. 정본은 `reports/inversion_refine.md`.
+  - **되돌림 규칙 = `flag_unreliable` (2026-08-17 확정).** 재구성 잔차가 **중앙값 + 5·robust σ**
+    를 넘는 행에서는 LM 보정을 버리고 CNN 예측을 쓴다 — 그 행에서 CNN이 LM보다 정확하기 때문이다
+    (11.27 vs 37.76 nm: LM이 잘못된 분지 바닥까지 성실하게 내려간다).
+    - **지목·문턱에 라벨이 안 들어간다** (관측과 우리 답만 쓰고, 문턱은 잔차 분포 자체에서 —
+      행의 99% 이상이 정상이라 robust 통계가 정상 분포를 잡는다). test에 그대로 적용된다.
+    - **k는 사전등록한다 (5.0).** MAE 보며 고르면 평가셋 선택이고 그것이 이동 상한 τ 규칙이
+      기각된 이유 중 하나다. τ와 달리 선택자가 이동 거리가 아니라 **잔차**이고 정밀도가
+      98.7~99.3%로 측정된다.
+    - **확정**: `cnn_recipe/budget100` 기준 holdout 81,000행에서 **0.4884 → 0.3880 nm**.
+      213M skip-MLP 단독(0.3955)을 넘는다 — 같은 split·결정론적 추론이라 이 평가셋에서
+      표본 오차가 없다. **단 우위가 0.0075 nm이고 holdout은 격자 위 보간이므로 격자 밖 확인이
+      남아 있다.** 정본은 `reports/cnn_recipe_judge.md`.
+    - **줄이는 것은 실패 건수가 아니라 심각도다** (0.39% → 0.38%). 건수는 다중 시작의 몫이다.
+    - **transductive다** — 문턱을 행 집합의 잔차 분포에서 만들므로 단행 배포에는 미리 계산한
+      문턱이 필요하다.
   - **감쇠 스케일**: `damping="batch"`(게이트 (d)의 기존 동작)는 한 행의 갱신이 배치 구성에
     의존해 **청크를 바꾸면 답이 달라진다**. refinement는 `"row"`를 쓴다 (청크 불변, 테스트로 고정).
     두 값을 잘못 조합하면 조용히 다른 수치가 나오는 대신 에러가 난다.
-  - **추론 비용은 손해다 — 숨기지 않는다.** 정본은 `reports/inversion_bench.md`
-    (`scripts/bench_invert.py`, GPU는 `notebooks/inversion/round1_gpu-bench.ipynb`).
-    행당 TMM forward가 270회(야코비안 중앙차분 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M
-    skip-MLP forward보다 **한 자릿수 느리다**(L4에서 17.26배). 서사는 정확도·모델 크기
-    (2.5 MB vs 813.6 MB)에 대한 주장이지 지연에 대한 주장이 아니다.
+  - **야코비안 방식은 비용만 바꾼다** — `jacobian="fd"`는 중앙차분(반복당 forward 2L회),
+    `"analytic"`은 디코더의 `forward_jacobian`(약 2회분). **기본값은 `"fd"`이고 커밋된 리포트가
+    그 설정으로 나왔다** — 바꾸려면 해당 리포트를 함께 재생성한다. 해석적 경로가 정확도를
+    잃지 않는 근거는 물리 테스트 8번이고, **float32에서는 오히려 더 정확하다**: 중앙차분은
+    보폭 1e-3 nm가 상대 섭동 1e-5라 float32 유효자리(1.2e-7)를 먹어 dtype마다 답이 흔들리는데,
+    해석적은 complex64가 complex128과 같은 값을 준다.
+  - **조기 종료 `tol_nm`**: **제안된** 스텝 폭이 문턱 미만인 반복이 `patience`회 연속인 행을
+    작업 집합에서 뺀다. 행이 독립이라 남은 행 답은 불변이고 청크 불변성도 유지된다.
+    기각을 이동 0으로 세면 안 된다 — 감쇠가 오르며 스텝이 되살아나는 LM 특성 때문에 어려운
+    행을 잘라 MAE가 나빠진다(측정: +0.0093 nm). `damping="row"`에서만 허용한다.
+  - **추론 비용은 야코비안 방식에 달려 있다 — 배수를 방식과 함께 적는다.** 정본은
+    `reports/inversion_bench.md` (`scripts/bench_invert.py`, GPU는
+    `notebooks/inversion/round1_gpu-bench.ipynb`). 중앙차분은 행당 TMM forward가 270회
+    (야코비안 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M skip-MLP forward보다 **한 자릿수
+    느리다**(L4에서 17.26배). 해석적+조기종료는 그 비용의 대부분을 걷어낸다.
+    - **커밋된 표는 중앙차분 3변형만 담은 옛 판본이다** — 스크립트에는 해석적·조기종료 축이
+      들어갔고 GPU 절을 살리려면 Colab에서 재실행해야 하므로 아직 갱신하지 않았다. 로컬 CPU
+      실측(해석적+조기종료 c64에서 `cnn+LM`이 skip-MLP의 **0.63배**)은 docs/week_2.md 08-15에 있다.
     - **단일 배수를 인용하지 말 것** — 하드웨어에 크게 의존한다. skip-MLP는 GEMM 한 방이라
       BLAS·GPU 최적화를 온전히 받고 LM은 비정형 + 대역폭 바운드라 덜 받아서, 같은 코드가
       기계마다 다른 배수를 낸다. 배수는 리포트에서 읽고 기계를 함께 적는다.
@@ -253,9 +293,8 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
       complex64는 24.5배다(소비자 GPU FP64 1/32). 배포 경로는 complex64가 맞고 **판정 수치는
       계속 complex128**이다. CPU↔GPU는 bit가 아니라 MAE 수준에서 일치한다(같은 표본 1.8% 차).
     - **반복수를 줄이는 것은 공짜가 아니다** — 10회는 30회보다 MAE가 0.02~0.03 nm 나쁘다
-      (CPU·GPU 세 측정에서 일관). 3배 싸지는 대신 치르는 값이므로 함께 적는다.
-    - 미착수 레버: 해석적 야코비안(디코더가 미분가능한데 역해는 중앙차분을 쓴다) ·
-      수렴 행 조기 종료(고정 30회 대신).
+      (CPU·GPU 세 측정에서 일관). 고정 반복수를 줄이는 대신 **조기 종료를 쓴다** — 같은
+      비용대에서 MAE를 잃지 않는다.
 - 평가: 전체/층별 MAE, 학습곡선, TMM 재구성 오차 히스토그램(신뢰도 지표), 두께 구간별 오차.
 
 ## 평가 규약 (데이터가 시뮬레이션 격자라서 생기는 함정)
@@ -314,7 +353,7 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 - 정리는 사후가 아니라 작성 시점에 한다. 이미 부푼 문서를 줄일 때는 **중복부터** 걷고,
   그래도 길면 근거의 깊이가 아니라 서술을 줄인다.
 
-## 작업 백로그 (순서 준수 — 일일 진행·열린 항목은 docs/week_1.md)
+## 작업 백로그 (순서 준수 — 일일 진행·열린 항목은 docs/week_2.md)
 
 - [x] **Task 0~3** — 스캐폴드 · TMM 모듈+테스트 7종 · 데이터 검증·로더 · EDA
 - [x] **Task 4 — Baseline 학습**: 90/10 val split(시드 고정), MAE 리포트 → 4.599 nm
@@ -328,7 +367,23 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   - [x] **역산 refinement — 사전등록 2 부합.** holdout MAE **2.3455 → 0.6110 nm (−74%)**
         (`reports/inversion_refine.md`). 물리 단독(격자 중앙 출발)은 77.68 nm로 실패하므로
         **CNN의 기여는 정밀도가 아니라 올바른 fringe 분지**다. 상한(참값 출발)이 0.3336이다.
-        추론 비용은 `reports/inversion_bench.md` — 지연에서는 손해다(아래 스펙).
+        추론 비용은 `reports/inversion_bench.md` — 중앙차분 경로에서는 손해다(아래 스펙).
+  - [x] **추론 지연 레버**: 해석적 야코비안·조기 종료를 `lm_invert`에 배선(opt-in). 정확도 손실
+        없이 로컬 CPU 10.85배 절감 → `cnn+LM`이 skip-MLP forward 대비 5.53배 손해에서 **0.63배
+        (1.6배 유리)로 뒤집힘**. 남은 것은 GPU 정본 표 재생성과 기본값 전환 여부이고, 전환하면
+        `inversion_refine.md`·`stage_a_gate.md`를 함께 재생성한다.
+  - [x] **레시피 라운드 1 (`cnn_recipe`)**: 레버는 **예산 하나**였다 (위 스펙). post-LM
+        0.6643 → 0.4962 nm, 분지 실패율 0.78% → 0.42%. 판정은 `scripts/judge_recipe.py`.
+  - [x] **되돌림 규칙 — 목표선 돌파.** 잔차로 실패 행을 라벨 없이 지목해 LM 보정을 버리면
+        `budget100`이 0.4884 → **0.3880 nm**로, 213M 단독(0.3955)을 넘는다 (위 역산 스펙).
+        제출 경로까지 배선됨 (`python -m src.evaluate --submission --refine`).
+  - [ ] **리더보드 업로드** — holdout 우위가 0.0075 nm로 얇고 test는 격자 밖이다. 잔차 분포는
+        전이되지만(중앙값 +0.1%) **극단 꼬리가 2배**라 점수를 봐야 확정된다. 파일은
+        `runs/cnn_recipe/budget100/submission_budget100_refined.csv` (git 미추적, 한 줄로 재생성).
+  - [ ] **다중 시작 재탐색** — 실패 **건수**를 줄이는 유일한 경로(되돌림은 심각도만 줄인다).
+        지목된 행에서만 여러 출발점으로 LM을 다시 풀고 잔차 최소해를 고른다. 변위가 커서
+        (중앙값 68 nm·90분위 178 nm·4층이 함께 움직인다) 작은 섭동이 아니라 넓은 다중 시작이어야
+        한다. 상한 0.3336. 남는 실패의 26%는 **등가 분지**라 디코더 개선(게이트 (b)) 쪽 문제다.
   - [ ] **평가 축 실측**: 노이즈 강건성 · 신뢰도 지표 (`scripts/evaluate_axes.py`).
         체크포인트가 git에 없어 Drive 미러에서 받아와야 한다 (`runs/CHECKPOINTS.md`).
   - [ ] **`reports/stage_b.md` 취합** — `stage_b_curves*.md`는 스크립트 산출물이고 서사가 아니다.
@@ -353,6 +408,16 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 - **분할을 손으로 재구성하기** — 학습·평가·진단·노트북 전부 `prepare_from_config(cfg)` 한 곳만
   거친다. 인자를 직접 넘기면 새 split 옵션(`holdout_thickness` 등)이 조용히 빠져 **다른 split을
   재구성한다** (노트북의 Drive 무결성 검증이 정상 체크포인트를 손상으로 오판하는 형태로 걸렸다)
+- **범위 클리핑의 holdout 이득을 test 이득으로 기대하기** — 보정 해를 [10, 300] nm로 클리핑하면
+  holdout MAE가 0.3880 → 0.3804로 좋아지는데, holdout은 **참 두께의 6.71%가 격자 끝(10·300)에
+  쌓여** 있어서다(격자 30값 중 2개). test는 연속이라 범위 밖 해가 0.06%뿐이라 이득이 없다.
+  **격자 스냅과 같은 계열의 인공물**이므로 `--refine-clip`은 opt-in이고 기본은 클리핑 없음이다
+- **사슬(누적) 실험의 Δ를 직전 부모 대비로 읽기** — 앞 단계가 성능을 깎아 놓았으면 뒤 손잡이가
+  과대평가된다. `cnn_recipe`에서 꼬리 손실이 부모 대비 −0.0884로 "유일한 이득"처럼 보였는데
+  **대조군 대비로는 −0.0098 = 0.3σ 동점**이었다. Δ는 항상 대조군 기준으로 읽는다
+- **표본 잡음을 구하지 않고 post-LM 순위를 읽기** — post-LM은 소수의 분지 실패 행이 지배하므로
+  5,000행 표본의 1σ가 ±0.037 nm다 (실패 21행 → 포아송 ±4.6행 × 40 nm/5000). 이 값보다 작은
+  차이를 순위로 쓰지 않는다
 - **적합 수준을 맞추지 않고 일반화 격차(val − train)를 비교하기** — 덜 적합된 모델은 격차가
   자명하게 작으므로 정규화 효과의 증거가 되지 못한다. 축을 에폭이 아니라 `train_l1`으로 두고
   같은 적합에서 val을 비교한다 (`scripts/analyze_stage_b_curves.py`)
@@ -372,6 +437,11 @@ python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yam
 python scripts/diagnose_calibration.py                                            # Stage A 게이트·그림
 python -m src.evaluate --run runs/mlp_baseline/dropout0.0                          # holdout 재평가
 
+# 최종 제출 — 물리 보정(LM 역해 + 되돌림)까지 한 줄로. holdout 확정 수치와 test 보정본이 같이
+# 나오고, 잔차 분포가 함께 찍혀 격자 밖 전이를 라벨 없이 볼 수 있다. 제출 csv는 git 미추적.
+# --snap은 절대 쓰지 말 것(격자 밖에서 +1.2 nm), --refine-clip은 opt-in(격자 인공물 — 하지 말 것 참조).
+python -m src.evaluate --run runs/cnn_recipe/budget100 --submission --refine
+
 # Stage B 물리 손실 — 본 학습은 Colab GPU, 로컬은 스모크만 (약 35초).
 # run-name에 -smoke를 붙이는 것이 필수다 — 서브셋 run이 완료 기록을 남기면 본 run이 스킵된다
 python -m src.train_gpu --config configs/stage_b/beta100.yaml --device cpu \
@@ -390,12 +460,18 @@ python scripts/analyze_stage_b_curves.py $(for b in 0 30 100 300; do \
 # git 히스토리에 있다 (git show <커밋>:... — runs/CHECKPOINTS.md) — 백본 축은 Drive 없이 돈다.
 python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta100
 
+# 레시피 run 판정 — post-LM MAE·분지 실패율·라벨 없는 실패 검출을 같은 행·같은 장치로.
+# 체크포인트가 필요하므로 Drive 미러에서 받아온 뒤 실행한다 (runs/CHECKPOINTS.md).
+python scripts/judge_recipe.py --run runs/cnn_recipe/budget100
+
 # 역산 refinement (추론 후 물리 보정) — 위와 같은 체크포인트 + Stage A 디코더. 전체 holdout
 # 81,000행이 CPU 8스레드로 약 55분(팔 3개)이라 확인은 --rows로 줄여서 한다 (무작위 표본).
 python scripts/refine_inversion.py --rows 5000
 
-# 역해 LM 추론 비용 (장치·dtype·반복수). GPU 측정은 notebooks/inversion/round1_gpu-bench.ipynb.
-python scripts/bench_invert.py --rows 4096
+# 역해 LM 추론 비용 (장치·dtype·야코비안·반복수). GPU 측정은
+# notebooks/inversion/round1_gpu-bench.ipynb — 정본 표에는 CPU와 GPU 절이 함께 있어야 하므로
+# 로컬 단독 실행으로 reports/inversion_bench.md를 덮으면 GPU 절이 사라진다 (--out으로 뺄 것).
+python scripts/bench_invert.py --rows 4096 --out /tmp/bench.md
 ```
 
 Stage A 경로는 최대 상주 메모리 **약 5 GB**를 쓴다 (조건부 평균이 train 전체를 올린다).
