@@ -54,7 +54,7 @@ from refine_inversion import BRANCH_FAIL_NM  # noqa: E402 — 분지 실패 정�
 
 from src.data.dataset import REPO_ROOT, subsample_indices  # noqa: E402
 from src.losses import DEFAULT_DECODER, FrozenDecoder  # noqa: E402
-from src.physics.invert import flag_unreliable, lm_invert  # noqa: E402
+from src.physics.invert import refine_with_fallback  # noqa: E402
 
 OUT_PATH = REPO_ROOT / "reports" / "cnn_recipe_judge.md"
 # 라운드 1의 기준 팔 — 예산을 늘리기 전의 확정 백본. 판정 표의 원점이다.
@@ -85,27 +85,13 @@ def judge_one(
     device = next((t.device for t in (*model.parameters(), *model.buffers())), torch.device("cpu"))
     with torch.no_grad():
         d_hat = model(torch.from_numpy(x).to(device)).cpu().numpy().astype(np.float64)
-    d_lm = lm_invert(
-        decoder,
-        x,
-        d_hat,
-        iters=iters,
-        damping="row",
-        chunk=4096,
-        jacobian="analytic",
-        tol_nm=tol_nm,
+
+    # 배포 경로 그대로 부른다 — 판정과 배포가 다른 코드를 쓰면 조용히 갈라진다.
+    d_fb, info = refine_with_fallback(
+        decoder, x, d_hat, iters=iters, tol_nm=tol_nm, k_sigma=FALLBACK_K_SIGMA
     )
+    d_lm, res, flagged = info["d_lm"], info["residual"], info["mask"]
     row_err = np.abs(d_lm - y).mean(axis=1)
-
-    # 라벨 없는 재구성 잔차 — 이것이 분지 실패를 가리키면 실패 행만 골라 재시도할 수 있다.
-    # 장치를 명시해서 옮긴다: 디코더가 GPU면 관측도 GPU로 올려야 한다.
-    res = np.empty(len(d_lm), dtype=np.float64)
-    with torch.no_grad():
-        for s in range(0, len(d_lm), 4096):
-            recon = decoder(torch.from_numpy(d_lm[s : s + 4096]).to(device))
-            obs = torch.from_numpy(x[s : s + 4096]).to(device=device, dtype=recon.dtype)
-            res[s : s + 4096] = (recon - obs).abs().mean(dim=1).cpu().numpy()
-
     fail = row_err > BRANCH_FAIL_NM
     order = np.argsort(-res)
     detect: dict[str, float] = {}
@@ -117,10 +103,6 @@ def judge_one(
         detect[f"recall@{pct:g}"] = caught / max(int(fail.sum()), 1)
         detect[f"precision@{pct:g}"] = caught / n
 
-    # 되돌림 규칙 — 지목된 행에서는 물리 보정을 신뢰하지 않고 CNN 예측을 채택한다.
-    # 지목·문턱 모두 라벨을 쓰지 않으므로 test에도 그대로 적용된다 (flag_unreliable).
-    flagged, threshold = flag_unreliable(res, k_sigma=FALLBACK_K_SIGMA)
-    d_fb = np.where(flagged[:, None], d_hat, d_lm)
     fb_row = np.abs(d_fb - y).mean(axis=1)
     hit = int((flagged & fail).sum())
     return {
@@ -132,7 +114,7 @@ def judge_one(
         "res_fail": float(np.median(res[fail])) if fail.any() else float("nan"),
         "res_ok": float(np.median(res[~fail])),
         **detect,
-        "fb_threshold": threshold,
+        "fb_threshold": info["threshold"],
         "fb_flagged": int(flagged.sum()),
         "fb_hit": hit,
         "fb_precision": hit / max(int(flagged.sum()), 1),

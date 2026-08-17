@@ -29,6 +29,7 @@ __all__ = [
     "flag_unreliable",
     "inversion_stats",
     "lm_invert",
+    "refine_with_fallback",
     "residual_l1_rows",
 ]
 
@@ -272,17 +273,75 @@ def residual_l1_rows(
 ) -> np.ndarray:
     """행별 재구성 L1 |R_model(d) − R_obs| — 라벨을 쓰지 않는 신뢰도 지표 (README §3.4).
 
+    **장치는 model을 따라간다** — 관측도 같은 장치로 올린다 (GPU 디코더에 CPU 관측을 빼면
+    장치 불일치로 죽는다).
+
     Args:
         model: 동결 forward 모델. d: (M, L) [nm]. x: (M, W) 관측. chunk: 배치 크기.
 
     Returns:
         (M,) float64.
     """
-    d_t = torch.from_numpy(np.asarray(d, dtype=np.float64))
-    obs = torch.from_numpy(np.asarray(x, dtype=np.float64))
+    device = _device_of(model)
+    d_t = torch.from_numpy(np.asarray(d, dtype=np.float64)).to(device)
+    obs_np = np.asarray(x, dtype=np.float64)
     out = np.empty(len(d_t), dtype=np.float64)
     with torch.no_grad():
         for s in range(0, len(d_t), chunk):
             pred: Tensor = model(d_t[s : s + chunk])
-            out[s : s + chunk] = (pred - obs[s : s + chunk]).abs().mean(dim=1).numpy()
+            obs = torch.from_numpy(obs_np[s : s + chunk]).to(device=device, dtype=pred.dtype)
+            out[s : s + chunk] = (pred - obs).abs().mean(dim=1).cpu().numpy()
     return out
+
+
+def refine_with_fallback(
+    model: nn.Module,
+    x: np.ndarray,
+    d_init: np.ndarray,
+    *,
+    iters: int = 30,
+    tol_nm: float | None = 1e-4,
+    k_sigma: float = 5.0,
+    chunk: int = 4096,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """배포 경로 전체: LM 역해 → 잔차로 실패 지목 → 지목된 행은 `d_init`으로 되돌림.
+
+    **라벨이 한 군데도 들어가지 않는다** — 쓰는 것은 관측 `x`와 우리 답뿐이므로 test·실계측에
+    그대로 적용된다. 되돌리는 이유는 분지 실패 행에서 신경망 예측이 LM 결과보다 정확하기
+    때문이다 (측정: 11.27 vs 37.76 nm — LM이 잘못된 분지 바닥까지 성실하게 내려간다).
+
+    문턱은 잔차 분포에서 만들므로 **transductive다**: 들어온 행 집합이 문턱을 정한다. 배치
+    계측에서는 제약이 아니지만, 한 행씩 처리하는 배포에는 미리 계산한 문턱이 필요하다.
+
+    Args:
+        model: 동결 forward 디코더. x: (M, W) 관측. d_init: (M, L) 신경망 예측 [nm].
+        iters / tol_nm / chunk: `lm_invert`에 그대로 넘긴다 (해석적 야코비안 고정).
+        k_sigma: 되돌림 문턱 배수. **사전등록 값이며 성능을 보고 고르지 않는다**
+            (`flag_unreliable`).
+
+    Returns:
+        (d_final, info) — info에 `flagged`(지목 행 수)·`threshold`·`residual`(M,)·
+        `d_lm`(되돌림 전 해)이 들어간다. 진단·리포트가 그 둘을 함께 봐야 한다.
+    """
+    d_lm = lm_invert(
+        model,
+        x,
+        d_init,
+        iters=iters,
+        damping="row",
+        chunk=chunk,
+        jacobian="analytic",
+        tol_nm=tol_nm,
+    )
+    residual = residual_l1_rows(model, d_lm, x, chunk=chunk)
+    flagged, threshold = flag_unreliable(residual, k_sigma=k_sigma)
+    d_final = np.where(flagged[:, None], np.asarray(d_init, dtype=np.float64), d_lm)
+    return d_final, {
+        "flagged": int(flagged.sum()),
+        "flagged_frac": float(flagged.mean()),
+        "threshold": threshold,
+        "k_sigma": k_sigma,
+        "residual": residual,
+        "d_lm": d_lm,
+        "mask": flagged,
+    }

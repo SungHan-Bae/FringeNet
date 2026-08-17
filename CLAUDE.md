@@ -399,6 +399,10 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 - **분할을 손으로 재구성하기** — 학습·평가·진단·노트북 전부 `prepare_from_config(cfg)` 한 곳만
   거친다. 인자를 직접 넘기면 새 split 옵션(`holdout_thickness` 등)이 조용히 빠져 **다른 split을
   재구성한다** (노트북의 Drive 무결성 검증이 정상 체크포인트를 손상으로 오판하는 형태로 걸렸다)
+- **범위 클리핑의 holdout 이득을 test 이득으로 기대하기** — 보정 해를 [10, 300] nm로 클리핑하면
+  holdout MAE가 0.3880 → 0.3804로 좋아지는데, holdout은 **참 두께의 6.71%가 격자 끝(10·300)에
+  쌓여** 있어서다(격자 30값 중 2개). test는 연속이라 범위 밖 해가 0.06%뿐이라 이득이 없다.
+  **격자 스냅과 같은 계열의 인공물**이므로 `--refine-clip`은 opt-in이고 기본은 클리핑 없음이다
 - **사슬(누적) 실험의 Δ를 직전 부모 대비로 읽기** — 앞 단계가 성능을 깎아 놓았으면 뒤 손잡이가
   과대평가된다. `cnn_recipe`에서 꼬리 손실이 부모 대비 −0.0884로 "유일한 이득"처럼 보였는데
   **대조군 대비로는 −0.0098 = 0.3σ 동점**이었다. Δ는 항상 대조군 기준으로 읽는다
@@ -423,6 +427,11 @@ python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
 python -m src.calibrate --config configs/stage_a/joint-lam3-sin2-si2-schinke.yaml  # Stage A (디코더)
 python scripts/diagnose_calibration.py                                            # Stage A 게이트·그림
 python -m src.evaluate --run runs/mlp_baseline/dropout0.0                          # holdout 재평가
+
+# 최종 제출 — 물리 보정(LM 역해 + 되돌림)까지 한 줄로. holdout 확정 수치와 test 보정본이 같이
+# 나오고, 잔차 분포가 함께 찍혀 격자 밖 전이를 라벨 없이 볼 수 있다. 제출 csv는 git 미추적.
+# --snap은 절대 쓰지 말 것(격자 밖에서 +1.2 nm), --refine-clip은 opt-in(격자 인공물 — 하지 말 것 참조).
+python -m src.evaluate --run runs/cnn_recipe/budget100 --submission --refine
 
 # Stage B 물리 손실 — 본 학습은 Colab GPU, 로컬은 스모크만 (약 35초).
 # run-name에 -smoke를 붙이는 것이 필수다 — 서브셋 run이 완료 기록을 남기면 본 run이 스킵된다
