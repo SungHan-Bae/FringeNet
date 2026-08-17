@@ -2,12 +2,11 @@
 
 `scripts/judge_recipe.py` 산출 — 재실행 시 덮어쓴다. 해석은 `reports/cnn_recipe.md`.
 
-- 표본 81,000행 (holdout 무작위, 시드 0) — **모든 run이 같은 행을 본다**
+- **holdout 전체 81,000행** — 표본 오차가 없는 확정 수치다 · 모든 run이 같은 행을 본다
 - 디코더 `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt` (Stage A 확정, 동결) · complex128
 - LM 30회 · 해석적 야코비안 · 조기 종료 0.0001 nm · 감쇠 행별
 - 장치 cpu (x86_64) — **CPU↔GPU는 MAE 수준에서만 일치한다** (같은 표본 약 1.8% 차). 표 안의 비교만 유효하다.
 - 분지 실패 = 행 평균 오차 > 5 nm (`refine_inversion.py`와 같은 정의)
-- **표본 수치다.** 최종 정본은 `refine_inversion.py`로 전체 holdout에서 낸다.
 
 | run | 에폭 | λ | val MAE | CNN MAE | **post-LM** | 분지 실패 | 중앙값 | p99 | Δ원점 |
 |---|---|---|---|---|---|---|---|---|---|

@@ -155,7 +155,8 @@ def judge_runs(
         raise ValueError(f"run마다 split이 다르다 — 나란히 비교할 수 없다: {sorted(blocks)}")
 
     x_hold, y_hold = holdout_of(loaded[0][2]["config"], {})
-    idx = subsample_indices(len(x_hold), rows, seed=SUBSAMPLE_SEED)
+    holdout_rows = len(x_hold)
+    idx = subsample_indices(holdout_rows, rows, seed=SUBSAMPLE_SEED)
     x = x_hold[idx]
     y = y_hold[idx].astype(np.float64)
     del x_hold, y_hold
@@ -176,6 +177,7 @@ def judge_runs(
         )
     meta = {
         "rows": len(x),
+        "holdout_rows": holdout_rows,
         "decoder": decoder.provenance["decoder"],
         "device": str(dev),
         "device_name": torch.cuda.get_device_name(dev)
@@ -192,20 +194,25 @@ def judge_runs(
 def render(rows: list[dict[str, Any]], meta: dict[str, Any]) -> list[str]:
     """판정 표를 markdown으로. 해석은 리포트 본문(reports/cnn_recipe.md)에서 한다."""
     origin = rows[0]["lm"] if rows else None
+    full = meta["rows"] >= meta["holdout_rows"]
+    scope = (
+        f"- **holdout 전체 {meta['rows']:,}행** — 표본 오차가 없는 확정 수치다"
+        if full
+        else f"- 표본 {meta['rows']:,}행 / holdout {meta['holdout_rows']:,}행"
+        f" (무작위, 시드 {meta['seed']}) — **가지를 고르는 용도이고 확정 수치가 아니다**"
+    )
     lines = [
         "# cnn_recipe 판정 — post-LM 정확도와 분지 실패율",
         "",
         "`scripts/judge_recipe.py` 산출 — 재실행 시 덮어쓴다. 해석은 `reports/cnn_recipe.md`.",
         "",
-        f"- 표본 {meta['rows']:,}행 (holdout 무작위, 시드 {meta['seed']})"
-        " — **모든 run이 같은 행을 본다**",
+        scope + " · 모든 run이 같은 행을 본다",
         f"- 디코더 `{meta['decoder']}` (Stage A 확정, 동결) · complex128",
         f"- LM {meta['iters']}회 · 해석적 야코비안 · 조기 종료 {meta['tol_nm']:g} nm · 감쇠 행별",
         f"- 장치 {meta['device']} ({meta['device_name']}) — **CPU↔GPU는 MAE 수준에서만 일치한다**"
         " (같은 표본 약 1.8% 차). 표 안의 비교만 유효하다.",
         f"- 분지 실패 = 행 평균 오차 > {meta['branch_fail_nm']:.0f} nm"
         " (`refine_inversion.py`와 같은 정의)",
-        "- **표본 수치다.** 최종 정본은 `refine_inversion.py`로 전체 holdout에서 낸다.",
         "",
         "| run | 에폭 | λ | val MAE | CNN MAE | **post-LM** | 분지 실패 | 중앙값 | p99 | Δ원점 |",
         "|---|---|---|---|---|---|---|---|---|---|",
