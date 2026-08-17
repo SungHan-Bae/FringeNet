@@ -24,11 +24,16 @@ from torch import Tensor, nn
 
 __all__ = [
     "DEFAULT_BOX_NM",
+    "MAD_TO_SIGMA",
     "PHYSICAL_RANGE_NM",
+    "flag_unreliable",
     "inversion_stats",
     "lm_invert",
     "residual_l1_rows",
 ]
+
+# MAD를 정규분포 표준편차로 환산하는 계수 (1/Phi^-1(0.75)).
+MAD_TO_SIGMA = 1.4826
 
 # 두께 격자의 물리 범위 [nm]. 상자 제약(아래)은 의도적으로 이보다 넓다.
 PHYSICAL_RANGE_NM = (10.0, 300.0)
@@ -226,6 +231,40 @@ def inversion_stats(
         ),
         "at_box_boundary": float((np.isclose(d_hat, box[0]) | np.isclose(d_hat, box[1])).mean()),
     }
+
+
+def flag_unreliable(residual: np.ndarray, *, k_sigma: float = 5.0) -> tuple[np.ndarray, float]:
+    """재구성 잔차만으로 "이 답은 관측을 설명하지 못한다"는 행을 지목한다 — **라벨 미사용**.
+
+    정답 골짜기에 수렴한 행의 잔차는 측정 노이즈 바닥에 붙는다(E|ε| = 0.0075). 잘못된 분지의
+    바닥은 그보다 높으므로 잔차 자체가 오답의 증거다 — Stage A 게이트 (b)와 같은 논리이고,
+    라벨이 아니라 **관측과 우리 답**만 쓰므로 test·실계측에 그대로 적용된다.
+
+    문턱은 잔차 분포에서 만든다: 행의 대다수가 정상이므로 중앙값과 MAD가 곧 정상 행의 분포이고
+    소수의 이상치는 robust 통계를 흔들지 못한다. **holdout 성능을 보며 k_sigma를 고르면 평가셋
+    선택이 되므로 사전등록한다** (`reports/inversion_refine.md`의 이동 상한 τ가 그 함정에
+    빠졌다 — τ는 선택자가 이동 거리였고 문턱도 holdout에서 골랐다).
+
+    Args:
+        residual: (N,) 행별 재구성 L1 (`residual_l1_rows` 출력).
+        k_sigma: 문턱 = 중앙값 + k_sigma × robust σ. 사전등록 값 5.0.
+
+    Returns:
+        (mask, threshold) — mask (N,) bool은 지목된 행, threshold는 쓰인 문턱.
+        산포가 0이면(전 행 잔차 동일) 이상치를 정의할 수 없으므로 아무 행도 지목하지 않는다.
+
+    Raises:
+        ValueError: k_sigma가 음수인 경우.
+    """
+    if k_sigma < 0:
+        raise ValueError(f"k_sigma는 0 이상이어야 한다 (받은 값: {k_sigma})")
+    res = np.asarray(residual, dtype=np.float64)
+    median = float(np.median(res))
+    sigma = float(np.median(np.abs(res - median))) * MAD_TO_SIGMA
+    if sigma <= 0.0:
+        return np.zeros(len(res), dtype=bool), float("inf")
+    threshold = median + k_sigma * sigma
+    return res > threshold, threshold
 
 
 def residual_l1_rows(

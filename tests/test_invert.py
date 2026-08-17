@@ -14,6 +14,7 @@ import torch
 from src.losses import FrozenDecoder
 from src.physics.invert import (
     DEFAULT_BOX_NM,
+    flag_unreliable,
     inversion_stats,
     lm_invert,
     residual_l1_rows,
@@ -229,3 +230,34 @@ def test_residual_rows_match_decoder_contract(decoder: FrozenDecoder) -> None:
     mine = residual_l1_rows(decoder, d, x, chunk=4)
     theirs = decoder.residual_l1(torch.from_numpy(d), torch.from_numpy(x)).numpy()
     assert np.allclose(mine, theirs, rtol=0.0, atol=1e-12)
+
+
+def test_flag_unreliable_picks_outliers_without_labels() -> None:
+    """정상 다수 + 이상치 소수에서 이상치만 지목해야 한다 (라벨을 쓰지 않는 규칙)."""
+    rng = np.random.default_rng(0)
+    res = rng.normal(0.0078, 0.0004, size=1000)  # 정상 행 — 노이즈 바닥 근처
+    res[[10, 200, 999]] = [0.02, 0.03, 0.05]  # 잘못된 분지 — 잔차가 크다
+    mask, threshold = flag_unreliable(res, k_sigma=5.0)
+    assert set(np.flatnonzero(mask)) == {10, 200, 999}
+    assert 0.0078 < threshold < 0.02
+
+
+def test_flag_unreliable_k_sigma_monotone() -> None:
+    """문턱을 올리면 지목이 줄어든다 — k_sigma는 사전등록 손잡이다."""
+    rng = np.random.default_rng(1)
+    res = rng.normal(0.0078, 0.0004, size=500)
+    res[:20] += np.linspace(0.001, 0.02, 20)
+    counts = [flag_unreliable(res, k_sigma=k)[0].sum() for k in (3.0, 5.0, 10.0, 20.0)]
+    assert counts == sorted(counts, reverse=True)
+
+
+def test_flag_unreliable_handles_zero_dispersion() -> None:
+    """전 행 잔차가 같으면 이상치를 정의할 수 없다 — 0으로 나누지 않고 아무것도 지목하지 않는다."""
+    mask, threshold = flag_unreliable(np.full(50, 0.0078))
+    assert not mask.any()
+    assert threshold == float("inf")
+
+
+def test_flag_unreliable_rejects_negative_k() -> None:
+    with pytest.raises(ValueError, match="k_sigma"):
+        flag_unreliable(np.zeros(10), k_sigma=-1.0)

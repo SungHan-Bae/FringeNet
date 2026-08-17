@@ -54,7 +54,7 @@ from refine_inversion import BRANCH_FAIL_NM  # noqa: E402 — 분지 실패 정�
 
 from src.data.dataset import REPO_ROOT, subsample_indices  # noqa: E402
 from src.losses import DEFAULT_DECODER, FrozenDecoder  # noqa: E402
-from src.physics.invert import lm_invert  # noqa: E402
+from src.physics.invert import flag_unreliable, lm_invert  # noqa: E402
 
 OUT_PATH = REPO_ROOT / "reports" / "cnn_recipe_judge.md"
 # 라운드 1의 기준 팔 — 예산을 늘리기 전의 확정 백본. 판정 표의 원점이다.
@@ -63,6 +63,9 @@ DEFAULT_ROWS = 5_000
 # 조기 종료 문턱 [nm] — 두께 정확도 0.3 nm 규모보다 세 자리 아래 (bench_invert와 같은 값).
 EARLY_TOL_NM = 1e-4
 LM_ITERS = 30
+# 되돌림 규칙의 문턱 배수 — **사전등록 값이다.** holdout MAE를 보며 고르면 평가셋 선택이 되고,
+# 그것이 이동 상한 τ 규칙이 기각된 이유 중 하나다 (reports/inversion_refine.md).
+FALLBACK_K_SIGMA = 5.0
 
 
 def judge_one(
@@ -113,6 +116,13 @@ def judge_one(
         caught = int((picked & fail).sum())
         detect[f"recall@{pct:g}"] = caught / max(int(fail.sum()), 1)
         detect[f"precision@{pct:g}"] = caught / n
+
+    # 되돌림 규칙 — 지목된 행에서는 물리 보정을 신뢰하지 않고 CNN 예측을 채택한다.
+    # 지목·문턱 모두 라벨을 쓰지 않으므로 test에도 그대로 적용된다 (flag_unreliable).
+    flagged, threshold = flag_unreliable(res, k_sigma=FALLBACK_K_SIGMA)
+    d_fb = np.where(flagged[:, None], d_hat, d_lm)
+    fb_row = np.abs(d_fb - y).mean(axis=1)
+    hit = int((flagged & fail).sum())
     return {
         "cnn": float(np.abs(d_hat - y).mean()),
         "lm": float(np.abs(d_lm - y).mean()),
@@ -122,6 +132,13 @@ def judge_one(
         "res_fail": float(np.median(res[fail])) if fail.any() else float("nan"),
         "res_ok": float(np.median(res[~fail])),
         **detect,
+        "fb_threshold": threshold,
+        "fb_flagged": int(flagged.sum()),
+        "fb_hit": hit,
+        "fb_precision": hit / max(int(flagged.sum()), 1),
+        "fb_recall": hit / max(int(fail.sum()), 1),
+        "fb_mae": float(np.abs(d_fb - y).mean()),
+        "fb_fail": float((fb_row > BRANCH_FAIL_NM).mean()),
     }
 
 
@@ -263,6 +280,31 @@ def render(rows: list[dict[str, Any]], meta: dict[str, Any]) -> list[str]:
         "**포착률이 후보를 넓혀도 오르지 않는 지점**이 이 지표의 상한이다 — 남는 실패는 잔차로",
         "구분되지 않는다(관측을 거의 같게 설명하는 등가 분지). 그 몫은 디코더 개선(게이트 (b))",
         "쪽 문제이고 재시도로는 잡히지 않는다.",
+        "",
+        "## 되돌림 규칙 — 지목된 행에서 물리 보정을 버리고 CNN 예측을 쓴다",
+        "",
+        f"문턱 = 잔차 중앙값 + {FALLBACK_K_SIGMA:g} × robust σ (`flag_unreliable`)."
+        " 지목·문턱 모두 **라벨을 쓰지 않으므로 test에 그대로 적용된다.**",
+        f"k = {FALLBACK_K_SIGMA:g}은 **사전등록 값**이다 — MAE를 보며 고르면 평가셋 선택이 된다.",
+        "",
+        "| run | 문턱 | 지목 | 적중 | 정밀도 | 포착률 | post-LM | **되돌림 후** | Δ |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        lines.append(
+            f"| `{r['run']}` | {r['fb_threshold']:.6f} | {r['fb_flagged']} | {r['fb_hit']} |"
+            f" {r['fb_precision']:.1%} | {r['fb_recall']:.1%} | {r['lm']:.4f} |"
+            f" **{r['fb_mae']:.4f}** | {r['fb_mae'] - r['lm']:+.4f} |"
+        )
+    lines += [
+        "",
+        "분지 실패율은 "
+        + " · ".join(
+            f"`{r['run'].split('/')[-1]}` {r['fail']:.2%} → {r['fb_fail']:.2%}" for r in rows
+        )
+        + ".",
+        "**규칙이 줄이는 것은 실패 건수가 아니라 심각도다** — 되돌린 행도 여전히 5 nm를 넘지만",
+        "훨씬 덜 틀린다. 건수를 줄이려면 올바른 분지를 찾아야 하고 그것은 다중 시작의 몫이다.",
     ]
     return lines
 
