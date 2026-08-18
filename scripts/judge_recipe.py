@@ -24,14 +24,15 @@ pre-LM 최고인데 post-LM에서 세 번째고, 꼬리 가중 손실은 pre-LM 
    (`reports/inversion_bench.md`, 근거는 tests/test_tmm.py §8).
 
 산출물:
-  reports/cnn_recipe_judge.md   (재실행 시 덮어씀)
+  reports/cnn_recipe_judge.md    (재실행 시 덮어씀)
+  reports/cnn_recipe_judge.json  (같은 내용의 기계용 sidecar — 그림 스크립트가 읽는다)
 
 사용법:
     python scripts/judge_recipe.py --run runs/cnn_recipe/budget100
     python scripts/judge_recipe.py --run runs/cnn_recipe/budget100 --rows 20000 --device cpu
 
-체크포인트는 git에 없다 (`runs/`는 텍스트만 추적) — Drive 미러에서 받아온 뒤 실행할 것
-(`runs/CHECKPOINTS.md`). 없으면 복구 방법을 알려주고 멈춘다.
+체크포인트는 git에 없다 (`runs/`는 텍스트만 추적) — 로컬에 없으면 Drive 미러에서 받아온 뒤
+실행할 것 (`runs/CHECKPOINTS.md`). 없으면 복구 방법을 알려주고 멈춘다.
 """
 
 from __future__ import annotations
@@ -105,10 +106,17 @@ def judge_one(
 
     fb_row = np.abs(d_fb - y).mean(axis=1)
     hit = int((flagged & fail).sum())
+    # 되돌림 규칙의 근거 수치 — 규칙이 실제로 답을 바꾸는 지목(flagged) 행에서 CNN이 LM보다
+    # 정확해야 규칙이 성립한다. 실패(fail) 행 전체의 같은 통계는 심각도 맥락용이다.
+    cnn_row = np.abs(d_hat - y).mean(axis=1)
     return {
         "cnn": float(np.abs(d_hat - y).mean()),
         "lm": float(np.abs(d_lm - y).mean()),
         "fail": float(fail.mean()),
+        "cnn_fail_mae": float(cnn_row[fail].mean()) if fail.any() else float("nan"),
+        "lm_fail_mae": float(row_err[fail].mean()) if fail.any() else float("nan"),
+        "cnn_flagged_mae": float(cnn_row[flagged].mean()) if flagged.any() else float("nan"),
+        "lm_flagged_mae": float(row_err[flagged].mean()) if flagged.any() else float("nan"),
         "median": float(np.median(row_err)),
         "p99": float(np.percentile(row_err, 99)),
         "res_fail": float(np.median(res[fail])) if fail.any() else float("nan"),
@@ -276,6 +284,17 @@ def render(rows: list[dict[str, Any]], meta: dict[str, Any]) -> list[str]:
         " 지목·문턱 모두 **라벨을 쓰지 않으므로 test에 그대로 적용된다.**",
         f"k = {FALLBACK_K_SIGMA:g}은 **사전등록 값**이다 — MAE를 보며 고르면 평가셋 선택이 된다.",
         "",
+        "규칙의 근거 — **규칙이 답을 바꾸는 지목 행에서 CNN이 LM보다 정확하다** (LM은 잘못된"
+        " 분지 바닥까지 성실하게 내려간다). 실패 행 전체 열은 심각도 맥락이다:",
+        "",
+        "| run | 지목 행 CNN MAE [nm] | 지목 행 LM MAE [nm] | 실패 행 CNN | 실패 행 LM |",
+        "|---|---|---|---|---|",
+        *(
+            f"| `{r['run']}` | **{r['cnn_flagged_mae']:.2f}** | **{r['lm_flagged_mae']:.2f}** |"
+            f" {r['cnn_fail_mae']:.2f} | {r['lm_fail_mae']:.2f} |"
+            for r in rows
+        ),
+        "",
         "| run | 문턱 | 지목 | 적중 | 정밀도 | 포착률 | post-LM | **되돌림 후** | Δ |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
@@ -326,7 +345,12 @@ def main() -> int:
     out_path = Path(args.out) if args.out else OUT_PATH
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(render(rows, meta)) + "\n")
-    print(f"\n산출물: {out_path}")
+    # 기계가 읽는 sidecar — 그림 스크립트(make_headline_figure.py)가 md 파싱 대신 이걸 읽는다.
+    json_path = out_path.with_suffix(".json")
+    json_path.write_text(
+        json.dumps({"meta": meta, "runs": rows}, ensure_ascii=False, indent=1) + "\n"
+    )
+    print(f"\n산출물: {out_path}\n         {json_path}")
     return 0
 
 
