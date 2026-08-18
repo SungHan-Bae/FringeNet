@@ -23,7 +23,7 @@ from src.physics.invert import (
 
 @pytest.fixture(scope="module")
 def decoder() -> FrozenDecoder:
-    """Stage A 확정 디코더 (git 추적, 44 KB) — complex128로 검증한다."""
+    """Stage A 확정 디코더 (git 추적 — runs/CHECKPOINTS.md 예외 조항) — complex128로 검증한다."""
     return FrozenDecoder(dtype=torch.complex128)
 
 
