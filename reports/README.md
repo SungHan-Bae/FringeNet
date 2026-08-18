@@ -17,6 +17,10 @@
 | **+ 라벨 없는 되돌림 규칙** | **0.3880** | [cnn_recipe_judge.md](cnn_recipe_judge.md) |
 | (상한 기준선) 213M skip-MLP 단독 | 0.3955 | [strong_baseline.md](strong_baseline.md) |
 
+최종 파이프라인의 리더보드 제출(test, 격자 밖 연속 두께)은 **MAE 0.38733**이다
+(2026-08-18, 15위) — holdout 0.3880이 열화 없이 전이됐다
+([cnn_recipe.md](cnn_recipe.md) «리더보드 확정»).
+
 물리 손실(Stage B β)은 사전등록 ablation 세 축 전부에서 **기각**됐다 — 물리의 값어치는
 손실이 아니라 추론에 있다는 것이 이 프로젝트의 핵심 결론이다
 ([stage_b.md](stage_b.md)).
