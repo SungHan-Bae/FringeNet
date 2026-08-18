@@ -25,6 +25,13 @@ PAT_SOURCES = (
     r"userdata\.get",
     r"github_pat\.txt",
 )
+# push 셀 식별 — 노트북은 push를 subprocess 리스트형(["git", "push", ...])으로 호출하므로
+# 리터럴 "git push"만 찾으면 전 노트북이 스킵돼 검사가 사문화된다 (실제로 그렇게 됐다).
+PUSH_CELL = re.compile(r"""git push|["']git["']\s*,\s*["']push["']""")
+# 규약 4(push 후 Drive 무결성 검증)의 표지와, 그 규약 도입 이전 라운드의 한정 예외 마커.
+# 전체 예외(`규약 예외`)와 달리 PAT·반납 검사는 그대로 받는다.
+INTEGRITY_MARKERS = ("flush_and_unmount", "무결성")
+INTEGRITY_EXEMPT = "무결성 검증 예외"
 # 반납 셀을 식별하는 표지와, 취소 대기 sleep의 상한 [초].
 TEARDOWN = re.compile(r"kill_session|terminate|unassign", re.I)
 MAX_TEARDOWN_SLEEP = 5
@@ -59,10 +66,29 @@ def test_run_all_is_unattended(path: Path) -> None:
     문제는 그것이 **주 경로**가 되는 것이다.
     """
     nb, src = load(path)
-    if is_exempt(nb) or "git push" not in src:
+    if is_exempt(nb) or not PUSH_CELL.search(src):
         pytest.skip("규약 예외 라운드이거나 push 셀이 없다")
     found = [p for p in PAT_SOURCES if re.search(p, src)]
     assert len(found) >= 2, f"{path.name}: 정적 PAT 소스가 {len(found)}개뿐 — Run-All이 막힌다"
+
+
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_drive_integrity_check_exists(path: Path) -> None:
+    """규약 4 — push 후 Drive 체크포인트 무결성 검증 셀이 있다 (통과해야만 반납).
+
+    Drive FUSE는 비동기 업로드라 세션이 죽으면 대용량 파일이 구버전으로 남는다.
+    체크포인트를 만들지 않는 라운드(벤치류)는 사유를 셀에 적으면 표지 문자열이 함께
+    남으므로 별도 분기가 필요 없다.
+    """
+    nb, src = load(path)
+    if is_exempt(nb):
+        pytest.skip("규약 예외 라운드")
+    if INTEGRITY_EXEMPT in "".join(nb["cells"][0].get("source", [])):
+        pytest.skip("무결성 검증 예외 — 규약 4 도입 이전 라운드 (헤더에 사유 명시)")
+    if not PUSH_CELL.search(src):
+        pytest.skip("push 셀이 없다")
+    missing = [m for m in INTEGRITY_MARKERS if m not in src]
+    assert not missing, f"{path.name}: 무결성 검증 표지 {missing} 부재 — 규약 4 위반"
 
 
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
