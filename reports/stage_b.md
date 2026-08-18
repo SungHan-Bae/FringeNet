@@ -11,6 +11,8 @@ split) · [stage_b_curves_heldout-thickness.md](stage_b_curves_heldout-thickness
 맞추면 남는 이득이 0이다. 물리의 값어치는 손실이 아니라 **추론**에 있다 — 같은 동결 디코더를
 추론 후 보정으로 쓰면 −74%가 나온다 ([inversion_refine.md](inversion_refine.md), 아래 §5).
 
+![라운드 1(무작위 split) 적합 매칭 곡선 — 라운드 2·3 그림은 curves 리포트에](figures/fig_stage_b_curves.png)
+
 ## 1. 왜 세 축인가 — 각 축이 닫는 반론
 
 공통 설계: Stage A 확정 디코더를 두 겹으로 동결(파라미터 비보유 + requires_grad False),

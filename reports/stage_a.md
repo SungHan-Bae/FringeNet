@@ -3,7 +3,7 @@
 2026-08-12 착수, **08-13 종결**. 주제: **비식별 파장축과 미지 물성을 train (d_true, R_obs)에서
 역추정**해 TMM을 Stage B의 물리 디코더로 쓸 수 있는지 게이트로 판정한다.
 수치 표는 [stage_a_gate.md](stage_a_gate.md) (`scripts/diagnose_calibration.py` 산출),
-그림은 [fig_stage_a.png](figures/fig_stage_a.png).
+![Stage A 게이트 종합 그림](figures/fig_stage_a.png)
 
 ## 판정 요약
 
