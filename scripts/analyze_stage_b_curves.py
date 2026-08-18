@@ -108,6 +108,9 @@ class Curve(NamedTuple):
         val: holdout MAE [nm].
         val_phys: holdout 재구성 L1 (β 곱하기 전). 물리 항이 없으면 NaN.
         best_epoch: 체크포인트로 남은 에폭.
+        holdout_thickness: held-out 두께 값 split이면 그 값들 [nm], 무작위 split이면 None.
+            §5의 "이 축이 재는 것" 서술이 여기 갈린다 — run 이름이 아니라 metrics.json의
+            설정 스냅샷에서 읽는다.
     """
 
     name: str
@@ -117,6 +120,7 @@ class Curve(NamedTuple):
     val: np.ndarray
     val_phys: np.ndarray
     best_epoch: int
+    holdout_thickness: tuple[float, ...] | None
 
 
 def read_curve(run_dir: Path) -> Curve:
@@ -182,6 +186,7 @@ def read_curve(run_dir: Path) -> Curve:
         )
     epochs, train, val, phys = epochs[start:], train[start:], val[start:], phys[start:]
 
+    heldout = metrics_all.get("config", {}).get("data", {}).get("holdout_thickness")
     curve = Curve(
         name=run_dir.name,
         beta=float(metrics["physics"]["beta"]),
@@ -190,6 +195,7 @@ def read_curve(run_dir: Path) -> Curve:
         val=val,
         val_phys=phys,
         best_epoch=best_epoch,
+        holdout_thickness=tuple(float(v) for v in heldout) if heldout else None,
     )
     # 남은 구간도 **대체로** 감소하면 된다 — 수렴 지점에서는 에폭 평균이 1e-4 규모로 되튄다
     # (라운드 3 β=0: 2.1216 → 2.1218). 그것까지 막으면 수렴한 run을 분석할 수 없다.
@@ -866,8 +872,14 @@ def build_report(curves: list[Curve], ref: Curve, matched: list[Matched], fig_pa
         "미수렴 지점이라 대조군에 불리한 방향이므로, β>0가 그래도 지는 방향은 견고하다.",
         f"- **수렴 지점 재현성**: 대조군 마지막 {JITTER_EPOCHS}에폭 val 표준편차 "
         f"±{tail_jitter(ref):.4f} nm.",
-        "- **이 축이 재는 것은 조합 보간이다** (무작위 split, 격자 위). 격자 밖·미학습 두께 "
-        "값으로의 외삽은 held-out 두께 값 split이 재는 별 질문이다.",
+        (
+            "- **이 축이 재는 것은 미학습 두께 값으로의 외삽이다** (held-out 두께 값 split — "
+            f"{', '.join(f'{v:g}' for v in ref.holdout_thickness)} nm을 전 층에서 뺐다). "
+            "격자 위 조합 보간은 무작위 split 라운드가 재는 별 질문이다."
+            if ref.holdout_thickness
+            else "- **이 축이 재는 것은 조합 보간이다** (무작위 split, 격자 위). 격자 밖·"
+            "미학습 두께 값으로의 외삽은 held-out 두께 값 split이 재는 별 질문이다."
+        ),
         "",
         f"그림: `figures/{fig_path.name}`",
         "",
@@ -902,6 +914,12 @@ def main(argv: list[str] | None = None) -> None:
     ref = curves[0]
     if ref.beta != 0.0:
         print(f"경고: 대조군으로 쓰는 첫 run의 β가 {ref.beta:g}다 (0이 아니다)", file=sys.stderr)
+    splits = {c.holdout_thickness for c in curves}
+    if len(splits) > 1:
+        raise ValueError(
+            f"run들의 split이 섞여 있다: { {c.name: c.holdout_thickness for c in curves} } —"
+            " 같은 split의 run만 한 리포트로 대조할 수 있다"
+        )
     matched = [match_at_best(c, ref) for c in curves]
     if any(not np.isfinite(m.val_ref) for m in matched):
         bad = [m.name for m in matched if not np.isfinite(m.val_ref)]

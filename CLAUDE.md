@@ -109,7 +109,9 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   4. 노트북 Run-All이 입력 대기 없이 end-to-end로 돌고(비밀은 정적 소스에서 로드),
      전 작업 완료+push 성공 시 런타임 자동 반납
 - **Colab 노트북은 라운드(학습 세션)별 1개**: `notebooks/<대실험>/roundN_<내용>.ipynb`.
-  완료된 라운드는 실행 로그 보존을 위해 수정·재실행하지 않는다. 새 라운드는 직전 노트북을
+  완료된 라운드는 **실행 로그(코드 셀·출력)를 불변으로 보존한다** — 재실행·코드 수정 금지.
+  markdown 헤더의 표기(규약 예외 등)는 `check_notebook_regression.py` 가드 하에 수정할 수
+  있고, 삭제가 있으면 사유를 커밋 메시지에 적는다. 새 라운드는 직전 노트북을
   복사해 헤더·CONFIGS 갱신 + 출력 비움으로 시작한다.
   **IDE 옛 버퍼 사고를 두 번 겪었다** — 노트북을 연 채로 커밋이 진행되면 그 뒤 에디터 저장이
   옛 버퍼 전체로 디스크를 덮어써 커밋된 셀 수정이 조용히 사라진다. JSON diff라 눈으로 못 잡으니
@@ -127,7 +129,8 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
      `flush_and_unmount()` → 재마운트 → **미러의 model.pt를 다시 로드해 holdout 재추론 →
      기록된 val MAE 재현 확인**. Drive FUSE는 비동기 업로드라 세션이 죽으면 대용량 파일이
      구버전으로 남고(실사례: 3.4GB resume.pt가 5에폭 뒤처짐), git 미추적 대형 model.pt는
-     Drive가 유일본이다.
+     Drive가 유일본이다. 규약 4 도입 이전에 완료된 라운드는 헤더의 `무결성 검증 예외`
+     마커로 이 항목만 제외한다 (PAT·반납 검사는 그대로 받는다).
 
 ## 물리 단위 테스트 — tests/test_tmm.py (전부 green이어야 다음 단계 진행)
 
@@ -251,8 +254,9 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     격자 중앙 출발은 **77.68 nm로 실패** → CNN의 기여는 정밀도가 아니라 **올바른 fringe 분지**다.
     상한(참값 출발) 0.3336. 정본은 `reports/inversion_refine.md`.
   - **되돌림 규칙 = `flag_unreliable` (2026-08-17 확정).** 재구성 잔차가 **중앙값 + 5·robust σ**
-    를 넘는 행에서는 LM 보정을 버리고 CNN 예측을 쓴다 — 그 행에서 CNN이 LM보다 정확하기 때문이다
-    (11.27 vs 37.76 nm: LM이 잘못된 분지 바닥까지 성실하게 내려간다).
+    를 넘는 행에서는 LM 보정을 버리고 CNN 예측을 쓴다 — 지목 행에서 CNN이 LM보다 정확하기
+    때문이다 (budget100 기준 13.59 vs 48.22 nm, `cnn_recipe_judge.md` «규칙의 근거» 표:
+    LM이 잘못된 분지 바닥까지 성실하게 내려간다).
     - **지목·문턱에 라벨이 안 들어간다** (관측과 우리 답만 쓰고, 문턱은 잔차 분포 자체에서 —
       행의 99% 이상이 정상이라 robust 통계가 정상 분포를 잡는다). test에 그대로 적용된다.
     - **k는 사전등록한다 (5.0).** MAE 보며 고르면 평가셋 선택이고 그것이 이동 상한 τ 규칙이
@@ -262,7 +266,8 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
       213M skip-MLP 단독(0.3955)을 넘는다 — 같은 split·결정론적 추론이라 이 평가셋에서
       표본 오차가 없다. **단 우위가 0.0075 nm이고 holdout은 격자 위 보간이므로 격자 밖 확인이
       남아 있다.** 정본은 `reports/cnn_recipe_judge.md`.
-    - **줄이는 것은 실패 건수가 아니라 심각도다** (0.39% → 0.38%). 건수는 다중 시작의 몫이다.
+    - **줄이는 것은 실패 건수가 아니라 심각도다** (0.39% → 0.38%). 건수를 줄이는 경로(분지
+      재탐색)는 범위 밖에 둔다 — 남는 실패의 상당수가 등가 분지라 재시도로 잡히지 않는다.
     - **transductive다** — 문턱을 행 집합의 잔차 분포에서 만들므로 단행 배포에는 미리 계산한
       문턱이 필요하다.
   - **감쇠 스케일**: `damping="batch"`(게이트 (d)의 기존 동작)는 한 행의 갱신이 배치 구성에
@@ -283,9 +288,10 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     `notebooks/inversion/round1_gpu-bench.ipynb`). 중앙차분은 행당 TMM forward가 270회
     (야코비안 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M skip-MLP forward보다 **한 자릿수
     느리다**(L4에서 17.26배). 해석적+조기종료는 그 비용의 대부분을 걷어낸다.
-    - **커밋된 표는 중앙차분 3변형만 담은 옛 판본이다** — 스크립트에는 해석적·조기종료 축이
-      들어갔고 GPU 절을 살리려면 Colab에서 재실행해야 하므로 아직 갱신하지 않았다. 로컬 CPU
-      실측(해석적+조기종료 c64에서 `cnn+LM`이 skip-MLP의 **0.63배**)은 docs/week_2.md 08-15에 있다.
+    - **CPU 절은 해석적·조기종료 축까지 담은 현행 판본이다** (로컬 WSL2 — 해석적+조기종료
+      c64에서 `cnn+LM`이 skip-MLP의 **0.61배**). GPU 절은 L4 중앙차분 3변형 판본이 남아
+      있고, 완전판은 `notebooks/inversion/round2_analytic-bench.ipynb`(준비됨)를 Colab에서
+      실행해 낸다. 두 절은 다른 기계다 — 배수는 절 안에서만 읽는다.
     - **단일 배수를 인용하지 말 것** — 하드웨어에 크게 의존한다. skip-MLP는 GEMM 한 방이라
       BLAS·GPU 최적화를 온전히 받고 LM은 비정형 + 대역폭 바운드라 덜 받아서, 같은 코드가
       기계마다 다른 배수를 낸다. 배수는 리포트에서 읽고 기계를 함께 적는다.
@@ -319,13 +325,16 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   산출물 `runs/<실험>/<변형>/` = model.pt + train.log + metrics.json 세 가지만
   (metrics.json이 설정 스냅샷을 겸한다). 변형 이름은 번호가 아니라 **무엇이 다른지 드러나는
   서술형**으로 (예: `dropout0.0`). 대실험이 끝나면 `reports/<실험>.md`로 취합한다 —
-  README에는 성능 수치를 두지 않는다.
+  README 프로즈에는 성능 수치를 두지 않는다 (예외는 스크립트 산출 그림 임베드와
+  `reports/README.md` 인덱스 링크). **진행 비교표의 단일 위치는 `reports/README.md`**이고
+  헤드라인 그림은 `scripts/make_headline_figure.py`가 산출물에서 읽어 만든다 — 수치가
+  갱신되면 둘을 함께 갱신한다.
 - **git에는 텍스트 산출물만 추적한다** (metrics.json · train.log). 체크포인트는 Drive 미러
   `MyDrive/FringeNet/runs_mirror/<실험>/<run>/`에 3종(model.pt 포함)으로 보관한다 —
   `train_gpu.py`의 `_mirror_copy`가 학습 중에 이미 그렇게 쓰므로 별도 작업이 필요 없다.
   목록·sha256·복구 방법은 **`runs/CHECKPOINTS.md`**, 복구는
   `git show <원본 커밋>:runs/<실험>/<run>/model.pt`(과거분) 또는 Drive 사본.
-  **예외 — `runs/stage_a/*/model.pt`는 git 추적**(합계 44 KB): `diagnose_calibration.py`가
+  **예외 — `runs/stage_a/*/model.pt`는 git 추적**(합계 약 172 KB): `diagnose_calibration.py`가
   직접 로드해 `reports/stage_a_gate.md`를 재생성하므로 빠지면 재현 커맨드가 깨진다.
   텍스트 2종은 git이 정본이다 — 미러 사본으로 덮어쓰지 말 것.
 - **주차별 실험 노트 `docs/week_N.md`** (첫 커밋 2026-08-08 기준 7일 단위): 날짜별 진행·
@@ -360,7 +369,7 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 - [x] **Task 5 — Level 1 ablation**: MLP vs 1D CNN, 단일 vs 다중 스케일, bound on/off
       → flatten-dilated-bound 2.346 nm
 - [x] **Task 6 — Stage A 캘리브레이션**: 게이트 판정까지 → TMM 채택 (게이트 (b) 미통과)
-- [ ] **Task 7 — Stage B**: β ablation은 **종결**(아래), 남은 것은 세 가지다
+- [ ] **Task 7 — Stage B**: β ablation은 **종결**(아래), 남은 것은 리더보드 업로드 하나다
   - [x] **β ablation 3라운드 — 물리 손실 항 기각.** 무작위 split · held-out 두께 값 split ·
         수렴 지점 warm start 전부에서 β에 단조로 해롭고 적합 수준을 맞추면 이득이 0이다.
         **이미 끝났으니 다시 돌리지 않는다** (`runs/stage_b/*` 12런이 정본).
@@ -373,21 +382,30 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
         (1.6배 유리)로 뒤집힘**. 남은 것은 GPU 정본 표 재생성과 기본값 전환 여부이고, 전환하면
         `inversion_refine.md`·`stage_a_gate.md`를 함께 재생성한다.
   - [x] **레시피 라운드 1 (`cnn_recipe`)**: 레버는 **예산 하나**였다 (위 스펙). post-LM
-        0.6643 → 0.4962 nm, 분지 실패율 0.78% → 0.42%. 판정은 `scripts/judge_recipe.py`.
+        0.6110 → 0.4884 nm, 분지 실패율 0.67% → 0.39% (전체 holdout 정본,
+        `reports/cnn_recipe_judge.md`). 판정은 `scripts/judge_recipe.py`.
   - [x] **되돌림 규칙 — 목표선 돌파.** 잔차로 실패 행을 라벨 없이 지목해 LM 보정을 버리면
         `budget100`이 0.4884 → **0.3880 nm**로, 213M 단독(0.3955)을 넘는다 (위 역산 스펙).
         제출 경로까지 배선됨 (`python -m src.evaluate --submission --refine`).
   - [ ] **리더보드 업로드** — holdout 우위가 0.0075 nm로 얇고 test는 격자 밖이다. 잔차 분포는
         전이되지만(중앙값 +0.1%) **극단 꼬리가 2배**라 점수를 봐야 확정된다. 파일은
         `runs/cnn_recipe/budget100/submission_budget100_refined.csv` (git 미추적, 한 줄로 재생성).
-  - [ ] **다중 시작 재탐색** — 실패 **건수**를 줄이는 유일한 경로(되돌림은 심각도만 줄인다).
-        지목된 행에서만 여러 출발점으로 LM을 다시 풀고 잔차 최소해를 고른다. 변위가 커서
-        (중앙값 68 nm·90분위 178 nm·4층이 함께 움직인다) 작은 섭동이 아니라 넓은 다중 시작이어야
-        한다. 상한 0.3336. 남는 실패의 26%는 **등가 분지**라 디코더 개선(게이트 (b)) 쪽 문제다.
-  - [ ] **평가 축 실측**: 노이즈 강건성 · 신뢰도 지표 (`scripts/evaluate_axes.py`).
-        체크포인트가 git에 없어 Drive 미러에서 받아와야 한다 (`runs/CHECKPOINTS.md`).
-  - [ ] **`reports/stage_b.md` 취합** — `stage_b_curves*.md`는 스크립트 산출물이고 서사가 아니다.
-- [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신
+  - [x] **평가 축 실측 — 완료.** 노이즈 강건성 곡선(균등·가우시안, 같은 총 σ에서 열화 거의
+        동일) + 신뢰도 지표(ρ 0.70, 잔차 상위 10% MAE 4.97 vs 하위 0.60) →
+        `reports/cnn_recipe_axes.md` (`scripts/evaluate_axes.py`, budget100 +
+        flatten-dilated-bound, holdout 전체). 체크포인트 무결성 재추론 일치 확인 포함.
+  - [x] **`reports/stage_b.md` 취합 — 완료.** 세 라운드 관통 서사(왜 3축·사전등록 대비·기각
+        근거·물리의 값어치는 추론) — 표는 curves 3종 참조, 복제 없음.
+- [ ] **Task 8 — 모델·학습 최적화**: 아키텍처(hidden feature·층수·activation·normalization) ·
+      학습 방법(scheduler, feature/label smoothing 등). 착수 근거는 cnn_recipe 발견 ⑤ —
+      일반화 격차 0.243이 skip-MLP와 같아 병목이 순수 적합력이다. 판정 기준은 cnn_recipe와
+      동일: post-LM MAE + 분지 실패율(`scripts/judge_recipe.py`), Δ는 대조군(budget100) 대비.
+      **기각된 손잡이 4종(입력 표준화·EMA·노이즈 증강·꼬리 가중)은 재시도하지 않는다.**
+      용량이 커지면 "322배 작은 모델" 배수가 줄어든다 — 자원 미터를 정본과 함께 갱신한다.
+      **다중 시작 재탐색은 하지 않는다** — 남는 실패의 상당수가 등가 분지라 재시도로 잡히지
+      않고(디코더 개선 쪽 문제), 한계로 기록돼 있다 (`reports/cnn_recipe.md` 「다음」).
+- [ ] **Task 9 — 문서화**: README 결과·그림·한계 논의 갱신 (Task 8 뒤 — 헤드라인 수치가
+      바뀔 수 있다. 진행 비교표·헤드라인 그림은 스크립트 산출이라 재생성으로 흡수된다)
 
 ## 하지 말 것
 
@@ -429,7 +447,7 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 ```bash
 pytest -q
 ruff check . && ruff format .
-python scripts/verify_data.py
+python scripts/verify_data.py                    # --deep: test 격자 밖 반증까지 (train 전수 대조)
 python scripts/measure_noise.py                                                   # 노이즈 σ·유계 상한
 python scripts/check_notebook_regression.py                                       # 노트북 되돌림 탐지
 python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
@@ -455,10 +473,10 @@ python scripts/analyze_stage_b_curves.py $(for b in 0 30 100 300; do \
   printf -- '--run runs/stage_b/ft-heldout-beta%s ' $b; done)              # 라운드 3
 
 # 평가 축 (노이즈 강건성 · 신뢰도 지표) — 학습 없이 체크포인트 위에서 돈다.
-# 체크포인트는 git에 없으므로 Drive 미러에서 복사한 뒤 실행한다 (runs/CHECKPOINTS.md).
-# 단 `stage_b/beta0`은 `level1_cnn/flatten-dilated-bound`와 비트 동일하고 그 model.pt는
-# git 히스토리에 있다 (git show <커밋>:... — runs/CHECKPOINTS.md) — 백본 축은 Drive 없이 돈다.
-python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta100
+# 확정 실측은 reports/cnn_recipe_axes.md (budget100 + flatten-dilated-bound, 체크포인트 로컬).
+# 다른 run을 재려면: 체크포인트가 로컬에 없을 때만 Drive 미러 또는 git 히스토리에서 복구
+# (runs/CHECKPOINTS.md — level1_cnn·mlp_baseline은 git show 2a2ba56:<경로>로 Drive 없이 된다).
+python scripts/evaluate_axes.py --run runs/cnn_recipe/budget100 --run runs/level1_cnn/flatten-dilated-bound
 
 # 레시피 run 판정 — post-LM MAE·분지 실패율·라벨 없는 실패 검출을 같은 행·같은 장치로.
 # 체크포인트가 필요하므로 Drive 미러에서 받아온 뒤 실행한다 (runs/CHECKPOINTS.md).

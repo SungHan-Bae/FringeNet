@@ -104,10 +104,9 @@ class CNN1D(nn.Module):
 
     구조: (B, 226) -> (B, 1, 226) -> ConvBlock 스택 -> head(gap|flatten) -> Linear -> (B, 4).
 
-    head 선택이 이 모델의 핵심 ablation 축이다 (level1_cnn 첫 결과의 교훈):
-    - "gap": 파장축을 평균으로 붕괴 — 위치 불변 특징만 남는다. 첫 실험에서 MLP 대비
-      4배 나쁜 18.16 nm, 심지어 채널 셔플 대조군(12.23 nm)보다도 나빴다.
-      이 태스크의 정보가 fringe의 파장축 절대 위치·위상에 실려 있기 때문으로 해석.
+    head 선택이 이 모델의 핵심 ablation 축이다 (수치는 reports/level1_cnn.md):
+    - "gap": 파장축을 평균으로 붕괴 — 위치 불변 특징만 남아 MLP·채널 셔플 대조군보다도
+      나쁘다. 이 태스크의 정보가 fringe의 파장축 절대 위치·위상에 실려 있기 때문으로 해석.
     - "flatten": (C, W_last)를 펴서 위치 정보를 보존한 채 회귀 — 국소성(conv)은
       유지하고 위치 불변성만 제거하는 가설 검증용.
 

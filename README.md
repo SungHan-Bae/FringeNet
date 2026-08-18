@@ -10,10 +10,14 @@ inductive bias로 결합한 딥러닝으로 푼다.
 
 - 데이터: [월간 데이콘 — 반도체 박막 두께 분석 경진대회](https://dacon.io/competitions/official/235554/overview/description)
 - 키워드: optical metrology, spectral reflectometry, inverse problem, physics-informed ML, differentiable TMM
-- 진행 기록: **[docs/](docs/) — 주차별 실험 노트** (결과·발견·결정·TODO) · [reports/](reports/) — 실험별 취합 리포트
+- **결과 요약·읽기 순서: [reports/README.md](reports/README.md)** — 진행 비교표와 리포트 인덱스
+- 진행 기록: [docs/](docs/) — 주차별 실험 노트 (결과·발견·결정·TODO)
 
-이 문서에는 프로젝트 소개·설계·저장소 구조 등 **바뀌지 않는 내용**만 둔다.
-실행하면서 생기는 결과와 발견은 [docs/](docs/)의 실험 노트에 쌓인다.
+![헤드라인 — 0.66M CNN + 물리 보정이 213M 단독을 넘는다](reports/figures/fig_headline.png)
+
+이 문서에는 프로젝트 소개·설계·저장소 구조 등 **바뀌지 않는 내용**만 둔다. 수치와 진행
+서사는 [reports/](reports/README.md)와 [docs/](docs/)가 정본이다 (위 그림은 스크립트
+산출물이라 수치가 갱신되면 재생성으로 따라온다 — `scripts/make_headline_figure.py`).
 
 ---
 
@@ -31,8 +35,11 @@ inductive bias로 결합한 딥러닝으로 푼다.
 두께 → 스펙트럼의 **순방향 계산은 TMM으로 정확하고 빠르다.** 병목은 역방향, 즉 측정된
 스펙트럼에서 두께를 역산하는 과정이다. 전통적인 라이브러리 피팅은 층이 많아질수록
 해의 다중성·국소최소·속도 문제를 겪는다. 본 프로젝트는 신경망으로 역매핑을 암묵적으로
-학습(amortized inference)하되, 미분가능 TMM을 물리 디코더로 붙여 예측의 물리적 정합성을
-강제하는 것이 핵심이다.
+학습(amortized inference)하고, 캘리브레이션한 미분가능 TMM을 물리 디코더로 결합한다.
+**결합의 자리가 핵심 발견이다** — 물리를 학습 손실로 쓰는 것은 사전등록 ablation 세 축
+전부에서 기각됐고, 같은 동결 디코더를 **추론 후 보정**(LM 역산 + 라벨 없는 되돌림 규칙)으로
+쓰면 0.66M 모델이 322배 큰 단일 모델을 넘는다. 역할이 갈린다: **신경망은 해의 다중성
+(올바른 fringe 분지)을 풀고, 물리는 그 분지 안의 정밀화를 맡는다** (§3.2).
 
 ## 2. 데이터
 
@@ -65,9 +72,9 @@ inductive bias로 결합한 딥러닝으로 푼다.
 | fringe | 두께↑ → 무늬 조밀 (정성 확인까지만 — 비식별 파장축에서 정량 법칙은 주장하지 않는다) |
 
 이 사실들이 설계를 두 곳에서 규정한다. **전수 격자** → 무작위 split은 모든 두께 값이
-학습에 등장하므로 "조합 보간"만 측정한다(§3.5의 평가 프로토콜이 통제할 예정 — 현재 구현은
-1종뿐이다). **노이즈 바닥** → 완벽한 forward 모델도 재구성 RMSE가 σ 아래로 내려갈 수 없어
-§3.2 게이트의 기준(1.2σ)과 §3.5 주입 노이즈의 종류(균등 ±0.015)를 규정한다.
+학습에 등장하므로 "조합 보간"만 측정한다(§3.5의 평가 프로토콜이 통제한다). **노이즈 바닥**
+→ 완벽한 forward 모델도 재구성 RMSE가 σ 아래로 내려갈 수 없어 §3.2 게이트의 기준(1.2σ)과
+§3.5 주입 노이즈의 종류(균등 ±0.015)를 규정한다.
 
 ## 3. 방법
 
@@ -94,12 +101,11 @@ M_j=\begin{pmatrix}\cos\delta_j & i\sin\delta_j/n_j\\ i\,n_j\sin\delta_j & \cos\
 $$\binom{B}{C}=\Big(\prod_{j=1}^{4}M_j\Big)\binom{1}{n_s},\qquad
 r=\frac{n_0B-C}{n_0B+C},\qquad R=|r|^2$$
 
-인버스 네트워크가 예측한 두께 $\hat d$를 TMM에 통과시켜 스펙트럼을 재구성하고,
-cycle-consistency 손실을 건다:
-
-$$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{\mathrm{obs}}\rVert_1$$
-
-파장축이 비식별화되어 있으므로 forward 모델의 미지수를 먼저 알아내야 한다. 2단계로 간다.
+이 디코더는 예측 $\hat d$를 스펙트럼으로 되비춰 관측과 비교할 수 있게 한다 — 쓰는 자리는
+둘을 실험했다. **학습 손실**(Stage B의 cycle-consistency 항, 사전등록 ablation으로 기각)과
+**추론 후 보정**(LM 역산 + 되돌림 규칙, 채택 — 프로젝트 최선 수치를 만든 경로다). 아래
+순서대로다. 파장축이 비식별화되어 있으므로 어느 쪽이든 forward 모델의 미지수를 먼저
+알아내야 한다 (Stage A).
 
 #### Stage A — 캘리브레이션 (시스템 식별)
 
@@ -116,20 +122,38 @@ $$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{
 | SiN | Sellmeier 2항 | Luke et al. 2015 | 1~2 (B₁, C₁) |
 | Si 기판 | 실측표 + 에너지축 3차 스플라인 | **Schinke 2015** (대안: Aspnes 1983 / Green 2008) | 0~2 (ΔE, k 스케일) |
 
-- **1단계 — 두께축 주파수 식별 (`src/physics/freq_id.py`).** λ축 fringe 정렬은 경사하강에
-  비볼록이라 잘못된 fringe 차수에 안착한다. 대신 타깃이 30⁴ 전수 격자인 점을 쓴다: 층 j로
-  조건화한 평균 E[R_c | d_j] 는 두께축에서 f_j = 2n_j(λ_c)/λ_c 로 진동하므로, SiO₂ 게이지
-  에서 λ_c가 **이분법으로 유일하게** 풀린다 — 경사하강이 개입하지 않아 결정론적이다.
-- **2단계 — 신뢰영역 최소제곱 (`src/calibrate.py`, scipy TRF).** 자유도가 작아 야코비안이
-  그대로 **파라미터 공분산**을 주므로 물성값을 신뢰구간·상관행렬과 함께 보고한다.
+- **2단계로 푼다** — ① 두께축 주파수 식별(`src/physics/freq_id.py`): 30⁴ 전수 격자의
+  조건부 평균이 두께축에서 f = 2n/λ로 진동하는 성질로 λ를 채널별 닫힌형으로 복원(결정론적)
+  ② 신뢰영역 최소제곱(`src/calibrate.py`, scipy TRF). 방법 상세는
+  [reports/stage_a.md](reports/stage_a.md).
 - **게이지 축퇴 — n과 λ는 동시에 식별되지 않는다.** δ = 2πnd/λ 이므로 n과 λ를 같은 배수로
   스케일해도 스펙트럼이 불변이다. **SiO₂를 문헌값에 고정**하는 것이 그 선언이고, λ의 절대
   스케일은 이 가정에 의존한다 (Si 임계점을 앵커로 쓴 검정은 통과 — reports/stage_a.md).
 
-#### Stage B — 물리 손실 학습
+#### Stage B — 물리 손실 (사전등록 ablation — 기각)
 
-캘리브레이션된 디코더를 **동결**하고 위 손실로 인버스넷을 학습한다.
-β = 0 대비 ablation으로 물리 손실의 기여를 정량화한다.
+캘리브레이션된 디코더를 **동결**하고 cycle-consistency 항을 학습 손실로 걸었다:
+
+$$\mathcal{L}=\mathrm{MAE}(\hat d, d)+\beta\,\lVert R_{\mathrm{TMM}}(\hat d)-R_{\mathrm{obs}}\rVert_1$$
+
+β ∈ {0, 30, 100, 300}을 세 축(무작위 split · held-out 두께 값 split · 수렴 후 warm start)
+에서 대조한 결과 **전 축에서 기각됐다** — val MAE가 β에 단조로 나빠지고, 적합 수준을 맞추면
+남는 이득이 0이다. 물리 항은 자기 목적함수(재구성)는 개선하므로 실패는 **정렬**의 문제다 —
+관측이 R(d) + ε라 손실 항이 지도 항의 노이즈 낀 대리이고, 게이트 (b)를 못 넘은 디코더의
+계통 편향으로 예측을 당긴다. 사전등록한 U자 예측이 어긋난 기록까지
+[reports/stage_b.md](reports/stage_b.md)에 있다.
+
+#### 물리의 값어치 — 추론 시 역산 refinement + 되돌림 규칙 (채택)
+
+같은 동결 디코더를 학습이 아니라 **추론 후 보정**으로 쓴다 (`src/physics/invert.py` ·
+`scripts/refine_inversion.py`): CNN 예측 $\hat d$를 출발점으로 관측 R에 배치 LM으로
+재적합한다 — 라벨도 격자도 쓰지 않으므로 test·실계측에 그대로 적용된다. 격자 중앙에서
+출발한 같은 LM은 실패하므로 역할이 갈린다: **CNN은 해의 다중성(올바른 fringe 분지)을 풀고,
+물리는 그 분지 안의 정밀화를 맡는다.** 여기에 **라벨 없는 되돌림 규칙**(재구성 잔차가
+중앙값 + 5·robust σ를 넘는 행은 보정을 버리고 CNN 예측 사용 — LM은 잘못된 분지 바닥까지
+성실하게 내려간다)을 얹은 것이 프로젝트 최선 경로다. 판정·수치의 정본은
+[reports/inversion_refine.md](reports/inversion_refine.md)(사전등록 판정)과
+[reports/cnn_recipe.md](reports/cnn_recipe.md)(확정 모델·되돌림·제출)이다.
 
 #### 판정 게이트 — 물리 디코더 채택 조건
 
@@ -156,7 +180,8 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 > 7배 여유) ② 지배 성분이 모형이 아니라 **문헌표 불일치**로 측정됐다(세 Si 표의 차이가
 > 유계 예산의 70%를 쓴다). NN emulator로 갈아타면 이 잔차는 사라지지만 (e)·(f)를 함께
 > 잃으므로 목표에 역행한다. **수용하는 리스크**: 물리 항이 0.34 nm 수준의 계통 편향을
-> 가진 기준으로 예측을 당긴다 — β ablation이 이것까지 재는 실험이 된다.
+> 가진 기준으로 예측을 당긴다 — Stage B ablation이 이 리스크를 측정했고 실측 손해의
+> 방향과 일치한다 ([reports/stage_b.md](reports/stage_b.md) §4).
 
 결과와 한계는 [reports/stage_a.md](reports/stage_a.md).
 
@@ -171,14 +196,16 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 | 미분가능성 | dR/dd가 유한차분과 일치 (autograd 검증) |
 | 흡수 기판 | 복소 n_s에서 R<1, NaN/Inf 없음 |
 | 층 순서 고정 (비대칭 2층) | 재귀 프레넬 해석해와 일치 — 적층 순서 반전을 검출 (명세 6종이 순서를 고정하지 못해 보강한 7번째) |
+| 해석적 야코비안 dR/dd | **autograd와** 일치 (rtol 1e-11, 유한차분은 절단오차가 있어 참조값이 못 된다) + 반환 R은 forward와 비트 동일 + L=1 별도 — 추론 시 LM 역산(§3.2)의 근거 |
 
 ### 3.4 부산물 — 계측 신뢰도 지표
 
 추론 시 TMM 재구성 오차가 큰 샘플은 모델이 확신하지 못하는 측정으로 플래깅할 수 있다.
-이는 실제 fab의 계측 이상 감지(FDC) 관점과 맞닿아 있으며, 오차 분포 분석을 리포트에 포함한다.
-지표는 **라벨을 쓰지 않으므로** test·실계측에도 그대로 적용된다 — 예측 두께를 동결 디코더로
-되비춰 관측과 비교하는 행별 잔차다. 측정은 `scripts/evaluate_axes.py`(순위상관 · 잔차
-십분위별 실제 오차 · 상위 10% 포착률 · 참 두께에서의 지표 바닥).
+이는 실제 fab의 계측 이상 감지(FDC) 관점과 맞닿아 있으며, 지표는 **라벨을 쓰지 않으므로**
+test·실계측에도 그대로 적용된다 — 예측 두께를 동결 디코더로 되비춰 관측과 비교하는 행별
+잔차다. 측정은 `scripts/evaluate_axes.py`, 실측 결과(순위상관 · 잔차 십분위별 실제 오차 ·
+상위 10% 포착률 · 지표 바닥)는 [reports/cnn_recipe_axes.md](reports/cnn_recipe_axes.md).
+같은 잔차가 §3.2 되돌림 규칙의 지목 신호이기도 하다.
 
 ### 3.5 평가 프로토콜 (정직성 규약)
 
@@ -202,15 +229,16 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
    노이즈를 주입한 조건에서의 성능 열화를 함께 보고한다. 주입은 데이터와 같은 종류인
    균등 ±0.015가 기본이고(§2.1), 이미 있는 노이즈 위에 더하는 "추가분"임을 명시한다.
 
-> **구현 현황 (정직하게 밝힌다): 4종 중 3종이 구현됐고, 수치는 Task 7 라운드에서 나온다.**
-> ① 격자 스냅 분리 보고 `src/evaluate.py` · ③ held-out 두께 값 split
-> `data.holdout_thickness` (전 층에서 값을 빼고 그 값이 든 행을 통째로 holdout) ·
-> ④ 노이즈 강건성 `scripts/evaluate_axes.py` (§3.4 신뢰도 지표와 함께 산출). ②는 test에
-> 라벨이 없어 **리더보드 제출로만** 수치가 나오므로 최종 선택 모델에만 쓴다 — 캘리브레이션
-> forward로 격자 밖을 합성하면 같은 물리로 만든 데이터에서 β>0이 유리해지는 순환이라
-> 주 판정에 쓰지 않는다. Task 4·5·6은 이 프로토콜 없이 종결됐으므로 그 리포트들은
-> **격자 밖 외삽 성능이나 노이즈 강건성을 주장하지 않는다**(random split 조합 보간 성능만
-> 보고한다).
+> **구현 현황: ①③④는 구현·실측까지 완료됐다.** ① 격자 스냅 분리 보고 `src/evaluate.py` ·
+> ③ held-out 두께 값 split `data.holdout_thickness` (전 층에서 값을 빼고 그 값이 든 행을
+> 통째로 holdout — Stage B 라운드 2·3이 이 split이다) · ④ 노이즈 강건성
+> `scripts/evaluate_axes.py` → [reports/cnn_recipe_axes.md](reports/cnn_recipe_axes.md).
+> ②는 test에 라벨이 없어 **리더보드 제출로만** 수치가 나오므로 최종 선택 모델에만 쓴다 —
+> 캘리브레이션 forward로 격자 밖을 합성하면 같은 물리로 만든 데이터에서 β>0이 유리해지는
+> 순환이라 주 판정에 쓰지 않는다 (제출 전 라벨 없는 확인은 잔차 분포 전이 —
+> reports/cnn_recipe.md «제출» 절). Task 4·5·6은 이 프로토콜 없이 종결됐으므로 그
+> 리포트들은 **격자 밖 외삽 성능이나 노이즈 강건성을 주장하지 않는다**(random split
+> 조합 보간 성능만 보고한다).
 
 ### 3.6 가정과 한계
 
@@ -229,12 +257,12 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 ├── CLAUDE.md                   # Claude Code 작업 메모리 (계약·테스트 스펙·백로그)
 ├── requirements.txt
 ├── docs/                       # 주차별 실험 노트 — 진행·결과·발견·결정·TODO (§6)
-│   ├── README.md               #   노트 인덱스 + 로드맵 + 리포트 목록
-│   └── week_1.md               #   week_1 = 2026-08-08 ~ 08-14 (첫 커밋 기준 7일 단위)
+│   ├── week_1.md               #   week_1 = 2026-08-08 ~ 08-14 (첫 커밋 기준 7일 단위)
+│   └── week_2.md               #   week_2 = 2026-08-15 ~ 08-21
 ├── configs/                    # 실험 설정 — runs/와 같은 2단 구조 (§6)
 │   └── <실험>/
 │       └── <변형>.yaml         #   예: mlp_baseline/dropout0.0.yaml
-├── notebooks/                  # Colab GPU 학습 드라이버 — 라운드별 1개, 완료 후 수정 금지 (실행 로그 보존)
+├── notebooks/                  # Colab GPU 드라이버 — 라운드별 1개, 완료 후 실행 로그(코드·출력) 불변
 │   └── <대실험>/
 │       └── roundN_<내용>.ipynb #   예: level1_cnn/round3_bound.ipynb
 ├── data/                       # 대회 데이터 — 파일은 git 미포함, 구조만 .gitkeep (§2)
@@ -245,20 +273,28 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   └── <실험>/
 │       └── <변형>/             #   train.log · metrics.json (+ stage_a만 model.pt — §6)
 ├── reports/
-│   ├── <실험>.md               # 대실험별 취합 리포트 — 결과·분석·결론 (§6)
-│   ├── eda_metrics.md          # EDA 측정값 (스크립트 산출, 재실행 시 덮어씀)
-│   ├── eda_notes.md            # EDA 관찰·해석 메모
-│   ├── stage_a_gate.md         # Stage A 게이트 수치 (스크립트 산출, 재실행 시 덮어씀)
-│   └── figures/                # 산출 그림
-├── scripts/
-│   ├── verify_data.py          # 데이터 계약 검증 (통과 여부를 종료 코드로 반환)
-│   ├── eda.py                  # EDA 그림 3종 + 측정값 생성
+│   ├── README.md               # **인덱스** — 진행 비교표·읽기 순서·정본/취합 구분
+│   ├── <실험>.md               # 대실험별 취합 리포트 — 판단·서사 (eda_notes ~ cnn_recipe)
+│   ├── *_gate.md · *_judge.md · *_axes.md · *_diagnostics.md · *_curves*.md · *_metrics.md
+│   │                           # 스크립트 산출 정본 (재실행 시 덮어씀 — 손으로 고치지 않는다)
+│   └── figures/                # 산출 그림 (리포트·인덱스가 임베드)
+├── scripts/                    # 전부 산출물 생성기 — 리포트 수치의 재현 경로다
+│   ├── verify_data.py          # 데이터 계약 검증 (+ --deep: test 격자 밖 반증)
+│   ├── eda.py                  # EDA 그림 3종 + 측정값 (reports/eda_metrics.md)
 │   ├── measure_noise.py        # 노이즈 σ·유계 상한 측정 (채널축 m차 차분)
 │   ├── diagnose_calibration.py # Stage A 게이트 (a)~(f) 진단 + 그림 (§3.2)
-│   └── evaluate_axes.py        # 평가 축 — 노이즈 강건성(§3.5-4) + 신뢰도 지표(§3.4)
+│   ├── diagnose_predictions.py # 예측 오차 구조 진단 (level1_cnn_diagnostics.md)
+│   ├── evaluate_axes.py        # 평가 축 — 노이즈 강건성(§3.5-4) + 신뢰도 지표(§3.4)
+│   ├── refine_inversion.py     # 역산 refinement 판정 (사전등록 2 — inversion_refine.md)
+│   ├── judge_recipe.py         # post-LM·분지 실패율·되돌림 판정 (cnn_recipe_judge.md)
+│   ├── bench_invert.py         # 역해 LM 추론 비용 벤치 (inversion_bench.md)
+│   ├── analyze_stage_b_curves.py  # 적합 수준 맞춘 β 대조 (stage_b_curves*.md)
+│   ├── make_headline_figure.py # 헤드라인 그림 — 수치는 산출물에서 읽는다
+│   └── check_notebook_regression.py  # 노트북 옛 버퍼 되돌림 탐지 (커밋 전)
 ├── src/
 │   ├── physics/
-│   │   ├── tmm.py              #   미분가능 TMM — 프로젝트의 물리 코어
+│   │   ├── tmm.py              #   미분가능 TMM + 해석적 야코비안 — 프로젝트의 물리 코어
+│   │   ├── invert.py           #   배치 LM 역산 + 되돌림 규칙 (§3.2 추론 경로의 코어)
 │   │   ├── dispersion.py       #   문헌 광학상수 로더·Sellmeier·에너지축 스플라인
 │   │   ├── freq_id.py          #   두께축 주파수 식별 — λ축의 닫힌형 복원
 │   │   └── literature/         #   refractiveindex.info 원본 파일 (CC0, git 추적)
@@ -275,26 +311,29 @@ d→R forward emulator(NN)를 동결 디코더로 쓰는 fallback으로 전환�
 │   ├── losses.py               # Stage B 물리 손실 — 동결 TMM 디코더 + beta 워밍업 (§3.2)
 │   ├── train.py                # baseline/k-fold 학습 — CPU 경로 (물리 손실은 GPU 경로에만)
 │   ├── train_gpu.py            # GPU(Colab) 학습 경로 — holdout 전용, resume+Drive 미러, train.physics
-│   └── evaluate.py             # holdout 재평가·제출 파일 생성
+│   └── evaluate.py             # holdout 재평가·제출 파일 생성 (--refine = 물리 보정 경로)
 └── tests/
-    ├── test_tmm.py             # §3.3 물리 단위 테스트
+    ├── test_tmm.py             # §3.3 물리 단위 테스트 (해석적 야코비안 포함)
+    ├── test_invert.py          # LM 역산 — 청크 불변·감쇠 스케일·조기 종료·되돌림 계약
     ├── test_dataset.py         # 로더·split (데이터 없으면 해당 테스트만 skip)
     ├── test_models.py          # 모델 계약(shape)·bound·미분·재현성·팩토리
     ├── test_train.py           # 지표·제출 파일 정렬·LR 스케줄·학습 스모크
     ├── test_train_gpu.py       # GPU 경로 — resume=무중단 동일성·미러 복원·물리 손실 배선
     ├── test_losses.py          # 물리 손실 — 동결 계약·dtype 충실도·beta=0 대조군 동등성·누수
     ├── test_calibrate.py       # Stage A — 파라미터화·분할·주파수 식별 계약
+    ├── test_notebooks.py       # 노트북 필수 셀 규약 (PAT·반납·무결성 검증)
     └── test_dispersion_literature.py  # 코드 상수 ↔ literature/*.yml 원본 대조
 ```
 
 ## 5. 시작하기
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # 또는 기존 conda 환경 사용
+# Python >= 3.11 (pyproject.toml). venv 또는 conda 환경 어느 쪽이든 된다.
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-pytest -q                          # 물리 단위 테스트 + 로더 테스트
-python scripts/verify_data.py      # 데이터 계약 검증 (통과 시 종료 코드 0)
+pytest -q                          # 물리 단위 테스트 + 로더·역산·노트북 규약 테스트
+python scripts/verify_data.py      # 데이터 계약 검증 (통과 시 종료 코드 0; --deep = 격자 밖 반증)
 python scripts/eda.py              # EDA 그림 3종 + 측정값 표
 python -m src.train --config configs/mlp_baseline/dropout0.0.yaml  # baseline 학습 (CPU)
 
@@ -304,25 +343,30 @@ python -m src.train --config configs/mlp_baseline/dropout0.0.yaml  # baseline �
 python -m src.train_gpu --config configs/level1_cnn/flatten-dilated-bound.yaml \
   --device cpu --subset 20000 --epochs 2 --run-name smoke --no-resume
 
-python -m src.evaluate --run runs/mlp_baseline/dropout0.0  # holdout 재평가 (--submission 으로 제출 csv)
+# 최종 제출 경로 — 확정 모델 + 물리 보정(LM 역산 + 되돌림 규칙)까지 한 줄.
+# holdout 확정 수치와 test 보정 제출 csv가 함께 나온다 (체크포인트는 runs/CHECKPOINTS.md 참조).
+python -m src.evaluate --run runs/cnn_recipe/budget100 --submission --refine
 ```
 
 `verify_data.py` 최초 실행은 `train.csv`(1.9 GB)를 파싱해 `data/cache/train.parquet`을
 만드느라 약 30초 걸리고, 이후 실행은 캐시를 읽어 3~4초다.
 
 **메모리 요구(실측 최대 상주)**: `verify_data.py`·`eda.py` 약 4 GB, `src.calibrate`·
-`diagnose_calibration.py` 약 5 GB, `check_lam_leakage.py` 약 6 GB — 두께축 주파수 식별의
-조건부 평균이 holdout 제외 train 전체(73만 행)를 올리기 때문이다. 8 GB 미만 환경에서는
-Stage A 재현이 스왑을 탄다.
-
-(명령은 구현 진행에 따라 갱신)
+`diagnose_calibration.py` 약 5 GB — 두께축 주파수 식별의 조건부 평균이 holdout 제외
+train 전체(73만 행)를 올리기 때문이다. 8 GB 미만 환경에서는 Stage A 재현이 스왑을 탄다.
 
 ## 6. 문서·실험 관리
 
-성능 수치와 진행 서사는 README에 두지 않는다. 역할 분담은 다음과 같다.
+성능 수치와 진행 서사는 README 프로즈에 두지 않는다 — 예외는 스크립트 산출 그림 임베드와
+[reports/README.md](reports/README.md)(진행 비교표·인덱스) 링크뿐이다. 역할 분담은 다음과 같다.
+
+주차 로드맵(3주): Week 1 스캐폴드·TMM·검증·baseline → Week 2 구조 ablation·Stage A·
+Stage B·역산 refinement → Week 3 모델·학습 최적화(Task 8)와 문서화 마감(Task 9).
+현황은 CLAUDE.md 「작업 백로그」와 [docs/](docs/)의 주차 노트가 정본이다.
 
 | 위치 | 역할 | 갱신 시점 |
 |---|---|---|
+| [`reports/README.md`](reports/README.md) | **리포트 인덱스** — 진행 비교표·읽기 순서·정본/취합 구분 | 헤드라인 수치가 바뀔 때 |
 | [`docs/week_N.md`](docs/) | **주차별 실험 노트** — 날짜별 진행·결과·발견·결정 + TODO 관리 | 작업할 때마다 |
 | `reports/<실험>.md` | 대실험별 취합 리포트 — 변형 비교·분석·최종 결론 | 대실험 종료 시 |
 | `runs/<실험>/<변형>/` | 실행 산출물 — `train.log`(에폭별 실시간 로그) · `metrics.json`(설정 스냅샷 + 최종 지표) | 학습 실행 시. **체크포인트는 Drive 미러 보관** — 목록·sha256·복구는 [`runs/CHECKPOINTS.md`](runs/CHECKPOINTS.md), 예외로 `runs/stage_a/*/model.pt`만 git 추적(진단 스크립트가 직접 읽는다) |
