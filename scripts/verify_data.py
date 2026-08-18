@@ -6,12 +6,14 @@
 
 사용법:
     python scripts/verify_data.py
+    python scripts/verify_data.py --deep   # + test 두께가 격자 밖임을 유계 노이즈로 반증 (수 분)
 
 종료 코드: 모든 가설 통과 시 0, 하나라도 실패하면 1.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -42,6 +44,15 @@ EXPECTED_THICKNESS_VALUES = np.arange(10, 301, 10, dtype=np.int64)  # 10..300, 1
 # 아래로는 노이즈 수준(-0.02) 이상이어야 한다.
 R_UPPER_BOUND = 1.0
 R_LOWER_BOUND = -0.02
+
+# --deep 격자 밖 반증 — 노이즈가 |ε| ≤ 0.0152로 유계이므로, 같은 두께 조합의 두 관측은
+# 채널 최대 |ΔR| ≤ 2a = 0.0304를 넘을 수 없다. test 행의 train 전수 대비 최소 max|ΔR|가
+# 전부 이 임계를 넘으면 그 두께는 격자 위 어떤 조합도 아니다 (통계 없는 반증).
+# 독립 확인 2(디코더 역해 격자거리 평균 2.42 nm)는 reports/inversion_refine.md 쪽 경로다.
+GRID_MATCH_BOUND = 2 * 0.0152
+DEEP_SAMPLE_ROWS = 64
+DEEP_SEED = 0
+_DEEP_TRAIN_CHUNK = 100_000
 
 
 class CheckLog:
@@ -209,7 +220,43 @@ def verify_test_and_submission(log: CheckLog) -> None:
     )
 
 
+def verify_test_off_grid(log: CheckLog) -> None:
+    """--deep: test 두께가 train 격자 위에 없음을 유계 노이즈로 반증한다.
+
+    표본 test 행마다 train 전수 810,000행에 대한 min(max-채널 |ΔR|)을 잰다. 같은 두께
+    조합이 격자 위에 있다면 이 값이 GRID_MATCH_BOUND(= 2a) 이하인 train 행이 존재해야
+    한다 — 전부 임계를 넘으면 반증 성립. spectra는 (N, W) float32.
+    """
+    _section(f"[--deep] test 격자 밖 반증 (표본 {DEEP_SAMPLE_ROWS}행 × train 전수)")
+    train = load_frame("train")[CHANNEL_COLS].to_numpy(dtype=np.float32)
+    test = load_frame("test")[CHANNEL_COLS].to_numpy(dtype=np.float32)
+    rng = np.random.default_rng(DEEP_SEED)
+    sample = test[rng.choice(len(test), size=DEEP_SAMPLE_ROWS, replace=False)]
+
+    nearest = np.full(len(sample), np.inf, dtype=np.float64)
+    for start in range(0, len(train), _DEEP_TRAIN_CHUNK):
+        chunk = train[start : start + _DEEP_TRAIN_CHUNK]
+        for i, row in enumerate(sample):
+            gap = np.abs(chunk - row).max(axis=1).min()
+            nearest[i] = min(nearest[i], float(gap))
+
+    log.check(
+        bool((nearest > GRID_MATCH_BOUND).all()),
+        f"test 표본 전 행의 최근접 train 대비 max|ΔR| > {GRID_MATCH_BOUND:g} (격자 밖 반증)",
+        f"min {nearest.min():.4f} / max {nearest.max():.4f} — 같은 두께라면 {GRID_MATCH_BOUND:g}"
+        " 이하가 존재해야 한다",
+    )
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="test 두께가 격자 밖임을 유계 노이즈로 반증 (train 전수 대조 — 수 분)",
+    )
+    args = parser.parse_args()
+
     print("=" * 70)
     print("FringeNet 데이터 가설 검증 (CLAUDE.md §데이터 계약)")
     print("=" * 70)
@@ -217,6 +264,8 @@ def main() -> int:
     log = CheckLog()
     verify_train(log)
     verify_test_and_submission(log)
+    if args.deep:
+        verify_test_off_grid(log)
 
     _section("결과")
     if log.failures:
