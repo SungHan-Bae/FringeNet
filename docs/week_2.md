@@ -198,6 +198,23 @@ holdout 확정 수치와 test 보정본이 함께 나온다.
 **Task 7 종결.** 남은 열린 질문 하나: 213M skip-MLP와의 격자 밖 직접 비교는 미측정이다
 (skip-MLP 예측은 제출하지 않았다). 기록은 `reports/cnn_recipe.md` «리더보드 확정».
 
+### 추론 벤치 완전판 (L4) + 해석적 야코비안 기본값 전환 (같은 날, task7/bench-round2-gpu)
+
+round2 노트북을 Colab L4에서 Run-All — `reports/inversion_bench.md`가 한 세션의
+CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자동 반납, 실행 로그 커밋).
+
+- **GPU에서도 해석적+조기종료가 성립한다.** L4에서 LM 중앙차분 c128 0.815 → 해석적+조기종료
+  c64 0.054 ms/행(15배), `cnn+LM` 합계가 skip-MLP forward 대비 **17.41배 손해 → 1.30배**.
+  MAE는 c128 세 변형과 c64 해석적+조기종료가 **0.6630으로 전부 동일** — dtype 흔들림 소멸까지
+  GPU에서 재확인. 반복수 축소(10회)는 여전히 열등(+0.033 nm, 속도도 짐).
+- **🔴 "추론 1.6배 유리"는 WSL2 한정이었다.** 새 정본 기준 Colab CPU 1.18배 · L4 1.30배
+  **느림** — 배수는 기계에 따라 승패가 뒤집힌다("단일 배수 인용 금지"의 실증). 자원 미터
+  추론 축을 "동급"으로 정정했다 (`cnn_recipe.md`).
+- **기본값 전환**: `lm_invert`·`refine_inversion.py` 기본을 analytic+조기종료로.
+  `inversion_refine.md` 전체 holdout 재생성이 **수치 전 항목을 재현**했고(0.6110 / 77.6814 /
+  0.3336 — 7분, fd 55분 대비), 게이트 (d)는 **fd 명시 고정**(PhysicalStack에 해석적 경로
+  없음 — 새 기본값이 TypeError로 시끄럽게 드러냈다) 후 `stage_a_gate.md` 재생성 **diff 0**.
+
 ### 진열장 재편 — README·인덱스·헤드라인 그림 (같은 날, docs/readme-refresh)
 
 - **README 재편**: §1·§3.2가 기각된 물리 손실을 현행 핵심으로 서술하던 것을 실제 결론
@@ -217,9 +234,10 @@ holdout 확정 수치와 test 보정본이 함께 나온다.
 
 체크박스 정본은 CLAUDE.md의 「작업 백로그」다. 여기에는 열린 항목의 **다음 행동**만 적는다.
 
-- [ ] **추론 지연 — GPU 정본 표 재생성** (Colab): 노트북은 준비됐다
-      (`notebooks/inversion/round2_analytic-bench.ipynb`) — Colab에서 Run-All 1회.
-      CPU 절은 로컬 완전판으로 이미 교체됨(0.61배). GPU 수치를 보고 기본값 전환을 결정한다.
+- [x] **추론 지연 — GPU 정본 표 + 기본값 전환 완료.** L4에서 해석적+조기종료가 정확도 손실 0에
+      15배 절감(17.41배 손해 → 1.30배), 기본값을 analytic+조기종료로 전환하고
+      `inversion_refine.md` 재생성(수치 재현) · 게이트 (d)는 fd 명시 고정(diff 0).
+      기록: 위 08-18 연표
 - [x] **레시피 라운드 1 — 레버는 예산 하나였다.** 에폭 30 → 100이 post-LM 0.6110 → 0.4884,
       손잡이 4종(표준화·EMA·노이즈·꼬리)은 이득 없음(표준화는 2.4σ 손해). 확정 모델은
       `runs/cnn_recipe/budget100`. 취합: [reports/cnn_recipe.md](../reports/cnn_recipe.md)

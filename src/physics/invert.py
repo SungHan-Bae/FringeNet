@@ -61,7 +61,7 @@ def lm_invert(
     box: tuple[float, float] = DEFAULT_BOX_NM,
     damping: Literal["batch", "row"] = "batch",
     chunk: int | None = None,
-    jacobian: Literal["fd", "analytic"] = "fd",
+    jacobian: Literal["fd", "analytic"] = "analytic",
     tol_nm: float | None = None,
     patience: int = 4,
 ) -> np.ndarray:
@@ -83,9 +83,11 @@ def lm_invert(
             달라진다** — Stage A 게이트 (d)가 쓰는 기존 동작이라 기본값으로 남긴다.
             `"row"`는 행이 독립이라 청크 불변이고, 출발점이 행마다 제각각인 refinement에 맞다.
         chunk: 행을 이 크기로 끊어 처리한다 (중간 텐서가 (M, L, W)라 8만 행은 10 GB가 넘는다).
-        jacobian: `"fd"`는 중앙차분(반복당 forward 2L회), `"analytic"`은 model의
-            `forward_jacobian`(약 2회). 값이 반올림 수준에서 다르므로 커밋된 리포트를
-            재생성할 때는 그 리포트가 쓴 값을 그대로 써야 한다 (모듈 설명).
+        jacobian: `"analytic"`은 model의 `forward_jacobian`(반복당 forward 약 2회분),
+            `"fd"`는 중앙차분(2L회). 정확도 근거는 tests/test_tmm.py §8 — float32에서는
+            해석적이 오히려 더 정확하다(중앙차분은 보폭이 유효자리를 먹는다). 두 값은
+            반올림 수준에서 다르므로 커밋된 리포트를 재생성할 때는 그 리포트가 쓴 값을
+            그대로 써야 한다 (모듈 설명).
         tol_nm: 조기 종료 문턱 [nm]. None이면 끄고 전 행이 `iters`회를 다 돈다. 값을 주면
             갱신 폭이 이 값 미만인 반복이 `patience`회 연속인 행을 **작업 집합에서 뺀다** —
             남은 행의 결과는 바뀌지 않는다(행 독립). `damping="row"`에서만 쓸 수 있다.

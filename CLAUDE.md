@@ -276,30 +276,32 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   - **감쇠 스케일**: `damping="batch"`(게이트 (d)의 기존 동작)는 한 행의 갱신이 배치 구성에
     의존해 **청크를 바꾸면 답이 달라진다**. refinement는 `"row"`를 쓴다 (청크 불변, 테스트로 고정).
     두 값을 잘못 조합하면 조용히 다른 수치가 나오는 대신 에러가 난다.
-  - **야코비안 방식은 비용만 바꾼다** — `jacobian="fd"`는 중앙차분(반복당 forward 2L회),
-    `"analytic"`은 디코더의 `forward_jacobian`(약 2회분). **기본값은 `"fd"`이고 커밋된 리포트가
-    그 설정으로 나왔다** — 바꾸려면 해당 리포트를 함께 재생성한다. 해석적 경로가 정확도를
-    잃지 않는 근거는 물리 테스트 8번이고, **float32에서는 오히려 더 정확하다**: 중앙차분은
-    보폭 1e-3 nm가 상대 섭동 1e-5라 float32 유효자리(1.2e-7)를 먹어 dtype마다 답이 흔들리는데,
-    해석적은 complex64가 complex128과 같은 값을 준다.
+  - **야코비안 방식은 비용만 바꾼다** — `jacobian="analytic"`은 디코더의 `forward_jacobian`
+    (반복당 forward 약 2회분), `"fd"`는 중앙차분(2L회). **기본값은 `"analytic"`이고 커밋된
+    리포트가 그 설정으로 나왔다** (2026-08-18 전환 — 세 기계에서 정확도 손실 0, 10~16배 절감
+    확인 후 `inversion_refine.md` 재생성: 수치 전 항목 재현). 기본값을 바꾸는 커밋은 해당
+    리포트를 함께 재생성한다. **예외 — 게이트 (d)는 `"fd"` 명시 고정**: 캘리브레이션 모델
+    `PhysicalStack`에 해석적 경로가 없고, `damping="batch"`처럼 커밋된 게이트 정본의 동작을
+    보존한다 (재생성 diff 0으로 검증). 해석적 경로가 정확도를 잃지 않는 근거는 물리 테스트 8번이고,
+    **float32에서는 오히려 더 정확하다**: 중앙차분은 보폭 1e-3 nm가 상대 섭동 1e-5라
+    float32 유효자리(1.2e-7)를 먹어 dtype마다 답이 흔들리는데, 해석적은 complex64가
+    complex128과 같은 값을 준다.
   - **조기 종료 `tol_nm`**: **제안된** 스텝 폭이 문턱 미만인 반복이 `patience`회 연속인 행을
     작업 집합에서 뺀다. 행이 독립이라 남은 행 답은 불변이고 청크 불변성도 유지된다.
     기각을 이동 0으로 세면 안 된다 — 감쇠가 오르며 스텝이 되살아나는 LM 특성 때문에 어려운
     행을 잘라 MAE가 나빠진다(측정: +0.0093 nm). `damping="row"`에서만 허용한다.
   - **추론 비용은 야코비안 방식에 달려 있다 — 배수를 방식과 함께 적는다.** 정본은
-    `reports/inversion_bench.md` (`scripts/bench_invert.py`, GPU는
-    `notebooks/inversion/round1_gpu-bench.ipynb`). 중앙차분은 행당 TMM forward가 270회
-    (야코비안 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M skip-MLP forward보다 **한 자릿수
-    느리다**(L4에서 17.26배). 해석적+조기종료는 그 비용의 대부분을 걷어낸다.
-    - **CPU 절은 해석적·조기종료 축까지 담은 현행 판본이다** (로컬 WSL2 — 해석적+조기종료
-      c64에서 `cnn+LM`이 skip-MLP의 **0.61배**). GPU 절은 L4 중앙차분 3변형 판본이 남아
-      있고, 완전판은 `notebooks/inversion/round2_analytic-bench.ipynb`(준비됨)를 Colab에서
-      실행해 낸다. 두 절은 다른 기계다 — 배수는 절 안에서만 읽는다.
-    - **단일 배수를 인용하지 말 것** — 하드웨어에 크게 의존한다. skip-MLP는 GEMM 한 방이라
+    `reports/inversion_bench.md` — Colab 한 세션에서 CPU(VM)·GPU(L4) 절을 함께 낸 완전판이다
+    (`scripts/bench_invert.py`, 실행 로그 `notebooks/inversion/round2_analytic-bench.ipynb`).
+    중앙차분은 행당 TMM forward가 270회 (야코비안 8 + 시험 스텝 1) × 30회라 `cnn+LM`이
+    213M skip-MLP forward보다 **한 자릿수 느리고**(L4 17.41배), 해석적+조기종료가 그 비용의
+    대부분을 걷어내 **동급 수준이 된다** (c64 합계 기준 L4 1.30배 · Colab VM CPU 1.18배).
+    - **단일 배수를 인용하지 말 것 — 승패가 기계에 따라 뒤집힌다.** skip-MLP는 GEMM 한 방이라
       BLAS·GPU 최적화를 온전히 받고 LM은 비정형 + 대역폭 바운드라 덜 받아서, 같은 코드가
-      기계마다 다른 배수를 낸다. 배수는 리포트에서 읽고 기계를 함께 적는다.
-    - **GPU 이득의 절반 이상을 float64가 먹는다** — L4에서 LM complex128은 10.3배 빨라지는데
-      complex64는 24.5배다(소비자 GPU FP64 1/32). 배포 경로는 complex64가 맞고 **판정 수치는
+      기계마다 다른 배수를 낸다 (로컬 WSL2 CPU에서는 `cnn+LM`이 0.61배로 유리하게도 측정됐다 —
+      git 이력 7ea8714 판본). 배수는 리포트에서 읽고 기계를 함께 적는다.
+    - **GPU 이득의 절반 이상을 float64가 먹는다** (소비자 GPU FP64 1/32 — L4에서 CPU 대비
+      가속이 c128은 12배, c64는 24배 수준). 배포 경로는 complex64가 맞고 **판정 수치는
       계속 complex128**이다. CPU↔GPU는 bit가 아니라 MAE 수준에서 일치한다(같은 표본 1.8% 차).
     - **반복수를 줄이는 것은 공짜가 아니다** — 10회는 30회보다 MAE가 0.02~0.03 nm 나쁘다
       (CPU·GPU 세 측정에서 일관). 고정 반복수를 줄이는 대신 **조기 종료를 쓴다** — 같은
@@ -380,10 +382,11 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
         (`reports/inversion_refine.md`). 물리 단독(격자 중앙 출발)은 77.68 nm로 실패하므로
         **CNN의 기여는 정밀도가 아니라 올바른 fringe 분지**다. 상한(참값 출발)이 0.3336이다.
         추론 비용은 `reports/inversion_bench.md` — 중앙차분 경로에서는 손해다(아래 스펙).
-  - [x] **추론 지연 레버**: 해석적 야코비안·조기 종료를 `lm_invert`에 배선(opt-in). 정확도 손실
-        없이 로컬 CPU 10.85배 절감 → `cnn+LM`이 skip-MLP forward 대비 5.53배 손해에서 **0.63배
-        (1.6배 유리)로 뒤집힘**. 남은 것은 GPU 정본 표 재생성과 기본값 전환 여부이고, 전환하면
-        `inversion_refine.md`·`stage_a_gate.md`를 함께 재생성한다.
+  - [x] **추론 지연 레버 — 종결.** 해석적 야코비안·조기 종료를 `lm_invert`에 배선하고
+        GPU 정본 표(round2, L4)까지 재생성 — 세 기계 전부에서 정확도 손실 0에 10~16배 절감,
+        `cnn+LM`이 skip-MLP forward 대비 한 자릿수 손해에서 동급 수준으로 (위 역산 스펙).
+        **기본값을 `"analytic"`+조기종료로 전환**하고 `inversion_refine.md`를 재생성했다
+        (수치 전 항목 재현, 게이트 (d)는 fd 명시 고정 — 재생성 diff 0. 2026-08-18).
   - [x] **레시피 라운드 1 (`cnn_recipe`)**: 레버는 **예산 하나**였다 (위 스펙). post-LM
         0.6110 → 0.4884 nm, 분지 실패율 0.67% → 0.39% (전체 holdout 정본,
         `reports/cnn_recipe_judge.md`). 판정은 `scripts/judge_recipe.py`.
@@ -489,9 +492,9 @@ python scripts/judge_recipe.py --run runs/cnn_recipe/budget100
 # 81,000행이 CPU 8스레드로 약 55분(팔 3개)이라 확인은 --rows로 줄여서 한다 (무작위 표본).
 python scripts/refine_inversion.py --rows 5000
 
-# 역해 LM 추론 비용 (장치·dtype·야코비안·반복수). GPU 측정은
-# notebooks/inversion/round1_gpu-bench.ipynb — 정본 표에는 CPU와 GPU 절이 함께 있어야 하므로
-# 로컬 단독 실행으로 reports/inversion_bench.md를 덮으면 GPU 절이 사라진다 (--out으로 뺄 것).
+# 역해 LM 추론 비용 (장치·dtype·야코비안·반복수). 정본 표는 Colab 한 세션의 CPU·GPU 절이므로
+# (notebooks/inversion/round2_analytic-bench.ipynb) 로컬 단독 실행으로
+# reports/inversion_bench.md를 덮으면 GPU 절이 사라진다 (--out으로 뺄 것).
 python scripts/bench_invert.py --rows 4096 --out /tmp/bench.md
 ```
 

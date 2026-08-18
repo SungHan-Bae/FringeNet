@@ -303,17 +303,19 @@ def main() -> int:
     parser.add_argument(
         "--jacobian",
         choices=("fd", "analytic"),
-        default="fd",
-        help="야코비안 방식. 기본 fd가 커밋된 리포트의 설정이다 (바꾸면 리포트를 재생성한다)",
+        default="analytic",
+        help="야코비안 방식. 기본 analytic이 커밋된 리포트의 설정이다 (바꾸면 리포트를 재생성한다)",
     )
     parser.add_argument(
         "--tol-nm",
         type=float,
-        default=None,
-        help="조기 종료 문턱 [nm]. 기본은 끔 — 전 행이 --iters를 다 돈다",
+        default=1e-4,
+        help="조기 종료 문턱 [nm]. 0 이하를 주면 끔 — 전 행이 --iters를 다 돈다",
     )
     parser.add_argument("--out", default=None, help=f"리포트 경로 (기본 {OUT_PATH})")
     args = parser.parse_args()
+    if args.tol_nm is not None and args.tol_nm <= 0:
+        args.tol_nm = None
 
     run_dir = Path(args.run)
     model, metrics = load_run(run_dir)
