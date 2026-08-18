@@ -8,7 +8,7 @@
 
 미러 루트: `/content/drive/MyDrive/FringeNet/runs_mirror/<실험>/<run>/`
 
-**예외 — `runs/stage_a/*/model.pt`는 git에 남긴다** (합계 44 KB): `scripts/diagnose_calibration.py`가 직접 로드해 `reports/stage_a_gate.md`를 재생성하므로 Drive로 보내면 문서의 재현 커맨드가 깨진다.
+**예외 — `runs/stage_a/*/model.pt`는 git에 남긴다** (합계 약 172 KB): `scripts/diagnose_calibration.py`가 직접 로드해 `reports/stage_a_gate.md`를 재생성하므로 Drive로 보내면 문서의 재현 커맨드가 깨진다.
 
 - 원본 커밋: `2a2ba5673279dae9aa9600036b07c432cde8440d`
 - 복구: `git show <원본 커밋>:runs/<실험>/<run>/model.pt > model.pt` — 히스토리에 blob이 남아 있으므로 **Drive는 편의 사본이다**. 단 `drive-only` 항목은 커밋된 적이 없어 Drive가 유일본이다.

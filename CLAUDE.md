@@ -325,13 +325,16 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   산출물 `runs/<실험>/<변형>/` = model.pt + train.log + metrics.json 세 가지만
   (metrics.json이 설정 스냅샷을 겸한다). 변형 이름은 번호가 아니라 **무엇이 다른지 드러나는
   서술형**으로 (예: `dropout0.0`). 대실험이 끝나면 `reports/<실험>.md`로 취합한다 —
-  README에는 성능 수치를 두지 않는다.
+  README 프로즈에는 성능 수치를 두지 않는다 (예외는 스크립트 산출 그림 임베드와
+  `reports/README.md` 인덱스 링크). **진행 비교표의 단일 위치는 `reports/README.md`**이고
+  헤드라인 그림은 `scripts/make_headline_figure.py`가 산출물에서 읽어 만든다 — 수치가
+  갱신되면 둘을 함께 갱신한다.
 - **git에는 텍스트 산출물만 추적한다** (metrics.json · train.log). 체크포인트는 Drive 미러
   `MyDrive/FringeNet/runs_mirror/<실험>/<run>/`에 3종(model.pt 포함)으로 보관한다 —
   `train_gpu.py`의 `_mirror_copy`가 학습 중에 이미 그렇게 쓰므로 별도 작업이 필요 없다.
   목록·sha256·복구 방법은 **`runs/CHECKPOINTS.md`**, 복구는
   `git show <원본 커밋>:runs/<실험>/<run>/model.pt`(과거분) 또는 Drive 사본.
-  **예외 — `runs/stage_a/*/model.pt`는 git 추적**(합계 44 KB): `diagnose_calibration.py`가
+  **예외 — `runs/stage_a/*/model.pt`는 git 추적**(합계 약 172 KB): `diagnose_calibration.py`가
   직접 로드해 `reports/stage_a_gate.md`를 재생성하므로 빠지면 재현 커맨드가 깨진다.
   텍스트 2종은 git이 정본이다 — 미러 사본으로 덮어쓰지 말 것.
 - **주차별 실험 노트 `docs/week_N.md`** (첫 커밋 2026-08-08 기준 7일 단위): 날짜별 진행·
