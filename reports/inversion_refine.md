@@ -4,7 +4,7 @@
 
 - 대상 run `runs/level1_cnn/flatten-dilated-bound` (holdout MAE 2.3455 nm), 평가 81,000행 / holdout 81,000행
 - 디코더 `runs/stage_a/joint-lam3-sin2-si2-schinke/model.pt` (Stage A 확정, 동결) · complex128
-- LM 30회 · 중앙차분 0.001 nm · 상자 [1.0, 400.0] nm · 감쇠 행별 · 청크 4,096
+- LM 30회 · 해석적 야코비안 · 조기 종료 0.0001 nm · 상자 [1.0, 400.0] nm · 감쇠 행별 · 청크 4,096
 - **후처리이므로 기준선과 별도 행이다.** 격자 스냅은 쓰지 않는다 (평가 규약).
 
 ## 1. 정확도 — 네 팔은 출발점만 다르다

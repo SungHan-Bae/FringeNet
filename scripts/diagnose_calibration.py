@@ -173,7 +173,11 @@ def invert_thickness(
     Returns:
         nm 단위 오차 통계와 [0, 1] 비율들 (mae / mae_per_layer / 분위 / 범위 밖 비율).
     """
-    d_hat = lm_invert(model, x, d_true, iters=iters, step_nm=step_nm, box=box, damping="batch")
+    # jacobian="fd" 명시 — PhysicalStack에는 forward_jacobian이 없고, 게이트 (d)는
+    # damping="batch"와 함께 커밋된 게이트 정본의 동작을 보존한다 (기본값 전환과 무관).
+    d_hat = lm_invert(
+        model, x, d_true, iters=iters, step_nm=step_nm, box=box, damping="batch", jacobian="fd"
+    )
     return inversion_stats(d_hat, d_true, box=box)
 
 
