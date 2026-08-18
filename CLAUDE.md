@@ -286,9 +286,10 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     `notebooks/inversion/round1_gpu-bench.ipynb`). 중앙차분은 행당 TMM forward가 270회
     (야코비안 8 + 시험 스텝 1) × 30회라 `cnn+LM`이 213M skip-MLP forward보다 **한 자릿수
     느리다**(L4에서 17.26배). 해석적+조기종료는 그 비용의 대부분을 걷어낸다.
-    - **커밋된 표는 중앙차분 3변형만 담은 옛 판본이다** — 스크립트에는 해석적·조기종료 축이
-      들어갔고 GPU 절을 살리려면 Colab에서 재실행해야 하므로 아직 갱신하지 않았다. 로컬 CPU
-      실측(해석적+조기종료 c64에서 `cnn+LM`이 skip-MLP의 **0.63배**)은 docs/week_2.md 08-15에 있다.
+    - **CPU 절은 해석적·조기종료 축까지 담은 현행 판본이다** (로컬 WSL2 — 해석적+조기종료
+      c64에서 `cnn+LM`이 skip-MLP의 **0.61배**). GPU 절은 L4 중앙차분 3변형 판본이 남아
+      있고, 완전판은 `notebooks/inversion/round2_analytic-bench.ipynb`(준비됨)를 Colab에서
+      실행해 낸다. 두 절은 다른 기계다 — 배수는 절 안에서만 읽는다.
     - **단일 배수를 인용하지 말 것** — 하드웨어에 크게 의존한다. skip-MLP는 GEMM 한 방이라
       BLAS·GPU 최적화를 온전히 받고 LM은 비정형 + 대역폭 바운드라 덜 받아서, 같은 코드가
       기계마다 다른 배수를 낸다. 배수는 리포트에서 읽고 기계를 함께 적는다.
@@ -387,8 +388,10 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
         지목된 행에서만 여러 출발점으로 LM을 다시 풀고 잔차 최소해를 고른다. 변위가 커서
         (중앙값 68 nm·90분위 178 nm·4층이 함께 움직인다) 작은 섭동이 아니라 넓은 다중 시작이어야
         한다. 상한 0.3336. 남는 실패의 26%는 **등가 분지**라 디코더 개선(게이트 (b)) 쪽 문제다.
-  - [ ] **평가 축 실측**: 노이즈 강건성 · 신뢰도 지표 (`scripts/evaluate_axes.py`).
-        체크포인트가 git에 없어 Drive 미러에서 받아와야 한다 (`runs/CHECKPOINTS.md`).
+  - [x] **평가 축 실측 — 완료.** 노이즈 강건성 곡선(균등·가우시안, 같은 총 σ에서 열화 거의
+        동일) + 신뢰도 지표(ρ 0.70, 잔차 상위 10% MAE 4.97 vs 하위 0.60) →
+        `reports/cnn_recipe_axes.md` (`scripts/evaluate_axes.py`, budget100 +
+        flatten-dilated-bound, holdout 전체). 체크포인트 무결성 재추론 일치 확인 포함.
   - [ ] **`reports/stage_b.md` 취합** — `stage_b_curves*.md`는 스크립트 산출물이고 서사가 아니다.
 - [ ] **Task 8 — 문서화**: README 결과·그림·한계 논의 갱신
 
@@ -432,7 +435,7 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
 ```bash
 pytest -q
 ruff check . && ruff format .
-python scripts/verify_data.py
+python scripts/verify_data.py                    # --deep: test 격자 밖 반증까지 (train 전수 대조)
 python scripts/measure_noise.py                                                   # 노이즈 σ·유계 상한
 python scripts/check_notebook_regression.py                                       # 노트북 되돌림 탐지
 python -m src.train --config configs/mlp_baseline/dropout0.0.yaml
@@ -458,10 +461,10 @@ python scripts/analyze_stage_b_curves.py $(for b in 0 30 100 300; do \
   printf -- '--run runs/stage_b/ft-heldout-beta%s ' $b; done)              # 라운드 3
 
 # 평가 축 (노이즈 강건성 · 신뢰도 지표) — 학습 없이 체크포인트 위에서 돈다.
-# 체크포인트는 git에 없으므로 Drive 미러에서 복사한 뒤 실행한다 (runs/CHECKPOINTS.md).
-# 단 `stage_b/beta0`은 `level1_cnn/flatten-dilated-bound`와 비트 동일하고 그 model.pt는
-# git 히스토리에 있다 (git show <커밋>:... — runs/CHECKPOINTS.md) — 백본 축은 Drive 없이 돈다.
-python scripts/evaluate_axes.py --run runs/stage_b/beta0 --run runs/stage_b/beta100
+# 확정 실측은 reports/cnn_recipe_axes.md (budget100 + flatten-dilated-bound, 체크포인트 로컬).
+# 다른 run을 재려면: 체크포인트가 로컬에 없을 때만 Drive 미러 또는 git 히스토리에서 복구
+# (runs/CHECKPOINTS.md — level1_cnn·mlp_baseline은 git show 2a2ba56:<경로>로 Drive 없이 된다).
+python scripts/evaluate_axes.py --run runs/cnn_recipe/budget100 --run runs/level1_cnn/flatten-dilated-bound
 
 # 레시피 run 판정 — post-LM MAE·분지 실패율·라벨 없는 실패 검출을 같은 행·같은 장치로.
 # 체크포인트가 필요하므로 Drive 미러에서 받아온 뒤 실행한다 (runs/CHECKPOINTS.md).
