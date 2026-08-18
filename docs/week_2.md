@@ -189,6 +189,15 @@ holdout 확정 수치와 test 보정본이 함께 나온다.
   문서화 → **Task 9**. **다중 시작 재탐색 항목은 백로그·TODO에서 도려냈다** — 등가 분지
   한계 서술로만 남긴다 (cnn_recipe.md 「다음」, stage_b.md §6).
 
+### 🔴 리더보드 제출 — test MAE 0.38733, 격자 밖 확인 완료 (같은 날)
+
+`submission_budget100_refined.csv`를 데이콘에 제출했다 (팀 감자맛탕, 전체 15위). **holdout
+0.3880 → test 0.38733 (−0.2%)** — 격자 밖 외삽에서 열화가 사실상 0이다. 우려했던 잔차 극단
+꼬리 2배(p99.9)는 소수 행이라 MAE를 움직이지 못했고, 라벨 없는 전이 예측(몸통 그대로)이
+채점으로 확인됐다. holdout에서 확정한 파이프라인을 수정 없이 한 번 제출한 결과다. 이로써
+**Task 7 종결.** 남은 열린 질문 하나: 213M skip-MLP와의 격자 밖 직접 비교는 미측정이다
+(skip-MLP 예측은 제출하지 않았다). 기록은 `reports/cnn_recipe.md` «리더보드 확정».
+
 ### 진열장 재편 — README·인덱스·헤드라인 그림 (같은 날, docs/readme-refresh)
 
 - **README 재편**: §1·§3.2가 기각된 물리 손실을 현행 핵심으로 서술하던 것을 실제 결론
@@ -217,9 +226,9 @@ holdout 확정 수치와 test 보정본이 함께 나온다.
 - [x] **되돌림 규칙** — `budget100` 기준 0.4884 → **0.3880 nm**, 213M 단독(0.3955)을 넘었다.
       정본 `reports/cnn_recipe_judge.md`
 - [x] **제출 경로 배선** — `--refine`으로 한 줄 생성, 잔차 전이 확인까지
-- [ ] **리더보드 업로드** — `runs/cnn_recipe/budget100/submission_budget100_refined.csv`.
-      holdout 우위가 0.0075 nm로 얇고 극단 꼬리가 test에서 2배이므로 **실제로 유지되는지는
-      점수를 봐야 한다.** 결과를 이 노트와 `reports/cnn_recipe.md`에 적는다
+- [x] **리더보드 업로드 — test MAE 0.38733 (15위).** holdout 0.3880이 격자 밖에서 열화 없이
+      전이 (−0.2%, 극단 꼬리는 MAE에 반영 안 됨). 기록: 위 08-18 연표 +
+      `reports/cnn_recipe.md` «리더보드 확정»
 - [ ] **Task 8 — 모델·학습 최적화** (신설, 문서화는 Task 9로): 아키텍처(hidden feature·층수·
       activation·normalization) · 학습 방법(scheduler, smoothing 등). 판정은 `judge_recipe.py`
       기준, Δ는 budget100 대조. 기각된 손잡이 4종 재시도 금지. 용량 확대(채널 ×2)는 별도
