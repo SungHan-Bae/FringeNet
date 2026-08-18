@@ -71,12 +71,8 @@ eps 1e-6 wd 0, L1, batch 2048, 100 epochs, warmup 2000스텝+cosine, 9:1 random 
   (CLAUDE.md 실험 관리 구조의 예외 조항).
 - **Drive 사본 무결성 검증 통과**: push 후 `flush_and_unmount` → 재마운트 → Drive의
   model.pt 재로드 → holdout 81,000행 재추론 **0.3955 = 기록 0.3955** (노트북 셀 8 출력).
-- 세션 유실 대비 인프라가 실전 검증됨: 세션 6회에 걸쳐 학습, 재개 5회 (ep 2·15·50·
-  70·95에서 재개 — ep 2만 5에폭 미러 격자 밖인데, 이것이 아래 미러 지연 건이다).
-  이 실험이 드러낸 인프라 이슈 3건과 수정 — GPU resume 시
-  CPU 계약 텐서가 cuda로 올라가는 버그(`a9519ed`), Drive FUSE 비동기 업로드로 대형
-  resume.pt 미러 지연(`1033c2d`, mirror_resume_every), 100MB 한도·무결성 검증 규약
-  (`2a599ae`) — 상세는 docs/week_1.md.
+- 세션 6회·재개 5회로 학습했고 재개 결과 = 무중단 실행 계약이 유지됐다 — 이 과정이
+  드러낸 인프라 이슈와 수정 이력은 docs/week_1.md 08-11에 있다.
 
 ## 재현
 

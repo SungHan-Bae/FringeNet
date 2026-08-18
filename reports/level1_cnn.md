@@ -83,13 +83,14 @@ baseline에 근접했다. 그 위에 flatten(위치 보존)을 더하자 2.93 nm
 
 ### 3. flatten-dilated의 오차 구조 — 전 영역에서 baseline 우위 (라운드 2 시점)
 
-- 예측-정답 상관 0.9973~0.9988 (baseline 0.9924~0.9968), 예측 std 86.3~86.7로
-  평균 회귀 없음.
+진단 수치의 정본은 [level1_cnn_diagnostics.md](level1_cnn_diagnostics.md)
+(`scripts/diagnose_predictions.py` — holdout 전체, 세 run이 같은 행). 읽는 판단:
+
+- 예측-정답 상관·예측 std 모두 baseline보다 높다 — 평균 회귀 없음.
 - 두께 구간별 MAE가 **모든 구간에서 baseline보다 낮다**. 특히 가장 어려운
-  얇은 구간(10~60 nm): 4.37 vs baseline 6.49 — 라운드 1 CNN이 가장 크게
-  무너지던 영역이 우위 영역으로 반전됐다.
-- 격자 끝 편향도 작다 (d=10에서 4.91 / d=300에서 3.46 / 내부(20~290 nm) 2.84;
-  baseline 6.97 / 5.99 / 4.46).
+  얇은 구간(10~60 nm)은 라운드 1 CNN이 가장 크게 무너지던 영역인데 우위
+  영역으로 반전됐다 (4.37 vs baseline 6.49).
+- 격자 끝(d=10 / d=300) 편향도 baseline보다 작다.
 - layer_2가 최약인 순위는 모든 모델 공통 — EDA 층별 민감도 SNR 최저(10.3)와
   일치하는 물리적 패턴이지 특정 구조의 문제가 아니다.
 
@@ -99,21 +100,12 @@ flatten-dilated에 sigmoid bound(출력을 물리 범위 [10, 300] nm에 가둠,
 하나만 켠 비교: **2.931 → 2.346 nm (−20.0%)**. MLP baseline에서는 bare regression이
 채택됐었는데(`99fe78e`), 백본이 강해지자 결론이 뒤집혔다.
 
-오차 구조 분해 (동일 holdout, 로컬 재예측):
-
-| 지표 | flatten-dilated | + bound |
-|---|---|---|
-| 범위 밖 예측 (<10 / >300 nm) | 1.82% / 1.53% | **0 / 0** (구조적으로 불가능) |
-| 격자 끝 MAE (d=10 / d=300) | 4.91 / 3.46 | **1.82 / 1.39** (−63% / −60%) |
-| 얇은 구간(10~60 nm) MAE | 4.37 | **3.14** |
-| 내부(70~240 nm) MAE | 2.55 | 2.25 |
-| 예측-정답 상관 (min~max) | 0.9973~0.9988 | 0.9984~0.9993 |
-
-이득이 격자 끝에 집중된다: unbound 모델은 예측의 ~3.4%가 물리적으로 불가능한
+오차 구조 분해는 정본 [level1_cnn_diagnostics.md](level1_cnn_diagnostics.md) 표에서
+읽는다. 이득이 격자 끝에 집중된다: unbound 모델은 예측의 약 3.4%가 물리적으로 불가능한
 범위 밖 값이었고 그 잔차가 끝 구간 MAE를 지배했는데, bound는 이를 구조적으로
-차단한다. 우려했던 sigmoid 포화(끝 구간 gradient 소실)로 인한 열화는 관측되지
-않았다 — 오히려 끝 구간이 가장 크게 좋아졌고, 내부 구간도 소폭 개선(2.55→2.25)
-이라 순손실 구간이 없다. MLP와의 결론 역전에 대한 가설: 백본이 강할수록 남은
+차단한다 (격자 끝 MAE −60% 이상). 우려했던 sigmoid 포화(끝 구간 gradient 소실)로 인한
+열화는 관측되지 않았다 — 오히려 끝 구간이 가장 크게 좋아졌고, 내부 구간도 소폭 개선이라
+순손실 구간이 없다. MLP와의 결론 역전에 대한 가설: 백본이 강할수록 남은
 오차에서 격자 끝 범위 밖 초과분이 차지하는 비중이 커져 같은 제약의 한계 기여가
 커진다. 단, MLP bound-on 산출물은 runs/에 보존되지 않아(`99fe78e`는 config 변경
 커밋만 남음) 정량 대조는 불가 — 가설 수준으로만 기록한다.
@@ -154,8 +146,5 @@ python -m src.train_gpu --config configs/level1_cnn/flatten-dilated-bound.yaml
 python -m src.evaluate --run runs/level1_cnn/flatten-dilated-bound
 ```
 
-부기: 라운드 2는 세션 유실 대비 체계(에폭 단위 resume.pt + Drive 미러 + 완료 run
-스킵, `src/train_gpu.py`)가 처음 적용된 라운드다. 실제로 라운드 2 재실행 시 완료된
-3개 run이 미러 기록으로부터 스킵·복원되어 push까지 이어졌다 (train.log에는 중단
-흔적이 없다 — 세 run 모두 무중단 완주였고, 복구가 필요했던 것은 세션 종료 후의
-산출물 회수였다).
+부기: train.log에는 중단 흔적이 없다 — 라운드 2 세 run 모두 무중단 완주다 (세션 유실
+대비 체계의 적용 경위는 docs/week_1.md).
