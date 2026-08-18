@@ -137,6 +137,8 @@ def structure_metrics(eps: np.ndarray, d: np.ndarray) -> dict[str, Any]:
         "systematic": float(np.sqrt(max(rmse**2 - NOISE_SIGMA**2, 0.0))),
         "bias": float(eps.mean()),
         "violation_rate": float(viol.mean()),
+        # 여유 임계(1.2×유계) 위반율 — 경계 근처 스침이 아니라 명백한 초과가 얼마나 남는지.
+        "violation_rate_relaxed": float((np.abs(eps) > 1.2 * NOISE_BOUND).mean()),
         "max_abs": float(np.abs(eps).max()),
         "channel_rmse": ch_rmse,
         "channel_violation": viol.mean(axis=0),
@@ -216,6 +218,11 @@ def localization_section(best: dict[str, Any]) -> list[str]:
         "",
         f"최선 run `{best['name']}`의 채널별 위반율. 구역은 겹칠 수 있다 "
         "(E2 근방과 Luke 외삽이 실제로 겹친다).",
+        "",
+        f"위반율 {best['struct']['violation_rate']:.4%} (임계 {NOISE_BOUND:g}) · "
+        f"여유 임계 1.2× = {1.2 * NOISE_BOUND:.4f} 기준으로도 "
+        f"**{best['struct']['violation_rate_relaxed']:.2%}** — 경계 근처 스침이 아니라 "
+        "명백한 초과가 남는다.",
         "",
         f"### 최악 채널 {TOP_CHANNELS}개",
         "",
