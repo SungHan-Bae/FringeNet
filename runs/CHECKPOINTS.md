@@ -88,3 +88,17 @@ holdout 재추론으로 기록된 val MAE를 재현했고(2/2 OK), 그 출력이
 - 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/` (model.pt 각 ~2.5 MB)
 - **회수 후 재추론 무결성 확인 완료** (2026-08-19, 로컬 CPU): 전체 holdout 판정
   (`reports/task8_judge.md`)의 CNN MAE 1.6484 / 1.8108이 기록 val MAE를 재현했다.
+
+## task8 — 라운드 2 (용량), 2 run
+
+라운드 1과 같은 규약 — sha256 없이 노트북(`round2_capacity.ipynb`)의 Drive 무결성 검증
+셀이 미러 model.pt 재로드 → holdout 재추론으로 val MAE 재현 (2/2 OK, 출력 보존).
+
+| run | 변인 (resnet-match 대비) | val MAE [nm] |
+|---|---|---|
+| `resnet-d2` | 블록 5→10 (stride-1 복제, ×2.3 파라미터) | 0.3647 |
+| `resnet-w2` | 전 블록 채널 ×2 (×3.9 파라미터) | 1.1515 |
+
+- 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/` (model.pt 6.1 / 10.5 MB)
+- **회수 후 재추론 무결성 확인 완료** (2026-08-19, 로컬 CPU): 전체 holdout 판정
+  (`reports/task8_judge.md`)의 CNN MAE 0.3647 / 1.1515가 기록 val MAE를 재현했다.
