@@ -102,3 +102,18 @@ holdout 재추론으로 기록된 val MAE를 재현했고(2/2 OK), 그 출력이
 - 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/` (model.pt 6.1 / 10.5 MB)
 - **회수 후 재추론 무결성 확인 완료** (2026-08-19, 로컬 CPU): 전체 holdout 판정
   (`reports/task8_judge.md`)의 CNN MAE 0.3647 / 1.1515가 기록 val MAE를 재현했다.
+
+## task8 — 라운드 3 (부착 모듈), 2 run
+
+세션이 push 셀 전에 수동 중단됐다(범위 축소 결정) — 텍스트 2종은 미러 사본을 별도
+커밋(e3c59f5)했고, **노트북 무결성 검증 셀이 돌지 않았다**. 미러 model.pt 검증은 회수 후
+**전체 holdout CNN MAE = 기록 val 재현**으로 한다 (아래 값과 대조).
+
+| run | 변인 (resnet-d2 대비) | val MAE [nm] |
+|---|---|---|
+| `d2-fft` | rFFT 입력 분기 (+8.2k, +0.5%) | 0.3589 |
+| `d2-se` | SE 채널 어텐션 r=8 (+62k, +4.1%) | 0.2954 |
+
+- 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/`
+- `resnet-d4`는 에폭 6에서 중단·범위 제외 — 부분 산출물은 git에서 제거했고 미러의
+  잔여 상태(resume.pt)도 삭제 대상이다 (남으면 d4 config 포함 세션에서 조용히 재개된다).
