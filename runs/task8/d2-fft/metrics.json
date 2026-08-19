@@ -1,0 +1,101 @@
+{
+  "experiment": "task8",
+  "run_name": "d2-fft",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "task8",
+    "run_name": "d2-fft",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        32,
+        32,
+        64,
+        64,
+        128,
+        128,
+        184,
+        184,
+        256,
+        256
+      ],
+      "strides": [
+        1,
+        1,
+        2,
+        1,
+        2,
+        1,
+        2,
+        1,
+        2,
+        1
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "dilations": [
+        1,
+        1,
+        2,
+        2,
+        4,
+        4,
+        4,
+        4,
+        2,
+        2
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "residual": true,
+      "fft_channels": [
+        16,
+        32
+      ],
+      "fft_strides": [
+        2,
+        2
+      ],
+      "head": "flatten",
+      "output_bound": true,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 100,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 3300,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/task8/d2-fft/model.pt",
+    "best_epoch": 100,
+    "val_mae": 0.35888952016830444,
+    "val_mae_per_layer": {
+      "layer_1": 0.27724695205688477,
+      "layer_2": 0.46845105290412903,
+      "layer_3": 0.35163721442222595,
+      "layer_4": 0.338222861289978,
+      "overall": 0.35888952016830444
+    },
+    "wall_sec": 3249.8820413260005
+  }
+}

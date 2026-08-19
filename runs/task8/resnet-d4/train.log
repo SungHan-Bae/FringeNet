@@ -1,0 +1,7 @@
+run task8/resnet-d4: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] epoch   1/100  train_l1 28.2470  val_mae 16.5781  lr 4.32e-04  58.0s *
+[model] epoch   2/100  train_l1 10.7557  val_mae 8.8041  lr 8.63e-04  58.1s *
+[model] epoch   3/100  train_l1 6.2808  val_mae 5.1794  lr 1.00e-03  58.0s *
+[model] epoch   4/100  train_l1 4.3931  val_mae 3.8817  lr 9.99e-04  58.0s *
+[model] epoch   5/100  train_l1 3.6253  val_mae 3.5455  lr 9.98e-04  58.1s *
+[model] epoch   6/100  train_l1 3.0864  val_mae 3.2312  lr 9.96e-04  57.8s *
