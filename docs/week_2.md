@@ -320,9 +320,10 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
   - [x] **라운드 2 (용량) 완료 (08-19)** — resnet-d2가 되돌림 후 **0.3412**로 최선 경신
         (실패율 0.08%), 깊이 ≫ 폭 (위 08-19 연표, 정본 `reports/task8_judge.md`).
         채택 확정·자원 미터("322배"→141배)·진행 비교표 갱신은 라운드 3 결과와 함께.
-  - [ ] 라운드 3 (부착 모듈 + 깊이 대조축) — d2-fft(rFFT 분기) · d2-se(SE 어텐션) ·
-        resnet-d4(블록 20). **다음 행동: 모듈 구현 → 스모크 → round3 노트북 → Colab Run-All**
-        (~4시간). 마지막 GPU 라운드 — 완료 후 채택 확정 + `reports/task8.md` 취합 + Task 9.
+  - [ ] 라운드 3 (부착 모듈 + 깊이 대조축) — d2-fft(rFFT 분기, +0.5%) · d2-se(SE 어텐션,
+        +4.1%) · resnet-d4(블록 20, 3.21M). 구현·테스트·스모크·노트북 완료 (08-19).
+        **다음 행동: Colab에서 `notebooks/task8/round3_modules.ipynb` Run-All** (~4시간).
+        마지막 GPU 라운드 — 완료 후 채택 확정 + `reports/task8.md` 취합 + Task 9.
   - [ ] (조건부) 라운드 3 — 부착 모듈: rFFT 주파수 분기(freq_id 물리 근거) ·
         SE 채널 어텐션(EDA 채널 정보량 3배 불균등 근거) · Muon은 큰 모델과 짝지을 때만.
 - [x] **평가 축 실측** — `reports/cnn_recipe_axes.md` (budget100 + flatten-dilated-bound,

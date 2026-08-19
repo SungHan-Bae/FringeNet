@@ -369,6 +369,100 @@ def test_cnn_resnet_match_config_parameter_count() -> None:
 
 
 # ---------------------------------------------------------------------------
+# CNN1D SE 채널 어텐션 (task8 라운드 3)
+# ---------------------------------------------------------------------------
+def test_cnn_se_default_off_keeps_state_dict() -> None:
+    model = CNN1D(**_SMALL_CNN)
+    assert all(block.se is None for block in model.blocks)
+    assert not any("se." in k for k in model.state_dict())  # 기존 체크포인트 로드 계약
+
+
+def test_cnn_se_reweights_channels_in_unit_interval() -> None:
+    from src.models.cnn import SqueezeExcite
+
+    se = SqueezeExcite(channels=8, ratio=4, activation="gelu").eval()
+    x = torch.rand(2, 8, 30)
+    out = se(x)
+    assert out.shape == x.shape
+    w = out / x  # 재가중은 채널별 상수 곱 — 파장축으로 동일해야 한다
+    assert torch.allclose(w, w[..., :1].expand_as(w), atol=1e-6)
+    assert (w > 0).all() and (w < 1).all()  # sigmoid 범위
+
+
+def test_cnn_se_gradients_flow() -> None:
+    set_seed(0)
+    model = CNN1D(channels=(8, 16), strides=(1, 2), residual=True, se_ratio=4)
+    assert all(block.se is not None for block in model.blocks)
+    loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
+    loss.backward()
+    for name, param in model.named_parameters():
+        assert param.grad is not None, name
+        assert torch.isfinite(param.grad).all(), name
+
+
+# ---------------------------------------------------------------------------
+# CNN1D rFFT 입력 분기 (task8 라운드 3)
+# ---------------------------------------------------------------------------
+def test_cnn_fft_default_off_keeps_state_dict() -> None:
+    model = CNN1D(**_SMALL_CNN)
+    assert model.fft_blocks is None
+    assert not any(k.startswith("fft_") for k in model.state_dict())
+
+
+def test_cnn_fft_branch_head_size_and_forward() -> None:
+    # 주파수축 길이 226//2+1 = 114 -> stride 2 두 번 -> 57 -> 29. head = flatten(주) + flatten(분기)
+    model = CNN1D(
+        channels=(8, 16),
+        strides=(1, 2),
+        head="flatten",
+        fft_channels=(4, 8),
+        fft_strides=(2, 2),
+    )
+    assert model.head.in_features == 16 * 113 + 8 * 29
+    assert model(_batch()).shape == (B, 4)
+
+
+def test_cnn_fft_branch_gradients_flow() -> None:
+    set_seed(0)
+    model = CNN1D(
+        channels=(8, 16),
+        strides=(1, 2),
+        head="flatten",
+        residual=True,
+        fft_channels=(4, 8),
+    )
+    loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
+    loss.backward()
+    fft_grads = [p.grad for n, p in model.named_parameters() if n.startswith("fft_blocks")]
+    assert fft_grads and all(g is not None and torch.isfinite(g).all() for g in fft_grads)
+    assert sum(g.abs().sum().item() for g in fft_grads) > 0.0
+
+
+def test_cnn_fft_input_is_forward_normalized_rfft() -> None:
+    # 분기 입력 규약: rfft(norm="forward")의 실부·허부 — DC 빈 = 채널 평균 (스케일 고정 변환)
+    x = _batch()
+    z = torch.fft.rfft(x, dim=1, norm="forward")
+    assert z.shape == (B, 114)
+    assert torch.allclose(z.real[:, 0], x.mean(dim=1), atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"se_ratio": -1},
+        {"fft_channels": ()},
+        {"fft_channels": (4, 0)},
+        {"fft_strides": (2, 2)},  # fft_channels 없이 fft_strides
+        {"fft_channels": (4, 8), "fft_strides": (2,)},  # 길이 불일치
+        {"fft_channels": (4, 8), "fft_strides": (2, 0)},
+    ],
+)
+def test_cnn_se_fft_invalid_hyperparameters_raise(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        CNN1D(**_SMALL_CNN, **kwargs)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
 # ConvNeXt1D (task8) — shape 계약, 블록 구조, 파라미터 매칭
 # ---------------------------------------------------------------------------
 _SMALL_CONVNEXT = {"dims": (8, 16), "depths": (1, 1)}

@@ -1,0 +1,37 @@
+# task8 — 라운드 3 (깊이 대조축): resnet-d2에서 **깊이 ×2 한 번 더** (블록 10 → 20).
+#
+# 라운드 2의 가장 강한 신호가 "깊이가 벌어준다"였다 (d2가 w2 대비 42% 적은 파라미터로
+# val 3배 우위, 격차 0.058로 과적합 징후 없음). 부착 모듈(d2-fft·d2-se)의 Δ를 "그냥 더
+# 깊게"의 Δ와 같은 표에서 읽기 위한 대조축이다. 복제 규약은 d2와 동일: 각 블록을
+# stride-1 복제와 함께 두 번, dilation은 쌍으로 복제 — 유효 span(7..25)이 각 블록 입력
+# 길이(226..15)를 넘지 않는다.
+seed: 42
+experiment: task8
+run_name: resnet-d4
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 32, 32, 32, 64, 64, 64, 64, 128, 128, 128, 128, 184, 184, 184, 184, 256, 256, 256, 256]
+  strides: [1, 1, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1]
+  kernel_sizes: [7]
+  dilations: [1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  residual: true
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0
