@@ -1,0 +1,29 @@
+# task8 — 라운드 2 (용량, 깊이 축): convnext-match에서 **전 스테이지 depths x2** (변인 하나).
+#
+# 1,232,308 파라미터 (match 대비 x1.9). 블록이 identity 잔차라 깊이 확장에 projection
+# 비용이 없고 해상도 사다리도 불변 (다운샘플은 스테이지 사이 별도 층).
+# 비교 규약은 resnet-w2 주석과 같다 — 파라미터당 이득으로 읽는다.
+seed: 42
+experiment: task8
+run_name: convnext-d2
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: convnext
+  dims: [32, 64, 96, 112]
+  depths: [4, 4, 8, 4]
+  kernel_size: 7
+  mlp_ratio: 4
+  output_bound: true
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

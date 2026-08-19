@@ -1,0 +1,38 @@
+# task8 — 라운드 2 (용량, 깊이 축): resnet-match의 각 블록을 stride-1 복제와 함께
+# 두 번 쌓는다 (블록 5 -> 10, 변인 하나 — 잔차가 있어야 시도할 수 있는 축).
+#
+# 1,513,044 파라미터 (match 대비 x2.3). 복제 블록은 stride 1이라 파장축 해상도
+# 사다리(226 -> 113 -> 57 -> 29 -> 15)는 match와 동일하다 — flatten head 입력도 같다.
+# dilation도 쌍으로 복제 (1,1,2,2,4,4,4,4,2,2): 유효 span (7..25)이 각 블록 입력
+# 길이(226..15)를 넘지 않는다 (cnn.py 제약 — padding이 지배하면 낭비).
+# 폭 vs 깊이 비교는 resnet-w2 주석 참조 (파라미터당 이득으로 읽는다).
+seed: 42
+experiment: task8
+run_name: resnet-d2
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 32, 64, 64, 128, 128, 184, 184, 256, 256]
+  strides: [1, 1, 2, 1, 2, 1, 2, 1, 2, 1]
+  kernel_sizes: [7]
+  dilations: [1, 1, 2, 2, 4, 4, 4, 4, 2, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  residual: true
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

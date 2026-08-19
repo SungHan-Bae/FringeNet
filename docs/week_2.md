@@ -230,6 +230,23 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
   루트 README §6로 이관, 리포트 안내는 reports/README.md가 맡는다.
 - stage_a 예외 추적 근거 수치 44 KB → 실측 약 172 KB (3곳).
 
+## 08-19 (수) — Task 8 착수: 라운드 1 설계 (task8/arch-round1)
+
+- **후보 선별**: 최신/표준 기법을 조사해 이 문제에 맞는 것만 추림. **채택 순서** — 구조
+  (잔차·ConvNeXt-1D) → 용량(폭·깊이) → 부착 모듈(rFFT 분기·SE 어텐션, 라운드 2 후보) →
+  옵티마이저(Muon, 큰 모델과 짝지을 때만). **탈락과 사유** — Huber/MSE(= 기각된 꼬리 가중
+  `budget100-std-ema-tail`의 L1+0.1·MSE와 같은 계열), U-Net(dense 출력용 — 벡터 회귀에
+  디코더 절반 낭비), 다중 커널(수용영역 다중 스케일은 dilation으로 이미 백본에 있음),
+  soft binning/label smoothing(격자 누설 계열), Transformer(파라미터 서사·기간 리스크).
+- **라운드 1 = 구조 2 + 용량 4** (사슬 아님, Δ는 budget100 대조): `CNN1D`에 `residual`
+  플래그(MLPBlock.skip 규약의 conv 판 — identity 또는 1×1 projection), `ConvNeXt1D` 신규
+  (depthwise + inverted bottleneck + layer scale, stem stride 1·flatten head로 이 태스크에
+  맞춤). match 2종은 파라미터 매칭(664,780 / 641,972 — MLP ±10% 규약 테스트로 고정),
+  w2/d2는 폭 ×2(×3.9)·깊이 ×2(×1.9~2.3). 사전등록·판정 규약은 노트북 헤더
+  (`notebooks/task8/round1_arch.ipynb`)에 — 반증 조건(표본 잡음 0.037 이상 못 이김)이
+  성립하면 구조·용량 레버 소진으로 기록하고 부착 모듈로 간다.
+- 모델 테스트 24종 추가(전체 green), 6개 config 전부 로컬 CPU 스모크 완주.
+
 ## TODO
 
 체크박스 정본은 CLAUDE.md의 「작업 백로그」다. 여기에는 열린 항목의 **다음 행동**만 적는다.
@@ -247,12 +264,17 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
 - [x] **리더보드 업로드 — test MAE 0.38733 (15위).** holdout 0.3880이 격자 밖에서 열화 없이
       전이 (−0.2%, 극단 꼬리는 MAE에 반영 안 됨). 기록: 위 08-18 연표 +
       `reports/cnn_recipe.md` «리더보드 확정»
-- [ ] **Task 8 — 모델·학습 최적화** (신설, 문서화는 Task 9로): 아키텍처(hidden feature·층수·
-      activation·normalization) · 학습 방법(scheduler, smoothing 등). 판정은 `judge_recipe.py`
-      기준, Δ는 budget100 대조. 기각된 손잡이 4종 재시도 금지. 용량 확대(채널 ×2)는 별도
-      항목이 아니라 이 태스크의 한 축이다 — 스냅샷 앙상블은 하지 않는다(추론 지연을 다시
-      망친다). 다중 시작 재탐색은 하지 않기로 결정(08-18) — 등가 분지 한계는
-      `reports/cnn_recipe.md` 「다음」에 기록.
+- [ ] **Task 8 — 모델·학습 최적화** (신설, 문서화는 Task 9로): 판정은 `judge_recipe.py`
+      기준, Δ는 budget100 대조. 기각된 손잡이 4종 재시도 금지. 스냅샷 앙상블은 하지
+      않는다(추론 지연을 다시 망친다). 다중 시작 재탐색은 하지 않기로 결정(08-18) —
+      등가 분지 한계는 `reports/cnn_recipe.md` 「다음」에 기록.
+  - [x] **라운드 1 설계 완료 (08-19)** — 구조(잔차·ConvNeXt) × 용량(폭·깊이) 6 run,
+        모델·config·테스트·노트북까지 (위 08-19 연표). **다음 행동: Colab에서
+        `notebooks/task8/round1_arch.ipynb` Run-All** (예상 3~6시간, 브랜치 task8/arch-round1).
+  - [ ] 라운드 1 결과 판정 — 표본 판정(노트북) → 이긴 가지 전체 holdout 확정
+        (`judge_recipe.py`) → CHECKPOINTS.md에 6 run 추가 → 자원 미터("322배" 배수) 갱신.
+  - [ ] (조건부) 라운드 2 — 부착 모듈: rFFT 주파수 분기(freq_id 물리 근거) ·
+        SE 채널 어텐션(EDA 채널 정보량 3배 불균등 근거) · Muon은 큰 모델과 짝지을 때만.
 - [x] **평가 축 실측** — `reports/cnn_recipe_axes.md` (budget100 + flatten-dilated-bound,
       holdout 전체). 균등·가우시안이 같은 총 σ에서 거의 같은 열화, 신뢰도 ρ 0.70
 - [x] **`reports/stage_b.md` 취합** — 세 라운드 관통 서사, 표는 curves 3종 참조

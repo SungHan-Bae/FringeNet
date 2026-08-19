@@ -45,7 +45,8 @@ def _make_norm(norm: str, n_channels: int) -> nn.Module | None:
 
 
 class ConvBlock(nn.Module):
-    """다중 커널 병렬 conv 블록: [Conv1d(k) | k in kernel_sizes] concat -> Norm -> Act -> Dropout.
+    """다중 커널 병렬 conv 블록: [Conv1d(k) | k in kernel_sizes] concat -> Norm -> Act -> Dropout
+    (+ 선택적 residual — 블록 출력에 skip(x)를 더한다).
 
     kernel_sizes가 하나면 평범한 단일 conv와 같다. 여러 개면 c_out을 커널 수로 균등
     분할해 분기별로 계산한 뒤 채널축으로 concat한다 — fringe 주기가 두께에 따라
@@ -69,6 +70,7 @@ class ConvBlock(nn.Module):
         norm: str,
         dropout: float,
         dilation: int = 1,
+        residual: bool = False,
     ) -> None:
         super().__init__()
         n_branch = len(kernel_sizes)
@@ -94,9 +96,20 @@ class ConvBlock(nn.Module):
             tail.append(nn.Dropout1d(dropout))
         self.tail = nn.Sequential(*tail)
 
+        # MLPBlock.skip과 같은 규약: 입출력 shape가 같으면 identity, 다르면 bias 없는
+        # 1x1 conv projection (stride로 파장축 길이도 맞춘다).
+        self.skip: nn.Module | None = None
+        if residual:
+            if c_in == c_out and stride == 1:
+                self.skip = nn.Identity()
+            else:
+                self.skip = nn.Conv1d(c_in, c_out, 1, stride=stride, bias=False)
+
     def forward(self, x: Tensor) -> Tensor:
-        out = torch.cat([branch(x) for branch in self.branches], dim=1)
-        return self.tail(out)
+        out = self.tail(torch.cat([branch(x) for branch in self.branches], dim=1))
+        if self.skip is not None:
+            out = out + self.skip(x)
+        return out
 
 
 class CNN1D(nn.Module):
@@ -126,6 +139,11 @@ class CNN1D(nn.Module):
             커지지 않게 고를 것 (padding이 지배하면 낭비).
         activation / norm / dropout: 블록 구성 — MLP 블록과 같은 의미·같은 선택지.
             dropout은 채널 단위 Dropout1d.
+        residual: True면 블록마다 skip connection을 더한다 (MLP의 residual과 같은 규약 —
+            입출력 shape가 같으면 identity, 다르면 bias 없는 1x1 conv projection).
+            잔차 없는 순차 스택은 깊이를 늘릴수록 기울기가 소실되므로, 깊이 축 실험
+            (Task 8)의 전제 조건이다. projection이 파라미터를 추가하므로 매칭 비교는
+            channels를 함께 조정한다 (configs/task8/resnet-match.yaml).
         head: "gap"(파장축 평균) | "flatten"(파장축 보존). 위 설명 참조.
         output_bound: True면 sigmoid bound로 출력을 [d_min, d_max] nm에 가둔다.
             False면 선형 출력 그대로 두되 head bias를 범위 중앙으로 초기화한다
@@ -154,6 +172,7 @@ class CNN1D(nn.Module):
         activation: str = "gelu",
         norm: str = "batchnorm",
         dropout: float = 0.0,
+        residual: bool = False,
         head: str = "gap",
         output_bound: bool = True,
         d_min: float = 10.0,
@@ -233,6 +252,7 @@ class CNN1D(nn.Module):
                     norm,
                     dropout,
                     dilation=int(dilation),
+                    residual=residual,
                 )
             )
             c_in = int(c_out)
