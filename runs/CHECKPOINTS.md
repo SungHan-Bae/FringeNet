@@ -73,3 +73,18 @@ Drive 무결성 검증 셀이 **미러의 model.pt를 다시 로드해 holdout �
 - **회수 후 재추론으로 무결성을 확인한다**: `python -m src.evaluate --run runs/cnn_recipe/budget100`
   이 기록된 val MAE와 층별까지 재현해야 한다 (budget100은 1.7185 / 1.175·2.183·1.986·1.530).
   sha256을 기록하지 않은 run에는 이것이 대조 수단이다.
+
+## task8 (Task 8) — 라운드 1 (구조), 2 run
+
+`_mirror_copy`가 학습 중에 쓴 것이라 sha256을 기록하지 않는다 — 라운드 1 노트북
+(`notebooks/task8/round1_arch.ipynb`)의 Drive 무결성 검증 셀이 미러의 model.pt를 다시 로드해
+holdout 재추론으로 기록된 val MAE를 재현했고(2/2 OK), 그 출력이 노트북에 남아 있다.
+
+| run | 변인 (budget100 대비) | val MAE [nm] |
+|---|---|---|
+| `resnet-match` | 잔차 연결 (+채널 (200,280)→(184,256) 재매칭) | 1.6483 |
+| `convnext-match` | ConvNeXt-1D 블록 교체 (dims 32·64·96·112) | 1.8108 |
+
+- 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/` (model.pt 각 ~2.5 MB)
+- **회수 후 재추론 무결성 확인 완료** (2026-08-19, 로컬 CPU): 전체 holdout 판정
+  (`reports/task8_judge.md`)의 CNN MAE 1.6484 / 1.8108이 기록 val MAE를 재현했다.

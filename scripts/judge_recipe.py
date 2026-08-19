@@ -55,6 +55,7 @@ from refine_inversion import BRANCH_FAIL_NM  # noqa: E402 — 분지 실패 정�
 from src.data.dataset import REPO_ROOT, subsample_indices  # noqa: E402
 from src.losses import DEFAULT_DECODER, FrozenDecoder  # noqa: E402
 from src.physics.invert import refine_with_fallback  # noqa: E402
+from src.train_gpu import predict_on_device  # noqa: E402
 
 OUT_PATH = REPO_ROOT / "reports" / "cnn_recipe_judge.md"
 # 라운드 1의 기준 팔 — 예산을 늘리기 전의 확정 백본. 판정 표의 원점이다.
@@ -83,8 +84,9 @@ def judge_one(
         {"cnn", "lm", "fail", "median", "p99"} — MAE·분지 실패율·행 오차 분위.
     """
     device = next((t.device for t in (*model.parameters(), *model.buffers())), torch.device("cpu"))
-    with torch.no_grad():
-        d_hat = model(torch.from_numpy(x).to(device)).cpu().numpy().astype(np.float64)
+    # 배치 추론 필수 — 81,000행 단일 배치는 conv 활성값만 10 GB를 넘겨 OOM이 난다
+    # (eval 모드라 배치 분할은 결과에 영향 없음).
+    d_hat = predict_on_device(model, torch.from_numpy(x).to(device)).astype(np.float64)
 
     # 배포 경로 그대로 부른다 — 판정과 배포가 다른 코드를 쓰면 조용히 갈라진다.
     d_fb, info = refine_with_fallback(
