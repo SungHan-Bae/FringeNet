@@ -336,10 +336,13 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
         채택 확정·자원 미터("322배"→141배)·진행 비교표 갱신은 라운드 3 결과와 함께.
   - [x] **라운드 3 (부착 모듈) 완료 (08-19)** — d2-se val **0.2954**(−19%) · d2-fft 0.3589.
         d4는 실행 중 범위 제외 (위 08-19 연표).
-  - [ ] 라운드 4 (모듈 결합) — d2-se-fft 1 run (config·스모크 완료). **다음 행동: push 후
-        Colab에서 `notebooks/task8/round4_se-fft.ipynb` Run-All** (~1.2시간). 마지막 GPU
-        라운드. 완료 후: model.pt 3종(d2-fft·d2-se·d2-se-fft) 회수 → 전체 holdout 판정
-        일괄 → 채택 확정 + `reports/task8.md` 취합 + 자원 미터 + Task 9.
+  - [x] **라운드 4 (모듈 결합) 완료 (08-20)** — d2-se-fft val 0.2960 / 표본 post-LM
+        Δ부모 −0.0003 = **동률**. 사전등록 2에 따라 **채택 후보 = d2-se** (더 단순한 쪽).
+        fft의 이득은 se 위에서 남지 않는다 — 채널 재가중이 주파수 표현의 몫을 이미 덮는다.
+  - [ ] **Task 8 마감 절차**: model.pt 3종(d2-fft·d2-se·d2-se-fft) 회수 → 전체 holdout
+        판정 일괄(`task8_judge.md` 재생성, CNN MAE = 기록 val 재현이 라운드 3 미러 검증
+        겸함) → 채택 확정 → 최종 제출 검토(`--submission --refine`) → `reports/task8.md`
+        취합 + 자원 미터 + CHECKPOINTS.md + 진행 비교표·헤드라인 재생성 → Task 9.
   - [ ] (조건부) 라운드 3 — 부착 모듈: rFFT 주파수 분기(freq_id 물리 근거) ·
         SE 채널 어텐션(EDA 채널 정보량 3배 불균등 근거) · Muon은 큰 모델과 짝지을 때만.
 - [x] **평가 축 실측** — `reports/cnn_recipe_axes.md` (budget100 + flatten-dilated-bound,
