@@ -1,0 +1,62 @@
+{
+  "experiment": "task8",
+  "run_name": "convnext-match",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "task8",
+    "run_name": "convnext-match",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "convnext",
+      "dims": [
+        32,
+        64,
+        96,
+        112
+      ],
+      "depths": [
+        2,
+        2,
+        4,
+        2
+      ],
+      "kernel_size": 7,
+      "mlp_ratio": 4,
+      "output_bound": true
+    },
+    "train": {
+      "epochs": 100,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 3300,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/task8/convnext-match/model.pt",
+    "best_epoch": 99,
+    "val_mae": 1.8107564449310303,
+    "val_mae_per_layer": {
+      "layer_1": 1.1584643125534058,
+      "layer_2": 2.379432439804077,
+      "layer_3": 2.138782501220703,
+      "layer_4": 1.5663466453552246,
+      "overall": 1.8107564449310303
+    },
+    "wall_sec": 8324.024995225001
+  }
+}
