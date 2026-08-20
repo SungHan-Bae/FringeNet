@@ -13,6 +13,7 @@
 
 - 데이터: [월간 데이콘 — 반도체 박막 두께 분석 경진대회](https://dacon.io/competitions/official/235554/overview/description)
 - 키워드: optical metrology, spectral reflectometry, inverse problem, physics-informed ML, differentiable TMM
+- **최종 보고서 (프로젝트 전체의 취지·흐름·결과 한 문서): [docs/final_report.md](docs/final_report.md)**
 - 실험별 상세 리포트·수치 정본: **[reports/README.md](reports/README.md)** · 진행 연표: [docs/](docs/)
 
 ## 문제

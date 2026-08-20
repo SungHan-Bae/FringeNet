@@ -353,8 +353,8 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   (metrics.json이 설정 스냅샷을 겸한다). 변형 이름은 번호가 아니라 **무엇이 다른지 드러나는
   서술형**으로 (예: `dropout0.0`). 대실험이 끝나면 `reports/<실험>.md`로 취합한다 —
   README 프로즈에는 성능 수치를 두지 않는다 (예외 셋: 스크립트 산출 그림 임베드 ·
-  `reports/README.md` 인덱스 링크 · **루트 README 「결과」 절의 정본 복사 수치** — 이 수치가
-  갱신되면 README도 함께 갱신 대상이다). **진행 비교표의 단일 위치는 `reports/README.md`**이고
+  `reports/README.md` 인덱스 링크 · **최종 보고 서사의 정본 복사 수치** — 루트 README
+  「결과」 절과 `docs/final_report.md`. 수치가 갱신되면 이 둘도 함께 갱신 대상이다). **진행 비교표의 단일 위치는 `reports/README.md`**이고
   헤드라인 그림은 `scripts/make_headline_figure.py`가 산출물에서 읽어 만든다 — 수치가
   갱신되면 둘을 함께 갱신한다.
 - **git에는 텍스트 산출물만 추적한다** (metrics.json · train.log). 체크포인트는 Drive 미러
