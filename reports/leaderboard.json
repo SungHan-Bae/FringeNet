@@ -1,0 +1,50 @@
+{
+  "meta": {
+    "source": "데이콘 리더보드 실측 — 제출 결과의 기계가독 정본. 외부 측정이라 손으로 기록하는 유일한 수치 파일이며, 제출 결과 확인 직후 갱신한다. 그림·표 스크립트는 test 수치를 여기서 읽는다.",
+    "competition": "https://dacon.io/competitions/official/235554",
+    "metric": "test MAE [nm] — 10,000행, 두께는 격자 밖 연속 (검증: scripts/verify_data.py --deep)",
+    "note": "raw 제출 두 건(2026-08-20)은 격자 밖 전이 판정 목적의 계획 제출이다 (reports/task8.md 발견 ②③). holdout 대응 수치는 runs/<run>/metrics.json(val_mae)과 reports/task8_judge.json(fb_mae)이 정본이다."
+  },
+  "submissions": [
+    {
+      "date": "2026-08-18",
+      "run": "cnn_recipe/budget100",
+      "pipeline": "cnn + LM 역산 + 되돌림",
+      "file": "runs/cnn_recipe/budget100/submission_budget100_refined.csv",
+      "test_mae": 0.38733,
+      "rank": 15
+    },
+    {
+      "date": "2026-08-20",
+      "run": "task8/d2-se",
+      "pipeline": "raw (판정 목적)",
+      "file": "runs/task8/d2-se/submission_d2-se.csv",
+      "test_mae": 0.5461,
+      "rank": null
+    },
+    {
+      "date": "2026-08-20",
+      "run": "task8/d2-fft",
+      "pipeline": "raw (판정 목적)",
+      "file": "runs/task8/d2-fft/submission_d2-fft.csv",
+      "test_mae": 0.5911,
+      "rank": null
+    },
+    {
+      "date": "2026-08-20",
+      "run": "strong_baseline/winner-repro-asis",
+      "pipeline": "raw (판정 목적)",
+      "file": "runs/strong_baseline/winner-repro-asis/submission_winner-repro-asis.csv",
+      "test_mae": 0.4752,
+      "rank": null
+    },
+    {
+      "date": "2026-08-20",
+      "run": "task8/d2-fft",
+      "pipeline": "cnn + LM 역산 + 되돌림",
+      "file": "runs/task8/d2-fft/submission_d2-fft_refined.csv",
+      "test_mae": 0.33895,
+      "rank": 4
+    }
+  ]
+}

@@ -112,10 +112,9 @@ flatten-dilated에 sigmoid bound(출력을 물리 범위 [10, 300] nm에 가둠,
 
 ### 5. 한계·주의
 
-- **에폭 연장 여지**: flatten·flatten-dilated는 best가 30/30 — cosine 스케줄
-  끝까지 하강 중이었다. 30 epochs는 baseline과의 통제 비교용이고, 절대 성능은
-  연장 시 더 내려갈 여지가 있다 (백로그 열린 항목 "CNN 에폭 연장" — winner 프로토콜의
-  에폭 연장 항목은 strong baseline이 흡수했고, CNN 쪽은 별개 질문으로 분리됐다).
+- **30 epochs는 baseline과의 통제 비교용이다** — flatten 계열은 best가 30/30으로 하강 중에
+  끝났다. 에폭 연장의 효과는 이후 실험이 측정했다: 100에폭에서 1.7185 nm로 내려가고
+  포화한다 ([cnn_recipe.md](cnn_recipe.md)).
 - lr 1e-3은 baseline(MLP) 기준으로 고른 값 — CNN 쪽에 미세조정하지 않은 채로도
   이겼으므로 결론에는 영향 없지만, 절대 수치는 lr 조정으로 더 좋아질 수 있다.
 - flatten 계열은 파라미터 +2.4% — ±10% 통제 이내지만 0은 아니다. dilated(+0%)
@@ -145,6 +144,3 @@ bound)이 격자 끝 오차를 지워 추가 −20% — 구조 bias(연결 패�
 python -m src.train_gpu --config configs/level1_cnn/flatten-dilated-bound.yaml
 python -m src.evaluate --run runs/level1_cnn/flatten-dilated-bound
 ```
-
-부기: train.log에는 중단 흔적이 없다 — 라운드 2 세 run 모두 무중단 완주다 (세션 유실
-대비 체계의 적용 경위는 docs/week_1.md).
