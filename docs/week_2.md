@@ -359,10 +359,19 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
         fft의 이득은 se 위에서 남지 않는다 — 채널 재가중이 주파수 표현의 몫을 이미 덮는다.
   - [x] **전체 holdout 정본 판정 + 제출 파일 2벌 (08-20)** — 교차점 확정, 채택 후보
         d2-se(raw) vs d2-fft(+LM+되돌림) (위 08-20 연표).
-  - [ ] **리더보드 업로드 2건 (사용자)** — `runs/task8/d2-se/submission_d2-se.csv` ·
-        `runs/task8/d2-fft/submission_d2-fft_refined.csv`. 결과로 채택 확정.
-  - [ ] 채택 확정 후: `reports/task8.md` 취합 + 자원 미터("322배" → 채택 기준 136~141배) +
-        CHECKPOINTS.md(라운드 4 절) + 진행 비교표·헤드라인 재생성 → Task 9.
+  - [x] **리더보드 확정 (08-20)** — `submission_d2-fft_refined.csv` **test MAE 0.33895
+        (4위)**: holdout 0.3396이 격자 밖에서 열화 없이 전이 (−0.02%). raw CNN
+        `submission_d2-se.csv`는 **0.5461로 붕괴** (holdout 0.2954 대비 +85%) — 라벨 없는
+        잔차 꼬리 경고(p90 2.3배)가 예측한 그대로, holdout의 raw CNN 이점은 격자 보간
+        인공물이었다. **채택 = d2-fft + LM + 되돌림.** 물리 보정의 값어치가 격자 밖
+        강건성으로 재정의된 것이 Task 8의 최종 발견이다.
+  - [ ] **자원 미터 벤치 (라운드 5)** — 채택 모델의 추론 비용 정본 표
+        (`reports/task8_bench.md`, CPU·GPU 한 세션). **다음 행동: push 후 Colab에서
+        `notebooks/task8/round5_bench.ipynb` Run-All** (~15분). bench_invert에 --cnn-run
+        추가(첫 항목이 LM 출발점), WSL2 미리보기에서 배포 합계가 skip-MLP의 0.51배.
+  - [ ] 벤치 후: `reports/task8.md` 취합 + 자원 미터(파라미터 140배·체크포인트 133배·
+        학습 3.7배·추론은 벤치 표) + CHECKPOINTS.md(라운드 4 절) + CLAUDE.md 백로그·스펙 +
+        진행 비교표·헤드라인 재생성 → Task 9.
   - [ ] (조건부) 라운드 3 — 부착 모듈: rFFT 주파수 분기(freq_id 물리 근거) ·
         SE 채널 어텐션(EDA 채널 정보량 3배 불균등 근거) · Muon은 큰 모델과 짝지을 때만.
 - [x] **평가 축 실측** — `reports/cnn_recipe_axes.md` (budget100 + flatten-dilated-bound,

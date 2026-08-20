@@ -111,9 +111,17 @@ def mae_nm(d: np.ndarray, y: np.ndarray) -> float:
 
 
 def bench_device(
-    device: torch.device, x: np.ndarray, y: np.ndarray, decoder_path: str
+    device: torch.device,
+    x: np.ndarray,
+    y: np.ndarray,
+    decoder_path: str,
+    cnn_runs: list[str],
 ) -> list[dict[str, Any]]:
-    """한 장치에서 신경망 forward 2종 + LM 변형들을 잰다. 반환 행마다 ms/행과 MAE."""
+    """한 장치에서 신경망 forward들 + LM 변형들을 잰다. 반환 행마다 ms/행과 MAE.
+
+    cnn_runs가 여러 개면 forward를 각각 재고, **첫 run이 LM 출발점·합계 기준**이다
+    (배포 워크로드 = 채택 모델의 예측에서 출발하는 LM).
+    """
     rows = len(x)
     xt = torch.from_numpy(x).to(device)
     out: list[dict[str, Any]] = []
@@ -122,17 +130,25 @@ def bench_device(
     def forward(model: torch.nn.Module) -> torch.Tensor:
         return model(xt)
 
-    cnn, cnn_params = model_of(CNN_RUN, device, weights=True)
-    dt, pred = timed(lambda m=cnn: forward(m), device)
-    d_hat = pred.detach().cpu().numpy().astype(np.float64)
-    out.append(
-        {
-            "what": "CNN forward",
-            "params": cnn_params,
-            "ms": dt / rows * 1e3,
-            "mae": mae_nm(d_hat, y),
-        }
-    )
+    d_hat: np.ndarray | None = None
+    for i, run in enumerate(cnn_runs):
+        cnn, cnn_params = model_of(run, device, weights=True)
+        dt, pred = timed(lambda m=cnn: forward(m), device)
+        label = "CNN forward" if len(cnn_runs) == 1 else f"CNN forward ({Path(run).name})"
+        out.append(
+            {
+                "what": label,
+                "params": cnn_params,
+                "ms": dt / rows * 1e3,
+                "mae": mae_nm(pred.detach().cpu().numpy(), y),
+            }
+        )
+        if i == 0:
+            d_hat = pred.detach().cpu().numpy().astype(np.float64)
+        cnn = None
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+    assert d_hat is not None
 
     strong, strong_params = model_of(STRONG_RUN, device, weights=False)
     dt, _ = timed(lambda m=strong: forward(m), device)
@@ -179,6 +195,7 @@ def render(results: dict[str, list[dict[str, Any]]], meta: dict[str, Any]) -> li
         "`scripts/bench_invert.py` 산출 — 재실행 시 덮어쓴다. 해석은 리포트 본문에서 한다.",
         "",
         f"- 표본 {meta['rows']:,}행 (holdout 무작위) · 디코더 `{meta['decoder']}`",
+        f"- CNN: {meta['cnn_runs']} — 첫 run이 LM 출발점·합계 기준이다",
         f"- torch {meta['torch']} · CPU 스레드 {meta['threads']} · {meta['cpu']}",
         "- **skip-MLP는 시간만 잰다** — 가중치 값은 지연에 무관하므로 무작위 초기화다"
         " (813 MB 체크포인트는 Drive 전용). MAE는 `reports/strong_baseline.md`가 정본이다.",
@@ -202,7 +219,7 @@ def render(results: dict[str, list[dict[str, Any]]], meta: dict[str, Any]) -> li
             mae = f"{r['mae']:.4f}" if r["mae"] is not None else "—"
             params = f"{r['params'] / 1e6:.2f}M" if r["params"] > 1000 else str(r["params"])
             lines.append(f"| {r['what']} | {params} | {r['ms']:.3f} | {ratio} | {mae} |")
-        cnn = next(r for r in rowset if r["what"] == "CNN forward")
+        cnn = next(r for r in rowset if r["what"].startswith("CNN forward"))
         lines.append("")
         for r in (r for r in rowset if r.get("summary")):
             total = cnn["ms"] + r["ms"]
@@ -220,10 +237,17 @@ def main() -> int:
     parser.add_argument("--devices", nargs="*", default=None, help="기본: cpu (+ 있으면 cuda)")
     parser.add_argument("--decoder", default=DEFAULT_DECODER)
     parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--cnn-run",
+        action="append",
+        default=None,
+        help=f"CNN run 디렉토리 (반복 가능, 기본 {CNN_RUN}). 첫 항목이 LM 출발점·합계 기준",
+    )
     args = parser.parse_args()
 
+    cnn_runs = args.cnn_run or [CNN_RUN]
     devices = args.devices or (["cpu", "cuda"] if torch.cuda.is_available() else ["cpu"])
-    cfg = json.loads((REPO_ROOT / CNN_RUN / "metrics.json").read_text())["config"]
+    cfg = json.loads((REPO_ROOT / cnn_runs[0] / "metrics.json").read_text())["config"]
     x_all, y_all, _, holdout_idx = prepare_from_config(cfg)
     idx = subsample_indices(len(holdout_idx), args.rows, seed=SUBSAMPLE_SEED)
     x = x_all[holdout_idx][idx]
@@ -235,7 +259,7 @@ def main() -> int:
         device = torch.device(name)
         label = f"{name} — {torch.cuda.get_device_name(device)}" if name == "cuda" else "CPU"
         print(f"\n[{label}]")
-        rowset = bench_device(device, x, y, args.decoder)
+        rowset = bench_device(device, x, y, args.decoder, cnn_runs)
         for r in rowset:
             mae = f"  MAE {r['mae']:.4f} nm" if r["mae"] is not None else ""
             print(f"  {r['what']:28s} {r['ms']:8.3f} ms/행{mae}")
@@ -244,6 +268,7 @@ def main() -> int:
     meta = {
         "rows": len(x),
         "decoder": args.decoder,
+        "cnn_runs": " · ".join(f"`{r}`" for r in cnn_runs),
         "torch": torch.__version__,
         "threads": torch.get_num_threads(),
         "cpu": platform.processor() or platform.machine(),
