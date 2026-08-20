@@ -307,6 +307,24 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
 - **라운드 4 = d2-se-fft 1 run**: 두 모듈이 독립적으로 이겼고 작동 축이 다르므로
   (입력 표현 vs 채널 재가중) 결합을 시험한다. Δ는 **d2-se 대비**, 지면 채택 = d2-se.
 
+## 08-20 (목) — Task 8 정본 판정: 물리 보정의 교차점을 지났다
+
+- **전체 holdout 8-run 통합 표 확정** (`reports/task8_judge.md`, 표본 오차 0. CNN MAE =
+  기록 val 재현으로 라운드 3·4 미러 검증 겸함): d2 계열 4종의 post-LM이 0.341~0.346으로
+  수렴 — 디코더 계통오차 바닥(역해 상한 0.3336) 근처라 post-LM은 CNN 품질과 무관해졌다.
+- **교차점**: d2-se는 **CNN 단독(0.2954)이 물리 보정 파이프라인(되돌림 후 0.3423)보다
+  −13% 좋다** — LM이 계통오차 있는 디코더의 최적점으로 해를 끌고 가 처음으로 순손해.
+  물리 보정의 값어치 붕괴(−74% → −6.4% → **음수**)가 완결된 곡선으로 남았다.
+- **채택 후보 2 — 격자 밖 전이가 갈림길이고 리더보드만이 확정한다** (라벨 없는 점검 실측):
+  - `d2-se` raw (holdout **0.2954**): test 예측 격자 거리 평균 2.32(기대 2.5 — 약한 격자
+    끌림)이나 **재구성 잔차 꼬리가 test에서 p90 2.3배·p99 3배** — 격자 보간의 이점이
+    raw CNN에는 test로 다 옮겨가지 않을 수 있다.
+  - `d2-fft` + LM + 되돌림 (holdout **0.3396**): post-LM 잔차 분포가 holdout↔test
+    p99.9까지 일치 — 전이 깨끗함 (budget100 제출에서 검증된 파이프라인 형태).
+  - 제출 파일 두 벌 생성 완료 (`submission_d2-se.csv` · `submission_d2-fft_refined.csv`,
+    git 미추적). 둘 다 업로드해 raw CNN vs 물리 파이프라인의 격자 밖 승부를 직접 잰다 —
+    이 비교 자체가 교차점 발견의 out-of-distribution 검증이다.
+
 ## TODO
 
 체크박스 정본은 CLAUDE.md의 「작업 백로그」다. 여기에는 열린 항목의 **다음 행동**만 적는다.
@@ -339,10 +357,12 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
   - [x] **라운드 4 (모듈 결합) 완료 (08-20)** — d2-se-fft val 0.2960 / 표본 post-LM
         Δ부모 −0.0003 = **동률**. 사전등록 2에 따라 **채택 후보 = d2-se** (더 단순한 쪽).
         fft의 이득은 se 위에서 남지 않는다 — 채널 재가중이 주파수 표현의 몫을 이미 덮는다.
-  - [ ] **Task 8 마감 절차**: model.pt 3종(d2-fft·d2-se·d2-se-fft) 회수 → 전체 holdout
-        판정 일괄(`task8_judge.md` 재생성, CNN MAE = 기록 val 재현이 라운드 3 미러 검증
-        겸함) → 채택 확정 → 최종 제출 검토(`--submission --refine`) → `reports/task8.md`
-        취합 + 자원 미터 + CHECKPOINTS.md + 진행 비교표·헤드라인 재생성 → Task 9.
+  - [x] **전체 holdout 정본 판정 + 제출 파일 2벌 (08-20)** — 교차점 확정, 채택 후보
+        d2-se(raw) vs d2-fft(+LM+되돌림) (위 08-20 연표).
+  - [ ] **리더보드 업로드 2건 (사용자)** — `runs/task8/d2-se/submission_d2-se.csv` ·
+        `runs/task8/d2-fft/submission_d2-fft_refined.csv`. 결과로 채택 확정.
+  - [ ] 채택 확정 후: `reports/task8.md` 취합 + 자원 미터("322배" → 채택 기준 136~141배) +
+        CHECKPOINTS.md(라운드 4 절) + 진행 비교표·헤드라인 재생성 → Task 9.
   - [ ] (조건부) 라운드 3 — 부착 모듈: rFFT 주파수 분기(freq_id 물리 근거) ·
         SE 채널 어텐션(EDA 채널 정보량 3배 불균등 근거) · Muon은 큰 모델과 짝지을 때만.
 - [x] **평가 축 실측** — `reports/cnn_recipe_axes.md` (budget100 + flatten-dilated-bound,
