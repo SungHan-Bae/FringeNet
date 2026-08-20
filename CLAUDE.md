@@ -256,7 +256,7 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
     음수). d2 계열 post-LM은 디코더 계통오차 바닥(0.334) 근처로 수렴해 CNN 품질과 분리됐다.
   - **격자 밖 반전 (중요)**: 측정한 raw 신경망 셋 전부 test에서 열화했다 — d2-se
     0.2954→0.5461(+85%) · d2-fft 0.3589→0.5911(+65%) · **213M도 0.3955→0.4752(+20%)**.
-    물리 파이프라인만 전이된다(−0.02%). 물리 보정의 값어치 = 정밀도가 아니라 **격자 밖
+    물리 파이프라인만 전이된다(−0.2%). 물리 보정의 값어치 = 정밀도가 아니라 **격자 밖
     강건성**이고, 채택 모델의 213M 대비 격차는 holdout −14% → **test −29%**다
     (holdout 비교는 raw의 격자 이점 탓에 물리 쪽에 불리한 평가였다).
   - **제출 전 관문 (라벨 없음, 검출 범위 주의)**: 재구성 잔차의 holdout↔test 꼬리 비교
@@ -352,8 +352,9 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
   산출물 `runs/<실험>/<변형>/` = model.pt + train.log + metrics.json 세 가지만
   (metrics.json이 설정 스냅샷을 겸한다). 변형 이름은 번호가 아니라 **무엇이 다른지 드러나는
   서술형**으로 (예: `dropout0.0`). 대실험이 끝나면 `reports/<실험>.md`로 취합한다 —
-  README 프로즈에는 성능 수치를 두지 않는다 (예외는 스크립트 산출 그림 임베드와
-  `reports/README.md` 인덱스 링크). **진행 비교표의 단일 위치는 `reports/README.md`**이고
+  README 프로즈에는 성능 수치를 두지 않는다 (예외 셋: 스크립트 산출 그림 임베드 ·
+  `reports/README.md` 인덱스 링크 · **Task 9 최종 서사 §1~7의 정본 복사 수치** — 이 수치가
+  갱신되면 README도 함께 갱신 대상이다). **진행 비교표의 단일 위치는 `reports/README.md`**이고
   헤드라인 그림은 `scripts/make_headline_figure.py`가 산출물에서 읽어 만든다 — 수치가
   갱신되면 둘을 함께 갱신한다.
 - **git에는 텍스트 산출물만 추적한다** (metrics.json · train.log). 체크포인트는 Drive 미러
@@ -429,8 +430,13 @@ R(λ)는 채널별 독립 계산이다 (W축 벡터화, 파이썬 루프는 층 
       (4위, 2026-08-20)**. 핵심 발견은 물리 보정의 교차점과 격자 밖 반전 (위 Task 8 스펙,
       정본 `reports/task8.md`). 라운드 5개 완료 (`notebooks/task8/`), 자원 미터 갱신
       (322배 → 140배).
-- [ ] **Task 9 — 문서화**: README 결과·그림·한계 논의 갱신 (Task 8 뒤 — 헤드라인 수치가
-      바뀔 수 있다. 진행 비교표·헤드라인 그림은 스크립트 산출이라 재생성으로 흡수된다)
+- [x] **Task 9 — 문서화: 종결.** 루트 README를 최종 보고 서사(6절: 문제 → 213M 기준선 →
+      네 걸음 → 3자 비교 → 격자 밖 반전 → 한계 + §7~ 방법 상세)로 재구성, 3자 비교는
+      holdout/test 두 열로 제시. `reports/README.md` 진행 비교표·읽기 순서에 task8 반영,
+      헤드라인 그림 재생성 + 격자 밖 반전 slopegraph(`fig_offgrid.png`) 신설
+      (`make_headline_figure.py`가 둘 다 산출). 리더보드 실측의 기계가독 정본
+      `reports/leaderboard.json` 신설 (손기록 유일 허용 파일 — 외부 측정). 일관성 스윕에서
+      전이율 오기 정정 (0.3396 → 0.33895는 −0.2%다 — 문서 3곳의 −0.02%는 산술 오류였다).
 
 ## 하지 말 것
 
@@ -487,7 +493,7 @@ python -m src.evaluate --run runs/mlp_baseline/dropout0.0                       
 # 최종 제출 — 물리 보정(LM 역해 + 되돌림)까지 한 줄로. holdout 확정 수치와 test 보정본이 같이
 # 나오고, 잔차 분포가 함께 찍혀 격자 밖 전이를 라벨 없이 볼 수 있다. 제출 csv는 git 미추적.
 # --snap은 절대 쓰지 말 것(격자 밖에서 +1.2 nm), --refine-clip은 opt-in(격자 인공물 — 하지 말 것 참조).
-python -m src.evaluate --run runs/cnn_recipe/budget100 --submission --refine
+python -m src.evaluate --run runs/task8/d2-fft --submission --refine
 
 # Stage B 물리 손실 — 본 학습은 Colab GPU, 로컬은 스모크만 (약 35초).
 # run-name에 -smoke를 붙이는 것이 필수다 — 서브셋 run이 완료 기록을 남기면 본 run이 스킵된다
