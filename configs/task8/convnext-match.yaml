@@ -1,0 +1,34 @@
+# task8 — 라운드 1 (구조): ConvNeXt-1D 블록으로 블록 설계 자체를 교체한다.
+#
+# resnet-match(기존 블록 + 잔차)와 달리 depthwise conv(공간 혼합) / pointwise MLP
+# (채널 혼합) 분리 + layer scale + identity 잔차의 현대 conv 규약 (src/models/convnext.py,
+# 이 태스크용 수정 2가지 — stem stride 1·flatten head — 는 모듈 docstring 참조).
+#
+# 파라미터 매칭: 641,972 — budget100 662,020 대비 -3.0%, baseline MLP 대비 -0.7%
+# (±10% 규약). 수용영역 242 >= 226 (전 대역 — level1의 dilated RF 259와 같은 요건).
+# 다운샘플 3회로 파장축 226 -> 113 -> 56 -> 28 (budget100은 4회, 226 -> 15).
+# 판정: scripts/judge_recipe.py (post-LM MAE + 분지 실패율), Δ는 budget100 대조.
+seed: 42
+experiment: task8
+run_name: convnext-match
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: convnext
+  dims: [32, 64, 96, 112]
+  depths: [2, 2, 4, 2]
+  kernel_size: 7
+  mlp_ratio: 4
+  output_bound: true
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

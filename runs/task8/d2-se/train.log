@@ -1,0 +1,105 @@
+run task8/d2-se: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] epoch   1/100  train_l1 27.2189  val_mae 14.2317  lr 4.32e-04  37.0s *
+[model] epoch   2/100  train_l1 8.6746  val_mae 6.3643  lr 8.63e-04  37.1s *
+[model] epoch   3/100  train_l1 4.8801  val_mae 4.1352  lr 1.00e-03  37.0s *
+[model] epoch   4/100  train_l1 3.4733  val_mae 3.0006  lr 9.99e-04  37.1s *
+[model] epoch   5/100  train_l1 2.9032  val_mae 2.8175  lr 9.98e-04  37.1s *
+[model] epoch   6/100  train_l1 2.5333  val_mae 2.3078  lr 9.96e-04  36.9s *
+[model] epoch   7/100  train_l1 2.2040  val_mae 2.0503  lr 9.94e-04  37.0s *
+[model] epoch   8/100  train_l1 2.0374  val_mae 2.5638  lr 9.92e-04  36.8s
+[model] epoch   9/100  train_l1 1.8301  val_mae 1.5365  lr 9.88e-04  36.9s *
+[model] epoch  10/100  train_l1 1.6565  val_mae 1.5387  lr 9.85e-04  37.0s
+[model] epoch  11/100  train_l1 1.5658  val_mae 1.6503  lr 9.81e-04  36.9s
+[model] epoch  12/100  train_l1 1.5179  val_mae 1.4109  lr 9.76e-04  36.9s *
+[model] epoch  13/100  train_l1 1.3683  val_mae 1.4234  lr 9.71e-04  36.9s
+[model] epoch  14/100  train_l1 1.3264  val_mae 1.4053  lr 9.65e-04  36.9s *
+[model] epoch  15/100  train_l1 1.2181  val_mae 1.1728  lr 9.59e-04  37.0s *
+[model] epoch  16/100  train_l1 1.2734  val_mae 1.5598  lr 9.52e-04  36.8s
+[model] epoch  17/100  train_l1 1.1072  val_mae 1.2984  lr 9.45e-04  37.1s
+[model] epoch  18/100  train_l1 1.2222  val_mae 1.2280  lr 9.38e-04  37.1s
+[model] epoch  19/100  train_l1 1.0949  val_mae 1.0256  lr 9.30e-04  36.9s *
+[model] epoch  20/100  train_l1 1.0600  val_mae 1.0132  lr 9.21e-04  36.9s *
+[model] epoch  21/100  train_l1 0.9518  val_mae 1.5277  lr 9.12e-04  37.0s
+[model] epoch  22/100  train_l1 1.0195  val_mae 1.1096  lr 9.03e-04  36.9s
+[model] epoch  23/100  train_l1 0.9607  val_mae 1.0986  lr 8.93e-04  37.0s
+[model] epoch  24/100  train_l1 0.8776  val_mae 1.0070  lr 8.83e-04  37.1s *
+[model] epoch  25/100  train_l1 0.9089  val_mae 0.8264  lr 8.73e-04  37.0s *
+[model] epoch  26/100  train_l1 0.8577  val_mae 0.9563  lr 8.62e-04  36.8s
+[model] epoch  27/100  train_l1 0.9106  val_mae 0.7537  lr 8.51e-04  36.9s *
+[model] epoch  28/100  train_l1 0.8265  val_mae 0.9650  lr 8.39e-04  36.8s
+[model] epoch  29/100  train_l1 0.8029  val_mae 0.7464  lr 8.27e-04  36.8s *
+[model] epoch  30/100  train_l1 0.7532  val_mae 0.8386  lr 8.15e-04  37.0s
+[model] epoch  31/100  train_l1 0.7869  val_mae 0.8905  lr 8.02e-04  37.0s
+[model] epoch  32/100  train_l1 0.7638  val_mae 0.8199  lr 7.89e-04  36.9s
+[model] epoch  33/100  train_l1 0.7041  val_mae 0.7936  lr 7.76e-04  36.9s
+[model] epoch  34/100  train_l1 0.6829  val_mae 0.8604  lr 7.62e-04  36.9s
+[model] epoch  35/100  train_l1 0.7399  val_mae 0.9521  lr 7.48e-04  37.0s
+[model] epoch  36/100  train_l1 0.6814  val_mae 0.6967  lr 7.34e-04  37.0s *
+[model] epoch  37/100  train_l1 0.6782  val_mae 0.6172  lr 7.20e-04  36.9s *
+[model] epoch  38/100  train_l1 0.6317  val_mae 0.7088  lr 7.05e-04  37.0s
+[model] epoch  39/100  train_l1 0.6437  val_mae 0.6223  lr 6.91e-04  36.8s
+[model] epoch  40/100  train_l1 0.6030  val_mae 0.6661  lr 6.76e-04  37.0s
+[model] epoch  41/100  train_l1 0.6006  val_mae 0.6317  lr 6.60e-04  37.0s
+[model] epoch  42/100  train_l1 0.5789  val_mae 0.6672  lr 6.45e-04  36.8s
+[model] epoch  43/100  train_l1 0.6137  val_mae 0.5676  lr 6.30e-04  37.0s *
+[model] epoch  44/100  train_l1 0.5503  val_mae 0.5622  lr 6.14e-04  37.0s *
+[model] epoch  45/100  train_l1 0.5641  val_mae 0.5699  lr 5.98e-04  37.0s
+[model] epoch  46/100  train_l1 0.5351  val_mae 0.5266  lr 5.83e-04  36.9s *
+[model] epoch  47/100  train_l1 0.5308  val_mae 0.5915  lr 5.67e-04  37.1s
+[model] epoch  48/100  train_l1 0.5283  val_mae 0.5972  lr 5.51e-04  36.9s
+[model] epoch  49/100  train_l1 0.5066  val_mae 0.5385  lr 5.35e-04  37.0s
+[model] epoch  50/100  train_l1 0.4959  val_mae 0.6940  lr 5.19e-04  37.0s
+[model] epoch  51/100  train_l1 0.4915  val_mae 0.4945  lr 5.03e-04  37.0s *
+[model] epoch  52/100  train_l1 0.4749  val_mae 0.5187  lr 4.86e-04  37.0s
+[model] epoch  53/100  train_l1 0.4610  val_mae 0.5048  lr 4.70e-04  37.0s
+[model] epoch  54/100  train_l1 0.4519  val_mae 0.4640  lr 4.54e-04  37.0s *
+[model] epoch  55/100  train_l1 0.4484  val_mae 0.4679  lr 4.38e-04  37.0s
+[model] epoch  56/100  train_l1 0.4647  val_mae 0.4475  lr 4.22e-04  37.0s *
+[model] epoch  57/100  train_l1 0.4278  val_mae 0.4508  lr 4.07e-04  37.0s
+[model] epoch  58/100  train_l1 0.4201  val_mae 0.4472  lr 3.91e-04  36.8s *
+[model] epoch  59/100  train_l1 0.4143  val_mae 0.4542  lr 3.75e-04  36.9s
+[model] epoch  60/100  train_l1 0.4041  val_mae 0.4249  lr 3.60e-04  36.9s *
+[model] epoch  61/100  train_l1 0.3979  val_mae 0.4395  lr 3.44e-04  37.1s
+[model] epoch  62/100  train_l1 0.3880  val_mae 0.4475  lr 3.29e-04  37.0s
+[model] epoch  63/100  train_l1 0.3819  val_mae 0.4267  lr 3.14e-04  37.1s
+[model] epoch  64/100  train_l1 0.3776  val_mae 0.4076  lr 2.99e-04  36.9s *
+[model] epoch  65/100  train_l1 0.3677  val_mae 0.3996  lr 2.85e-04  36.9s *
+[model] epoch  66/100  train_l1 0.3631  val_mae 0.3917  lr 2.70e-04  37.0s *
+[model] epoch  67/100  train_l1 0.3559  val_mae 0.4510  lr 2.56e-04  36.9s
+[model] epoch  68/100  train_l1 0.3518  val_mae 0.4129  lr 2.42e-04  36.9s
+[model] epoch  69/100  train_l1 0.3435  val_mae 0.3683  lr 2.29e-04  36.9s *
+[model] epoch  70/100  train_l1 0.3376  val_mae 0.3789  lr 2.15e-04  37.0s
+[model] epoch  71/100  train_l1 0.3333  val_mae 0.3633  lr 2.02e-04  37.1s *
+[model] epoch  72/100  train_l1 0.3278  val_mae 0.3648  lr 1.89e-04  36.9s
+[model] epoch  73/100  train_l1 0.3218  val_mae 0.3481  lr 1.77e-04  37.0s *
+[model] epoch  74/100  train_l1 0.3178  val_mae 0.3476  lr 1.65e-04  37.0s *
+[model] epoch  75/100  train_l1 0.3121  val_mae 0.3478  lr 1.53e-04  37.1s
+[model] epoch  76/100  train_l1 0.3074  val_mae 0.3448  lr 1.42e-04  37.0s *
+[model] epoch  77/100  train_l1 0.3023  val_mae 0.3362  lr 1.31e-04  36.9s *
+[model] epoch  78/100  train_l1 0.2986  val_mae 0.3344  lr 1.20e-04  36.8s *
+[model] epoch  79/100  train_l1 0.2942  val_mae 0.3208  lr 1.10e-04  37.1s *
+[model] epoch  80/100  train_l1 0.2907  val_mae 0.3229  lr 9.99e-05  37.0s
+[model] epoch  81/100  train_l1 0.2865  val_mae 0.3218  lr 9.05e-05  37.0s
+[model] epoch  82/100  train_l1 0.2829  val_mae 0.3216  lr 8.15e-05  37.0s
+[model] epoch  83/100  train_l1 0.2798  val_mae 0.3158  lr 7.29e-05  36.9s *
+[model] epoch  84/100  train_l1 0.2758  val_mae 0.3155  lr 6.48e-05  36.8s *
+[model] epoch  85/100  train_l1 0.2737  val_mae 0.3088  lr 5.71e-05  36.9s *
+[model] epoch  86/100  train_l1 0.2700  val_mae 0.3088  lr 4.98e-05  36.9s
+[model] epoch  87/100  train_l1 0.2674  val_mae 0.3069  lr 4.31e-05  36.9s *
+[model] epoch  88/100  train_l1 0.2644  val_mae 0.3043  lr 3.68e-05  36.9s *
+[model] epoch  89/100  train_l1 0.2624  val_mae 0.3036  lr 3.10e-05  37.0s *
+[model] epoch  90/100  train_l1 0.2600  val_mae 0.3033  lr 2.56e-05  37.0s *
+[model] epoch  91/100  train_l1 0.2580  val_mae 0.3015  lr 2.08e-05  36.9s *
+[model] epoch  92/100  train_l1 0.2561  val_mae 0.2984  lr 1.65e-05  36.9s *
+[model] epoch  93/100  train_l1 0.2547  val_mae 0.2981  lr 1.26e-05  37.0s *
+[model] epoch  94/100  train_l1 0.2532  val_mae 0.2970  lr 9.28e-06  36.9s *
+[model] epoch  95/100  train_l1 0.2518  val_mae 0.2959  lr 6.45e-06  37.0s *
+[model] epoch  96/100  train_l1 0.2505  val_mae 0.2960  lr 4.13e-06  36.9s
+[model] epoch  97/100  train_l1 0.2498  val_mae 0.2955  lr 2.33e-06  36.9s *
+[model] epoch  98/100  train_l1 0.2492  val_mae 0.2954  lr 1.03e-06  36.9s *
+[model] epoch  99/100  train_l1 0.2489  val_mae 0.2958  lr 2.59e-07  37.0s
+[model] epoch 100/100  train_l1 0.2483  val_mae 0.2954  lr 0.00e+00  37.1s
+
+[model] holdout MAE 0.2954 nm  (layer_1=0.223  layer_2=0.400  layer_3=0.283  layer_4=0.275) (best epoch 98)
+
+산출물: /content/FringeNet/runs/task8/d2-se/ (metrics.json, train.log, model.pt)

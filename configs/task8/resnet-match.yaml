@@ -1,0 +1,41 @@
+# task8 — 라운드 1 (구조): budget100 백본에 **잔차 연결만** 더한다 (변인 하나).
+#
+# 착수 근거는 cnn_recipe 발견 ⑤: 일반화 격차 0.243이 skip-MLP와 같아 병목이 순수
+# 적합력이고 train_l1 1.4754가 순차 스택의 벽이다. 상한 기준선(1등 213M)이 skip-MLP
+# 라는 것 자체가 이 태스크에서 skip이 통한다는 내부 증거이고, 잔차는 깊이 축(-d2)의
+# 전제 조건이다 (잔차 없는 깊은 스택은 기울기 소실로 깊이를 못 번다).
+#
+# 파라미터 매칭: 1x1 projection이 +91,872를 더하므로 뒤쪽 채널을 (200, 280) ->
+# (184, 256)으로 깎아 664,780으로 재매칭했다 — budget100 662,020 대비 +0.4%,
+# baseline MLP 646,660 대비 +2.8% (±10% 규약, tests/test_models.py가 강제).
+# 판정: scripts/judge_recipe.py (post-LM MAE + 분지 실패율), Δ는 budget100 대조.
+seed: 42
+experiment: task8
+run_name: resnet-match
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 64, 128, 184, 256]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  residual: true
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

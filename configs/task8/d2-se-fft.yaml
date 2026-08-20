@@ -1,0 +1,38 @@
+# task8 — 라운드 4 (모듈 결합): d2-se에 **rFFT 분기를 더한다** (= d2 + SE + FFT).
+#
+# 라운드 3에서 두 모듈이 독립적으로 d2를 이겼다 (se −0.0693 · fft −0.0058, val 전체
+# holdout). 작동 축이 다르므로(채널 재가중 vs 입력 표현) 결합을 시험한다 — Δ는
+# **d2-se 대비**로 읽는다 (fft가 se 위에서도 남는 이득인가). 지면 채택은 d2-se다.
+seed: 42
+experiment: task8
+run_name: d2-se-fft
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 32, 64, 64, 128, 128, 184, 184, 256, 256]
+  strides: [1, 1, 2, 1, 2, 1, 2, 1, 2, 1]
+  kernel_sizes: [7]
+  dilations: [1, 1, 2, 2, 4, 4, 4, 4, 2, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  residual: true
+  se_ratio: 8
+  fft_channels: [16, 32]
+  fft_strides: [2, 2]
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

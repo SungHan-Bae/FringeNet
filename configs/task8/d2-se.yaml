@@ -1,0 +1,37 @@
+# task8 — 라운드 3 (부착 모듈): resnet-d2에 **SE 채널 어텐션만** 더한다 (변인 하나).
+#
+# 근거는 EDA 실측이다: 채널 정보량이 대역 오른쪽 끝에서 3배 (mean |ΔR| 기준, 노이즈는
+# 채널 균일) — 학습된 채널 재가중이 붙을 자리가 실제로 있다. reduction 8 기준 파라미터
+# 증가 약 +60k (d2의 4%). 기각된 "물리 손실의 채널 가중"(손실 가중)과는 다른 장치다
+# (이쪽은 특징 가중).
+seed: 42
+experiment: task8
+run_name: d2-se
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 32, 64, 64, 128, 128, 184, 184, 256, 256]
+  strides: [1, 1, 2, 1, 2, 1, 2, 1, 2, 1]
+  kernel_sizes: [7]
+  dilations: [1, 1, 2, 2, 4, 4, 4, 4, 2, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  residual: true
+  se_ratio: 8
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

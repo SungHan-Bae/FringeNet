@@ -1,0 +1,37 @@
+# task8 — 라운드 2 (용량, 폭 축): resnet-match에서 **전 블록 채널 x2** (변인 하나).
+#
+# 2,623,892 파라미터 (match 대비 x3.9 — conv 파라미터는 c_in*c_out이라 폭 x2 = 약 x4).
+# 용량 가설의 직접 검증: train_l1이 match의 벽 아래로 내려가는가. -d2(깊이 축)와
+# 파라미터 증가율이 다르므로 (x3.9 vs x2.3) 절대 순위가 아니라 **파라미터당 이득**으로
+# 폭 vs 깊이를 비교한다. 용량이 커진 만큼 "322배 작은 모델" 배수 갱신 대상
+# (reports/cnn_recipe.md 자원 미터).
+seed: 42
+experiment: task8
+run_name: resnet-w2
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [64, 128, 256, 368, 512]
+  strides: [1, 2, 2, 2, 2]
+  kernel_sizes: [7]
+  dilations: [1, 2, 4, 4, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  residual: true
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

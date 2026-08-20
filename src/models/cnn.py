@@ -44,8 +44,33 @@ def _make_norm(norm: str, n_channels: int) -> nn.Module | None:
     return None
 
 
+class SqueezeExcite(nn.Module):
+    """SE 채널 어텐션: 파장축 평균 -> FC(C/r) -> Act -> FC(C) -> sigmoid -> 채널 재가중.
+
+    EDA의 채널 정보량 불균등(대역 오른쪽 끝 SNR 3배)이 근거인 학습된 채널 가중이다.
+    내부의 파장축 평균은 가중치 계산용일 뿐이라 특징맵의 위치 정보는 보존된다
+    (GAP head가 기각된 것과 다른 자리).
+
+    Shapes:
+        forward: x (B, C, W) float -> (B, C, W) float
+    """
+
+    def __init__(self, channels: int, ratio: int, activation: str) -> None:
+        super().__init__()
+        hidden = max(1, channels // ratio)
+        self.fc1 = nn.Linear(channels, hidden)
+        self.act = _ACTIVATIONS[activation]()
+        self.fc2 = nn.Linear(hidden, channels)
+
+    def forward(self, x: Tensor) -> Tensor:
+        w = torch.sigmoid(self.fc2(self.act(self.fc1(x.mean(dim=-1)))))
+        return x * w.unsqueeze(-1)
+
+
 class ConvBlock(nn.Module):
-    """다중 커널 병렬 conv 블록: [Conv1d(k) | k in kernel_sizes] concat -> Norm -> Act -> Dropout.
+    """다중 커널 병렬 conv 블록: [Conv1d(k) | k in kernel_sizes] concat -> Norm -> Act -> Dropout
+    (+ 선택적 SE 채널 재가중, + 선택적 residual — 블록 출력에 skip(x)를 더한다).
+    SE는 skip을 더하기 전의 본줄기에만 적용한다 (SE-ResNet 관례).
 
     kernel_sizes가 하나면 평범한 단일 conv와 같다. 여러 개면 c_out을 커널 수로 균등
     분할해 분기별로 계산한 뒤 채널축으로 concat한다 — fringe 주기가 두께에 따라
@@ -69,6 +94,8 @@ class ConvBlock(nn.Module):
         norm: str,
         dropout: float,
         dilation: int = 1,
+        residual: bool = False,
+        se_ratio: int = 0,
     ) -> None:
         super().__init__()
         n_branch = len(kernel_sizes)
@@ -94,9 +121,26 @@ class ConvBlock(nn.Module):
             tail.append(nn.Dropout1d(dropout))
         self.tail = nn.Sequential(*tail)
 
+        self.se: SqueezeExcite | None = None
+        if se_ratio > 0:
+            self.se = SqueezeExcite(c_out, se_ratio, activation)
+
+        # MLPBlock.skip과 같은 규약: 입출력 shape가 같으면 identity, 다르면 bias 없는
+        # 1x1 conv projection (stride로 파장축 길이도 맞춘다).
+        self.skip: nn.Module | None = None
+        if residual:
+            if c_in == c_out and stride == 1:
+                self.skip = nn.Identity()
+            else:
+                self.skip = nn.Conv1d(c_in, c_out, 1, stride=stride, bias=False)
+
     def forward(self, x: Tensor) -> Tensor:
-        out = torch.cat([branch(x) for branch in self.branches], dim=1)
-        return self.tail(out)
+        out = self.tail(torch.cat([branch(x) for branch in self.branches], dim=1))
+        if self.se is not None:
+            out = self.se(out)
+        if self.skip is not None:
+            out = out + self.skip(x)
+        return out
 
 
 class CNN1D(nn.Module):
@@ -126,6 +170,20 @@ class CNN1D(nn.Module):
             커지지 않게 고를 것 (padding이 지배하면 낭비).
         activation / norm / dropout: 블록 구성 — MLP 블록과 같은 의미·같은 선택지.
             dropout은 채널 단위 Dropout1d.
+        residual: True면 블록마다 skip connection을 더한다 (MLP의 residual과 같은 규약 —
+            입출력 shape가 같으면 identity, 다르면 bias 없는 1x1 conv projection).
+            잔차 없는 순차 스택은 깊이를 늘릴수록 기울기가 소실되므로, 깊이 축 실험
+            (Task 8)의 전제 조건이다. projection이 파라미터를 추가하므로 매칭 비교는
+            channels를 함께 조정한다 (configs/task8/resnet-match.yaml).
+        se_ratio: 0이면 없음(기본), 양수 r이면 각 ConvBlock에 SE 채널 어텐션(reduction r)을
+            단다. 블록당 파라미터 약 2C²/r — 용량 통제 비교에서는 이 증가분을 함께 적는다.
+        fft_channels: None이면 없음(기본). 채널 목록을 주면 **rFFT 입력 분기**를 단다:
+            x의 채널축 rfft(norm="forward")의 실부·허부 (B, 2, W//2+1)를 같은 블록 구성
+            (kernel/activation/norm/dropout/residual/se)의 conv 스택에 통과시켜 flatten 후
+            head 입력에 concat한다. 두께 정보가 fringe의 주파수·위상에 실려 있다는 물리
+            (src/physics/freq_id.py가 λ 식별에 실제로 쓴 관계)를 입력 표현으로 주는 장치다.
+            norm="forward"는 1/W 스케일 고정 변환이라 데이터 의존 표준화가 아니다.
+        fft_strides: fft 분기 블록별 stride (fft_channels와 길이 동일). None이면 전부 2.
         head: "gap"(파장축 평균) | "flatten"(파장축 보존). 위 설명 참조.
         output_bound: True면 sigmoid bound로 출력을 [d_min, d_max] nm에 가둔다.
             False면 선형 출력 그대로 두되 head bias를 범위 중앙으로 초기화한다
@@ -154,6 +212,10 @@ class CNN1D(nn.Module):
         activation: str = "gelu",
         norm: str = "batchnorm",
         dropout: float = 0.0,
+        residual: bool = False,
+        se_ratio: int = 0,
+        fft_channels: Sequence[int] | None = None,
+        fft_strides: Sequence[int] | None = None,
         head: str = "gap",
         output_bound: bool = True,
         d_min: float = 10.0,
@@ -196,6 +258,26 @@ class CNN1D(nn.Module):
             raise ValueError(f'head는 "gap" | "flatten" 이어야 한다 (받은 값: {head!r})')
         if not d_min < d_max:
             raise ValueError(f"d_min < d_max 여야 한다 (받은 값: {d_min}, {d_max})")
+        if se_ratio < 0:
+            raise ValueError(f"se_ratio는 0 이상이어야 한다 (받은 값: {se_ratio})")
+        if fft_channels is not None and (
+            len(fft_channels) == 0 or any(c <= 0 for c in fft_channels)
+        ):
+            raise ValueError(
+                f"fft_channels는 비어있지 않은 양수 목록이어야 한다 (받은 값: {list(fft_channels)})"
+            )
+        if fft_strides is not None:
+            if fft_channels is None:
+                raise ValueError("fft_strides는 fft_channels 없이 줄 수 없다")
+            if len(fft_strides) != len(fft_channels):
+                raise ValueError(
+                    f"fft_strides 길이({len(fft_strides)})는 fft_channels 길이"
+                    f"({len(fft_channels)})와 같아야 한다"
+                )
+            if any(s < 1 for s in fft_strides):
+                raise ValueError(
+                    f"fft_strides는 전부 1 이상이어야 한다 (받은 값: {list(fft_strides)})"
+                )
 
         self.n_channels = int(n_channels)
 
@@ -233,16 +315,46 @@ class CNN1D(nn.Module):
                     norm,
                     dropout,
                     dilation=int(dilation),
+                    residual=residual,
+                    se_ratio=se_ratio,
                 )
             )
             c_in = int(c_out)
         self.blocks = nn.Sequential(*blocks)
 
+        # rFFT 입력 분기 — 본줄기와 같은 블록 구성, 입력만 (B, 2, W//2+1) 실부·허부.
+        self.fft_blocks: nn.Sequential | None = None
+        fft_head_in = 0
+        if fft_channels is not None:
+            if fft_strides is None:
+                fft_strides = (2,) * len(fft_channels)
+            fft_blocks: list[nn.Module] = []
+            fc_in = 2
+            fft_w = self.n_channels // 2 + 1
+            for fc_out, fs in zip(fft_channels, fft_strides, strict=True):
+                fft_blocks.append(
+                    ConvBlock(
+                        fc_in,
+                        int(fc_out),
+                        kernel_sizes,
+                        int(fs),
+                        activation,
+                        norm,
+                        dropout,
+                        residual=residual,
+                        se_ratio=se_ratio,
+                    )
+                )
+                fc_in = int(fc_out)
+                fft_w = -(-fft_w // int(fs))
+            self.fft_blocks = nn.Sequential(*fft_blocks)
+            fft_head_in = fc_in * fft_w  # 분기는 head 모드와 무관하게 항상 flatten
+
         self.head_mode = head
         w_last = self.n_channels  # 홀수 유효 span + padding = d*(k//2) 이므로 ceil(W/s)만 남는다
         for s in strides:
             w_last = -(-w_last // int(s))
-        head_in = c_in if head == "gap" else c_in * w_last
+        head_in = (c_in if head == "gap" else c_in * w_last) + fft_head_in
         self.head = nn.Linear(head_in, int(n_outputs))
         self.bound: ThicknessBound | None = None
         if output_bound:
@@ -282,6 +394,10 @@ class CNN1D(nn.Module):
         feat = self.blocks(x.unsqueeze(1))  # (B, 1, 226) -> (B, C_last, W_last)
         # gap: 파장축 평균 (위치 정보 소실) / flatten: 파장축 보존
         pooled = feat.mean(dim=-1) if self.head_mode == "gap" else feat.flatten(1)
+        if self.fft_blocks is not None:
+            z = torch.fft.rfft(x, dim=1, norm="forward")  # (B, W//2+1) complex
+            feat_fft = self.fft_blocks(torch.stack((z.real, z.imag), dim=1))
+            pooled = torch.cat((pooled, feat_fft.flatten(1)), dim=1)
         out = self.head(pooled)
         if self.bound is not None:
             out = self.bound(out)

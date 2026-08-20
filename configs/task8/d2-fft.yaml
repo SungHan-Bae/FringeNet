@@ -1,0 +1,38 @@
+# task8 — 라운드 3 (부착 모듈): resnet-d2에 **rFFT 입력 분기만** 더한다 (변인 하나).
+#
+# 근거는 물리다: 두께 정보가 fringe의 주파수·위상에 실려 있고, 그 관계를
+# src/physics/freq_id.py가 λ축 식별에 실제로 썼다. 분기는 rfft(norm="forward")의
+# 실부·허부 (B, 2, 114)를 본줄기와 같은 블록 구성의 conv 2블록에 통과시켜 head에
+# concat한다 — 파라미터 증가 약 +9k (d2의 0.6%)라 변인이 용량이 아니라 표현이다.
+seed: 42
+experiment: task8
+run_name: d2-fft
+
+data:
+  val_frac: 0.1
+  subset: null
+
+model:
+  name: cnn
+  channels: [32, 32, 64, 64, 128, 128, 184, 184, 256, 256]
+  strides: [1, 1, 2, 1, 2, 1, 2, 1, 2, 1]
+  kernel_sizes: [7]
+  dilations: [1, 1, 2, 2, 4, 4, 4, 4, 2, 2]
+  activation: gelu
+  norm: batchnorm
+  dropout: 0.0
+  residual: true
+  fft_channels: [16, 32]
+  fft_strides: [2, 2]
+  head: flatten
+  output_bound: true
+  channel_shuffle_seed: null
+
+train:
+  epochs: 100
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_schedule: cosine
+  warmup_steps: 3300
+  num_folds: 0

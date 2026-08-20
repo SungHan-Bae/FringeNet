@@ -1,0 +1,78 @@
+{
+  "experiment": "task8",
+  "run_name": "resnet-w2",
+  "seed": 42,
+  "mode": "holdout",
+  "device": "cuda",
+  "rows": {
+    "train": 729000,
+    "holdout": 81000
+  },
+  "config": {
+    "seed": 42,
+    "experiment": "task8",
+    "run_name": "resnet-w2",
+    "data": {
+      "val_frac": 0.1,
+      "subset": null
+    },
+    "model": {
+      "name": "cnn",
+      "channels": [
+        64,
+        128,
+        256,
+        368,
+        512
+      ],
+      "strides": [
+        1,
+        2,
+        2,
+        2,
+        2
+      ],
+      "kernel_sizes": [
+        7
+      ],
+      "dilations": [
+        1,
+        2,
+        4,
+        4,
+        2
+      ],
+      "activation": "gelu",
+      "norm": "batchnorm",
+      "dropout": 0.0,
+      "residual": true,
+      "head": "flatten",
+      "output_bound": true,
+      "channel_shuffle_seed": null
+    },
+    "train": {
+      "epochs": 100,
+      "batch_size": 512,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "lr_schedule": "cosine",
+      "warmup_steps": 3300,
+      "num_folds": 0
+    }
+  },
+  "model": {
+    "tag": "model",
+    "seed": 42,
+    "ckpt_path": "runs/task8/resnet-w2/model.pt",
+    "best_epoch": 98,
+    "val_mae": 1.151457667350769,
+    "val_mae_per_layer": {
+      "layer_1": 0.8003249168395996,
+      "layer_2": 1.4545694589614868,
+      "layer_3": 1.3300573825836182,
+      "layer_4": 1.0208789110183716,
+      "overall": 1.151457667350769
+    },
+    "wall_sec": 4279.410027039
+  }
+}

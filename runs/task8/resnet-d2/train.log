@@ -1,0 +1,108 @@
+run task8/resnet-d2: 행 810,000 = 학습 729,000 + holdout 81,000 / mode=holdout / device=cuda
+[model] epoch   1/100  train_l1 29.6665  val_mae 17.5761  lr 4.32e-04  32.3s *
+[model] epoch   2/100  train_l1 12.2931  val_mae 9.8497  lr 8.63e-04  31.1s *
+[model] epoch   3/100  train_l1 7.4157  val_mae 5.8018  lr 1.00e-03  31.6s *
+[model] epoch   4/100  train_l1 5.1568  val_mae 4.6277  lr 9.99e-04  31.2s *
+[model] epoch   5/100  train_l1 4.1423  val_mae 3.5849  lr 9.98e-04  31.1s *
+[model] epoch   6/100  train_l1 3.5529  val_mae 3.6139  lr 9.96e-04  31.3s
+[model] epoch   7/100  train_l1 3.1229  val_mae 3.5428  lr 9.94e-04  31.0s *
+[model] epoch   8/100  train_l1 2.7949  val_mae 2.7106  lr 9.92e-04  31.3s *
+[model] epoch   9/100  train_l1 2.5027  val_mae 2.6177  lr 9.88e-04  31.1s *
+[model] epoch  10/100  train_l1 2.3098  val_mae 2.6920  lr 9.85e-04  31.2s
+[model] epoch  11/100  train_l1 2.1381  val_mae 1.9822  lr 9.81e-04  31.1s *
+[model] epoch  12/100  train_l1 1.9965  val_mae 1.8229  lr 9.76e-04  31.2s *
+[model] epoch  13/100  train_l1 1.8684  val_mae 1.9367  lr 9.71e-04  31.4s
+[model] epoch  14/100  train_l1 1.7787  val_mae 1.8419  lr 9.65e-04  31.2s
+[model] epoch  15/100  train_l1 1.6797  val_mae 1.6505  lr 9.59e-04  31.0s *
+[model] epoch  16/100  train_l1 1.6198  val_mae 1.6085  lr 9.52e-04  31.2s *
+[model] epoch  17/100  train_l1 1.5397  val_mae 1.6448  lr 9.45e-04  31.1s
+[model] epoch  18/100  train_l1 1.5079  val_mae 1.5450  lr 9.38e-04  31.2s *
+[model] epoch  19/100  train_l1 1.4307  val_mae 1.4047  lr 9.30e-04  31.1s *
+[model] epoch  20/100  train_l1 1.3864  val_mae 1.4345  lr 9.21e-04  31.3s
+[model] epoch  21/100  train_l1 1.3293  val_mae 1.3225  lr 9.12e-04  31.2s *
+[model] epoch  22/100  train_l1 1.3074  val_mae 1.3739  lr 9.03e-04  31.2s
+[model] epoch  23/100  train_l1 1.2658  val_mae 1.1958  lr 8.93e-04  31.1s *
+[model] epoch  24/100  train_l1 1.2281  val_mae 1.2177  lr 8.83e-04  31.3s
+[model] epoch  25/100  train_l1 1.1995  val_mae 1.2908  lr 8.73e-04  31.0s
+[model] epoch  26/100  train_l1 1.1711  val_mae 1.2552  lr 8.62e-04  31.2s
+[model] epoch  27/100  train_l1 1.1309  val_mae 1.1835  lr 8.51e-04  31.1s *
+[model] epoch  28/100  train_l1 1.1149  val_mae 1.2266  lr 8.39e-04  31.2s
+[model] epoch  29/100  train_l1 1.0710  val_mae 1.0635  lr 8.27e-04  31.1s *
+[model] epoch  30/100  train_l1 1.0658  val_mae 1.0126  lr 8.15e-04  31.3s *
+[model] epoch  31/100  train_l1 1.0308  val_mae 1.0355  lr 8.02e-04  31.1s
+[model] epoch  32/100  train_l1 1.0038  val_mae 0.9671  lr 7.89e-04  31.2s *
+[model] epoch  33/100  train_l1 0.9943  val_mae 1.0483  lr 7.76e-04  31.1s
+[model] epoch  34/100  train_l1 0.9527  val_mae 1.1347  lr 7.62e-04  31.3s
+[model] epoch  35/100  train_l1 0.9417  val_mae 0.9287  lr 7.48e-04  31.1s *
+[model] epoch  36/100  train_l1 0.9180  val_mae 0.8930  lr 7.34e-04  31.3s *
+[model] epoch  37/100  train_l1 0.9050  val_mae 0.9131  lr 7.20e-04  31.2s
+[model] epoch  38/100  train_l1 0.8786  val_mae 0.9449  lr 7.05e-04  31.1s
+[model] epoch  39/100  train_l1 0.8691  val_mae 0.8664  lr 6.91e-04  31.1s *
+[model] epoch  40/100  train_l1 0.8487  val_mae 0.8213  lr 6.76e-04  31.2s *
+[model] epoch  41/100  train_l1 0.8359  val_mae 0.8598  lr 6.60e-04  31.1s
+[model] 미러에서 복원: ['resume.pt', 'train.log', 'model.pt']
+[model] resume: epoch 40까지 완료 상태에서 재개 (best 0.8213 @ ep 40)
+[model] epoch  41/100  train_l1 0.8359  val_mae 0.8598  lr 6.60e-04  33.3s
+[model] epoch  42/100  train_l1 0.8150  val_mae 0.8351  lr 6.45e-04  32.1s
+[model] epoch  43/100  train_l1 0.7950  val_mae 0.8038  lr 6.30e-04  32.4s *
+[model] epoch  44/100  train_l1 0.7810  val_mae 0.8107  lr 6.14e-04  32.7s
+[model] epoch  45/100  train_l1 0.7641  val_mae 0.7610  lr 5.98e-04  32.7s *
+[model] epoch  46/100  train_l1 0.7562  val_mae 0.7682  lr 5.83e-04  32.6s
+[model] epoch  47/100  train_l1 0.7322  val_mae 0.7563  lr 5.67e-04  32.7s *
+[model] epoch  48/100  train_l1 0.7228  val_mae 0.7337  lr 5.51e-04  32.7s *
+[model] epoch  49/100  train_l1 0.7049  val_mae 0.7499  lr 5.35e-04  32.8s
+[model] epoch  50/100  train_l1 0.6920  val_mae 0.7118  lr 5.19e-04  32.7s *
+[model] epoch  51/100  train_l1 0.6794  val_mae 0.6937  lr 5.03e-04  32.8s *
+[model] epoch  52/100  train_l1 0.6593  val_mae 0.7184  lr 4.86e-04  32.7s
+[model] epoch  53/100  train_l1 0.6548  val_mae 0.6333  lr 4.70e-04  32.7s *
+[model] epoch  54/100  train_l1 0.6332  val_mae 0.6696  lr 4.54e-04  32.6s
+[model] epoch  55/100  train_l1 0.6261  val_mae 0.6579  lr 4.38e-04  32.7s
+[model] epoch  56/100  train_l1 0.6079  val_mae 0.6379  lr 4.22e-04  32.9s
+[model] epoch  57/100  train_l1 0.5996  val_mae 0.6401  lr 4.07e-04  32.8s
+[model] epoch  58/100  train_l1 0.5869  val_mae 0.6297  lr 3.91e-04  32.7s *
+[model] epoch  59/100  train_l1 0.5753  val_mae 0.6015  lr 3.75e-04  32.6s *
+[model] epoch  60/100  train_l1 0.5597  val_mae 0.5721  lr 3.60e-04  32.8s *
+[model] epoch  61/100  train_l1 0.5502  val_mae 0.5772  lr 3.44e-04  32.7s
+[model] epoch  62/100  train_l1 0.5376  val_mae 0.5328  lr 3.29e-04  32.7s *
+[model] epoch  63/100  train_l1 0.5267  val_mae 0.5592  lr 3.14e-04  32.6s
+[model] epoch  64/100  train_l1 0.5169  val_mae 0.5405  lr 2.99e-04  32.6s
+[model] epoch  65/100  train_l1 0.5065  val_mae 0.5350  lr 2.85e-04  32.8s
+[model] epoch  66/100  train_l1 0.4948  val_mae 0.5157  lr 2.70e-04  32.8s *
+[model] epoch  67/100  train_l1 0.4840  val_mae 0.5415  lr 2.56e-04  32.6s
+[model] epoch  68/100  train_l1 0.4741  val_mae 0.5045  lr 2.42e-04  32.8s *
+[model] epoch  69/100  train_l1 0.4638  val_mae 0.4914  lr 2.29e-04  33.0s *
+[model] epoch  70/100  train_l1 0.4549  val_mae 0.4879  lr 2.15e-04  32.9s *
+[model] epoch  71/100  train_l1 0.4458  val_mae 0.4896  lr 2.02e-04  32.8s
+[model] epoch  72/100  train_l1 0.4371  val_mae 0.4670  lr 1.89e-04  32.8s *
+[model] epoch  73/100  train_l1 0.4297  val_mae 0.4701  lr 1.77e-04  32.7s
+[model] epoch  74/100  train_l1 0.4201  val_mae 0.4529  lr 1.65e-04  32.6s *
+[model] epoch  75/100  train_l1 0.4127  val_mae 0.4489  lr 1.53e-04  32.7s *
+[model] epoch  76/100  train_l1 0.4039  val_mae 0.4537  lr 1.42e-04  32.7s
+[model] epoch  77/100  train_l1 0.3971  val_mae 0.4350  lr 1.31e-04  32.7s *
+[model] epoch  78/100  train_l1 0.3894  val_mae 0.4391  lr 1.20e-04  32.7s
+[model] epoch  79/100  train_l1 0.3833  val_mae 0.4253  lr 1.10e-04  32.7s *
+[model] epoch  80/100  train_l1 0.3750  val_mae 0.4157  lr 9.99e-05  32.9s *
+[model] epoch  81/100  train_l1 0.3698  val_mae 0.4102  lr 9.05e-05  32.8s *
+[model] epoch  82/100  train_l1 0.3636  val_mae 0.4051  lr 8.15e-05  32.7s *
+[model] epoch  83/100  train_l1 0.3579  val_mae 0.4007  lr 7.29e-05  32.8s *
+[model] epoch  84/100  train_l1 0.3524  val_mae 0.3931  lr 6.48e-05  32.6s *
+[model] epoch  85/100  train_l1 0.3476  val_mae 0.3948  lr 5.71e-05  32.7s
+[model] epoch  86/100  train_l1 0.3418  val_mae 0.3904  lr 4.98e-05  32.8s *
+[model] epoch  87/100  train_l1 0.3375  val_mae 0.3876  lr 4.31e-05  32.8s *
+[model] epoch  88/100  train_l1 0.3327  val_mae 0.3798  lr 3.68e-05  32.8s *
+[model] epoch  89/100  train_l1 0.3294  val_mae 0.3805  lr 3.10e-05  32.9s
+[model] epoch  90/100  train_l1 0.3254  val_mae 0.3757  lr 2.56e-05  32.8s *
+[model] epoch  91/100  train_l1 0.3220  val_mae 0.3756  lr 2.08e-05  32.7s *
+[model] epoch  92/100  train_l1 0.3190  val_mae 0.3713  lr 1.65e-05  32.9s *
+[model] epoch  93/100  train_l1 0.3160  val_mae 0.3696  lr 1.26e-05  32.7s *
+[model] epoch  94/100  train_l1 0.3139  val_mae 0.3673  lr 9.28e-06  32.7s *
+[model] epoch  95/100  train_l1 0.3118  val_mae 0.3658  lr 6.45e-06  32.6s *
+[model] epoch  96/100  train_l1 0.3097  val_mae 0.3659  lr 4.13e-06  32.7s
+[model] epoch  97/100  train_l1 0.3084  val_mae 0.3650  lr 2.33e-06  32.8s *
+[model] epoch  98/100  train_l1 0.3071  val_mae 0.3647  lr 1.03e-06  32.7s *
+[model] epoch  99/100  train_l1 0.3069  val_mae 0.3653  lr 2.59e-07  32.7s
+[model] epoch 100/100  train_l1 0.3060  val_mae 0.3648  lr 0.00e+00  32.7s
+
+[model] holdout MAE 0.3647 nm  (layer_1=0.279  layer_2=0.482  layer_3=0.359  layer_4=0.339) (best epoch 98)
+
+산출물: /content/FringeNet/runs/task8/resnet-d2/ (metrics.json, train.log, model.pt)

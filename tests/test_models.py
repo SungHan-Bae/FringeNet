@@ -9,7 +9,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from src.models import CNN1D, MLP, ThicknessBound, WinnerSkipMLP, build_model
+from src.models import CNN1D, MLP, ConvNeXt1D, ThicknessBound, WinnerSkipMLP, build_model
+from src.models.convnext import ConvNeXtBlock1D
 from src.utils.seed import set_seed
 
 B = 8
@@ -317,6 +318,263 @@ def test_cnn_invalid_hyperparameters_raise(kwargs: dict[str, object]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# CNN1D residual (task8) — MLPBlock.skip과 같은 규약의 conv 판
+# ---------------------------------------------------------------------------
+def test_cnn_residual_skip_is_identity_or_strided_projection() -> None:
+    # shape 보존 블록(c_in==c_out, stride 1) -> identity, 아니면 1x1 conv projection
+    model = CNN1D(channels=(8, 8, 16), strides=(1, 1, 2), residual=True)
+    assert isinstance(model.blocks[0].skip, torch.nn.Conv1d)  # 1 -> 8: 채널 변경
+    assert isinstance(model.blocks[1].skip, torch.nn.Identity)  # 8 -> 8, stride 1
+    proj = model.blocks[2].skip  # 8 -> 16, stride 2
+    assert isinstance(proj, torch.nn.Conv1d)
+    assert proj.kernel_size == (1,) and proj.stride == (2,) and proj.bias is None
+    assert model(_batch()).shape == (B, 4)
+
+
+def test_cnn_residual_default_off() -> None:
+    model = CNN1D(**_SMALL_CNN)
+    assert all(block.skip is None for block in model.blocks)
+
+
+def test_cnn_residual_projection_matches_body_output_length() -> None:
+    # padding = d*(k//2) 규약으로 본줄기 길이가 ceil(W/s)이므로, projection(k=1, pad 0)도
+    # 같은 길이를 내야 덧셈이 성립한다 — 홀수 길이 + stride 2 조합에서 검증
+    model = CNN1D(channels=(8, 16, 32), strides=(1, 2, 2), dilations=(1, 2, 4), residual=True)
+    assert model(_batch()).shape == (B, 4)  # 226 -> 113(홀수) -> 57(홀수)
+
+
+def test_cnn_residual_gradients_flow_including_projections() -> None:
+    set_seed(0)
+    model = CNN1D(channels=(8, 8, 16), strides=(1, 1, 2), residual=True)
+    loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
+    loss.backward()
+    for name, param in model.named_parameters():
+        assert param.grad is not None, name
+        assert torch.isfinite(param.grad).all(), name
+
+
+def test_cnn_resnet_match_config_parameter_count() -> None:
+    # task8 resnet-match: projection 비용을 채널 (200, 280) -> (184, 256)으로 상쇄해
+    # baseline MLP ±10% 매칭을 유지한다 (configs/task8/resnet-match.yaml의 근거 고정)
+    mlp_params = sum(p.numel() for p in MLP(hidden_dims=(512, 512, 512), dropout=0.0).parameters())
+    model = CNN1D(
+        channels=(32, 64, 128, 184, 256),
+        strides=(1, 2, 2, 2, 2),
+        dilations=(1, 2, 4, 4, 2),
+        head="flatten",
+        residual=True,
+    )
+    cnn_params = sum(p.numel() for p in model.parameters())
+    assert abs(cnn_params - mlp_params) / mlp_params < 0.10, (cnn_params, mlp_params)
+
+
+# ---------------------------------------------------------------------------
+# CNN1D SE 채널 어텐션 (task8 라운드 3)
+# ---------------------------------------------------------------------------
+def test_cnn_se_default_off_keeps_state_dict() -> None:
+    model = CNN1D(**_SMALL_CNN)
+    assert all(block.se is None for block in model.blocks)
+    assert not any("se." in k for k in model.state_dict())  # 기존 체크포인트 로드 계약
+
+
+def test_cnn_se_reweights_channels_in_unit_interval() -> None:
+    from src.models.cnn import SqueezeExcite
+
+    se = SqueezeExcite(channels=8, ratio=4, activation="gelu").eval()
+    x = torch.rand(2, 8, 30)
+    out = se(x)
+    assert out.shape == x.shape
+    w = out / x  # 재가중은 채널별 상수 곱 — 파장축으로 동일해야 한다
+    assert torch.allclose(w, w[..., :1].expand_as(w), atol=1e-6)
+    assert (w > 0).all() and (w < 1).all()  # sigmoid 범위
+
+
+def test_cnn_se_gradients_flow() -> None:
+    set_seed(0)
+    model = CNN1D(channels=(8, 16), strides=(1, 2), residual=True, se_ratio=4)
+    assert all(block.se is not None for block in model.blocks)
+    loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
+    loss.backward()
+    for name, param in model.named_parameters():
+        assert param.grad is not None, name
+        assert torch.isfinite(param.grad).all(), name
+
+
+# ---------------------------------------------------------------------------
+# CNN1D rFFT 입력 분기 (task8 라운드 3)
+# ---------------------------------------------------------------------------
+def test_cnn_fft_default_off_keeps_state_dict() -> None:
+    model = CNN1D(**_SMALL_CNN)
+    assert model.fft_blocks is None
+    assert not any(k.startswith("fft_") for k in model.state_dict())
+
+
+def test_cnn_fft_branch_head_size_and_forward() -> None:
+    # 주파수축 길이 226//2+1 = 114 -> stride 2 두 번 -> 57 -> 29. head = flatten(주) + flatten(분기)
+    model = CNN1D(
+        channels=(8, 16),
+        strides=(1, 2),
+        head="flatten",
+        fft_channels=(4, 8),
+        fft_strides=(2, 2),
+    )
+    assert model.head.in_features == 16 * 113 + 8 * 29
+    assert model(_batch()).shape == (B, 4)
+
+
+def test_cnn_fft_branch_gradients_flow() -> None:
+    set_seed(0)
+    model = CNN1D(
+        channels=(8, 16),
+        strides=(1, 2),
+        head="flatten",
+        residual=True,
+        fft_channels=(4, 8),
+    )
+    loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
+    loss.backward()
+    fft_grads = [p.grad for n, p in model.named_parameters() if n.startswith("fft_blocks")]
+    assert fft_grads and all(g is not None and torch.isfinite(g).all() for g in fft_grads)
+    assert sum(g.abs().sum().item() for g in fft_grads) > 0.0
+
+
+def test_cnn_fft_input_is_forward_normalized_rfft() -> None:
+    # 분기 입력 규약: rfft(norm="forward")의 실부·허부 — DC 빈 = 채널 평균 (스케일 고정 변환)
+    x = _batch()
+    z = torch.fft.rfft(x, dim=1, norm="forward")
+    assert z.shape == (B, 114)
+    assert torch.allclose(z.real[:, 0], x.mean(dim=1), atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"se_ratio": -1},
+        {"fft_channels": ()},
+        {"fft_channels": (4, 0)},
+        {"fft_strides": (2, 2)},  # fft_channels 없이 fft_strides
+        {"fft_channels": (4, 8), "fft_strides": (2,)},  # 길이 불일치
+        {"fft_channels": (4, 8), "fft_strides": (2, 0)},
+    ],
+)
+def test_cnn_se_fft_invalid_hyperparameters_raise(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        CNN1D(**_SMALL_CNN, **kwargs)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# ConvNeXt1D (task8) — shape 계약, 블록 구조, 파라미터 매칭
+# ---------------------------------------------------------------------------
+_SMALL_CONVNEXT = {"dims": (8, 16), "depths": (1, 1)}
+
+
+def test_convnext_maps_spectrum_batch_to_four_thicknesses() -> None:
+    model = ConvNeXt1D(**_SMALL_CONVNEXT)
+    out = model(_batch())
+    assert out.shape == (B, 4)
+    assert out.dtype == torch.float32
+    assert torch.isfinite(out).all()
+
+
+def test_convnext_rejects_wrong_shapes() -> None:
+    model = ConvNeXt1D(**_SMALL_CONVNEXT)
+    with pytest.raises(ValueError):
+        model(torch.zeros(4, 225))
+    with pytest.raises(ValueError):
+        model(torch.zeros(4, 1, 226))
+
+
+def test_convnext_output_bound_flag_controls_physical_range() -> None:
+    bounded = ConvNeXt1D(**_SMALL_CONVNEXT, output_bound=True)
+    unbounded = ConvNeXt1D(**_SMALL_CONVNEXT, output_bound=False)
+    with torch.no_grad():
+        bounded.head.bias.fill_(1e4)
+        unbounded.head.bias.fill_(1e4)
+    x = _batch()
+    out_bounded = bounded(x)
+    assert (out_bounded >= 10.0).all()
+    assert (out_bounded <= 300.0).all()
+    assert (unbounded(x) > 300.0).any()
+
+
+def test_convnext_unbounded_head_bias_initializes_at_range_center() -> None:
+    model = ConvNeXt1D(**_SMALL_CONVNEXT, output_bound=False)
+    assert torch.allclose(model.head.bias, torch.full((4,), 155.0))
+
+
+def test_convnext_block_structure_matches_spec() -> None:
+    # dwconv(groups=dim) -> LN(eps 1e-6) -> Linear(x ratio) -> GELU -> Linear -> gamma
+    block = ConvNeXtBlock1D(dim=8, kernel_size=7, mlp_ratio=4, layer_scale_init=1e-6)
+    assert block.dwconv.groups == 8 and block.dwconv.kernel_size == (7,)
+    assert isinstance(block.norm, torch.nn.LayerNorm) and block.norm.eps == 1e-6
+    assert block.pwconv1.out_features == 32 and block.pwconv2.in_features == 32
+    assert torch.allclose(block.gamma, torch.full((8,), 1e-6))
+    x = torch.rand(2, 8, 30)
+    assert block(x).shape == (2, 8, 30)  # identity 잔차 — 입출력 shape 불변
+
+
+def test_convnext_block_starts_near_identity() -> None:
+    # layer scale 1e-6이면 초기 블록 출력 ~ 입력 (깊은 스택 학습 안정화의 근거)
+    block = ConvNeXtBlock1D(dim=8, kernel_size=7, mlp_ratio=4, layer_scale_init=1e-6).eval()
+    x = torch.rand(2, 8, 30)
+    assert torch.allclose(block(x), x, atol=1e-4)
+
+
+def test_convnext_downsample_halves_length_between_stages() -> None:
+    # 226 -> (stage2 입구) 113 -> (stage3 입구) 56: head 입력 = dims[-1] * w_last
+    model = ConvNeXt1D(dims=(8, 8, 8), depths=(1, 1, 1))
+    assert model.head.in_features == 8 * 56
+    assert model(_batch()).shape == (B, 4)
+
+
+def test_convnext_match_config_parameter_count() -> None:
+    # task8 convnext-match (configs/task8/convnext-match.yaml)의 매칭 근거 고정
+    mlp_params = sum(p.numel() for p in MLP(hidden_dims=(512, 512, 512), dropout=0.0).parameters())
+    model = ConvNeXt1D(dims=(32, 64, 96, 112), depths=(2, 2, 4, 2))
+    cx_params = sum(p.numel() for p in model.parameters())
+    assert abs(cx_params - mlp_params) / mlp_params < 0.10, (cx_params, mlp_params)
+
+
+def test_convnext_gradients_flow_to_every_parameter() -> None:
+    set_seed(0)
+    model = ConvNeXt1D(**_SMALL_CONVNEXT)
+    loss = torch.nn.functional.l1_loss(model(_batch()), torch.full((B, 4), 155.0))
+    loss.backward()
+    for name, param in model.named_parameters():
+        assert param.grad is not None, name
+        assert torch.isfinite(param.grad).all(), name
+    total = sum(p.grad.abs().sum().item() for p in model.parameters() if p.grad is not None)
+    assert total > 0.0
+
+
+def test_convnext_seeded_construction_is_reproducible() -> None:
+    set_seed(123)
+    first = ConvNeXt1D(**_SMALL_CONVNEXT)
+    set_seed(123)
+    second = ConvNeXt1D(**_SMALL_CONVNEXT)
+    for p1, p2 in zip(first.parameters(), second.parameters(), strict=True):
+        assert torch.equal(p1, p2)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"dims": ()},
+        {"dims": (8, 0), "depths": (1, 1)},
+        {"dims": (8, 16), "depths": (1,)},  # 길이 불일치
+        {"dims": (8, 16), "depths": (1, 0)},
+        {"kernel_size": 4},  # 짝수 — 길이 보존 padding 불가
+        {"kernel_size": 0},
+        {"mlp_ratio": 0},
+        {"d_min": 300.0, "d_max": 10.0},
+    ],
+)
+def test_convnext_invalid_hyperparameters_raise(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        ConvNeXt1D(**kwargs)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
 # 팩토리
 # ---------------------------------------------------------------------------
 def test_build_model_from_config_dict() -> None:
@@ -331,6 +589,13 @@ def test_build_cnn_from_config_dict() -> None:
     config = {"name": "cnn", "channels": [8, 16], "strides": [1, 2], "output_bound": False}
     model = build_model(config)
     assert isinstance(model, CNN1D)
+    assert model(_batch()).shape == (B, 4)
+
+
+def test_build_convnext_from_config_dict() -> None:
+    config = {"name": "convnext", "dims": [8, 16], "depths": [1, 1], "output_bound": False}
+    model = build_model(config)
+    assert isinstance(model, ConvNeXt1D)
     assert model(_batch()).shape == (B, 4)
 
 
