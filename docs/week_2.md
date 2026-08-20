@@ -365,13 +365,15 @@ CPU(VM)·GPU(L4) 절을 담은 완전판이 됐다 (무정지 실행·push·자�
         잔차 꼬리 경고(p90 2.3배)가 예측한 그대로, holdout의 raw CNN 이점은 격자 보간
         인공물이었다. **채택 = d2-fft + LM + 되돌림.** 물리 보정의 값어치가 격자 밖
         강건성으로 재정의된 것이 Task 8의 최종 발견이다.
-  - [ ] **자원 미터 벤치 (라운드 5)** — 채택 모델의 추론 비용 정본 표
-        (`reports/task8_bench.md`, CPU·GPU 한 세션). **다음 행동: push 후 Colab에서
-        `notebooks/task8/round5_bench.ipynb` Run-All** (~15분). bench_invert에 --cnn-run
-        추가(첫 항목이 LM 출발점), WSL2 미리보기에서 배포 합계가 skip-MLP의 0.51배.
-  - [ ] 벤치 후: `reports/task8.md` 취합 + 자원 미터(파라미터 140배·체크포인트 133배·
-        학습 3.7배·추론은 벤치 표) + CHECKPOINTS.md(라운드 4 절) + CLAUDE.md 백로그·스펙 +
-        진행 비교표·헤드라인 재생성 → Task 9.
+  - [x] **자원 미터 벤치 (라운드 5, 08-20)** — 정본 `reports/task8_bench.md` (Colab 한
+        세션, CPU·L4). 배포 경로 합계 = skip-MLP 대비 CPU 1.42배 · L4 1.49배 (d2-fft
+        forward 단독은 213M보다 빠름 — L4 0.39×). 파라미터 140배 · 체크포인트 133배.
+  - [x] **Task 8 종결 (08-20)** — `reports/task8.md` 취합(교차점·격자 밖 반전·자원 미터·
+        사전등록 대비) + CHECKPOINTS(라운드 4 절) + CLAUDE.md(백로그·확정 스펙·하지 말 것
+        1건 추가: raw CNN 무검증 제출 금지 + 잔차 관문).
+- [ ] **Task 9 — 문서화**: README 결과·그림·한계 갱신 + `reports/README.md` 진행 비교표·
+      읽기 순서에 task8 3종 반영 + 헤드라인 그림 재생성(`make_headline_figure.py` —
+      task8 지원 필요 여부 확인) + 최종 수치 일관성 스윕.
   - [ ] (조건부) 라운드 3 — 부착 모듈: rFFT 주파수 분기(freq_id 물리 근거) ·
         SE 채널 어텐션(EDA 채널 정보량 3배 불균등 근거) · Muon은 큰 모델과 짝지을 때만.
 - [x] **평가 축 실측** — `reports/cnn_recipe_axes.md` (budget100 + flatten-dilated-bound,

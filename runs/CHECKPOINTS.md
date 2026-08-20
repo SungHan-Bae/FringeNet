@@ -117,3 +117,16 @@ holdout 재추론으로 기록된 val MAE를 재현했고(2/2 OK), 그 출력이
 - 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/`
 - `resnet-d4`는 에폭 6에서 중단·범위 제외 — 부분 산출물은 git에서 제거했고 미러의
   잔여 상태(resume.pt)도 삭제 대상이다 (남으면 d4 config 포함 세션에서 조용히 재개된다).
+
+## task8 — 라운드 4 (모듈 결합), 1 run
+
+노트북(`round4_se-fft.ipynb`)의 Drive 무결성 검증 통과 (재추론 = 기록 val 재현, 출력 보존).
+
+| run | 변인 (d2-se 대비) | val MAE [nm] |
+|---|---|---|
+| `d2-se-fft` | + rFFT 입력 분기 (+8.6k) | 0.2960 |
+
+- 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/d2-se-fft/`
+- 로컬 회수 + 전체 holdout CNN MAE 재현(0.2960) 확인 (2026-08-20, `task8_judge.md`).
+- **채택 모델은 `task8/d2-fft`다** (`reports/task8.md`) — 제출 재현에는 이 run의
+  model.pt가 필요하다 (라운드 3 절 참조).
