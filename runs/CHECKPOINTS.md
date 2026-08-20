@@ -74,59 +74,27 @@ Drive 무결성 검증 셀이 **미러의 model.pt를 다시 로드해 holdout �
   이 기록된 val MAE와 층별까지 재현해야 한다 (budget100은 1.7185 / 1.175·2.183·1.986·1.530).
   sha256을 기록하지 않은 run에는 이것이 대조 수단이다.
 
-## task8 (Task 8) — 라운드 1 (구조), 2 run
+## task8 (Task 8) — 라운드 1~4, 7 run
 
-`_mirror_copy`가 학습 중에 쓴 것이라 sha256을 기록하지 않는다 — 라운드 1 노트북
-(`notebooks/task8/round1_arch.ipynb`)의 Drive 무결성 검증 셀이 미러의 model.pt를 다시 로드해
-holdout 재추론으로 기록된 val MAE를 재현했고(2/2 OK), 그 출력이 노트북에 남아 있다.
+`_mirror_copy`가 학습 중에 쓴 것이라 sha256을 기록하지 않는다 — 검증은 각 라운드 노트북의
+Drive 무결성 셀(미러 model.pt 재로드 → holdout 재추론 = 기록 val 재현) 그리고 로컬 회수 후
+전체 holdout 판정(`reports/task8_judge.md`)의 CNN MAE 재현으로 한다. **7 run 전부 재추론
+재현 확인 완료** (2026-08-19~20). 예외 하나: 라운드 3은 세션이 push 셀 전에 중단돼(범위
+축소 결정) 노트북 검증 셀이 돌지 않았다 — 텍스트 2종은 미러 사본을 별도 커밋(e3c59f5)했고,
+미러 model.pt 검증은 로컬 판정 재현으로 갈음했다.
 
-| run | 변인 (budget100 대비) | val MAE [nm] |
-|---|---|---|
-| `resnet-match` | 잔차 연결 (+채널 (200,280)→(184,256) 재매칭) | 1.6483 |
-| `convnext-match` | ConvNeXt-1D 블록 교체 (dims 32·64·96·112) | 1.8108 |
-
-- 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/` (model.pt 각 ~2.5 MB)
-- **회수 후 재추론 무결성 확인 완료** (2026-08-19, 로컬 CPU): 전체 holdout 판정
-  (`reports/task8_judge.md`)의 CNN MAE 1.6484 / 1.8108이 기록 val MAE를 재현했다.
-
-## task8 — 라운드 2 (용량), 2 run
-
-라운드 1과 같은 규약 — sha256 없이 노트북(`round2_capacity.ipynb`)의 Drive 무결성 검증
-셀이 미러 model.pt 재로드 → holdout 재추론으로 val MAE 재현 (2/2 OK, 출력 보존).
-
-| run | 변인 (resnet-match 대비) | val MAE [nm] |
-|---|---|---|
-| `resnet-d2` | 블록 5→10 (stride-1 복제, ×2.3 파라미터) | 0.3647 |
-| `resnet-w2` | 전 블록 채널 ×2 (×3.9 파라미터) | 1.1515 |
-
-- 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/` (model.pt 6.1 / 10.5 MB)
-- **회수 후 재추론 무결성 확인 완료** (2026-08-19, 로컬 CPU): 전체 holdout 판정
-  (`reports/task8_judge.md`)의 CNN MAE 0.3647 / 1.1515가 기록 val MAE를 재현했다.
-
-## task8 — 라운드 3 (부착 모듈), 2 run
-
-세션이 push 셀 전에 수동 중단됐다(범위 축소 결정) — 텍스트 2종은 미러 사본을 별도
-커밋(e3c59f5)했고, **노트북 무결성 검증 셀이 돌지 않았다**. 미러 model.pt 검증은 회수 후
-**전체 holdout CNN MAE = 기록 val 재현**으로 한다 (아래 값과 대조).
-
-| run | 변인 (resnet-d2 대비) | val MAE [nm] |
-|---|---|---|
-| `d2-fft` | rFFT 입력 분기 (+8.2k, +0.5%) | 0.3589 |
-| `d2-se` | SE 채널 어텐션 r=8 (+62k, +4.1%) | 0.2954 |
+| 라운드 | run | 변인 | val MAE [nm] |
+|---|---|---|---|
+| 1 (구조) | `resnet-match` | 잔차 연결, 파라미터 매칭 (budget100 대비) | 1.6483 |
+| 1 (구조) | `convnext-match` | ConvNeXt-1D 블록 교체 | 1.8108 |
+| 2 (용량) | `resnet-d2` | 블록 5→10 (stride-1 복제, ×2.3) | 0.3647 |
+| 2 (용량) | `resnet-w2` | 전 블록 채널 ×2 (×3.9) | 1.1515 |
+| 3 (모듈) | `d2-fft` | rFFT 입력 분기 (+0.5%) | 0.3589 |
+| 3 (모듈) | `d2-se` | SE 채널 어텐션 r=8 (+4.1%) | 0.2954 |
+| 4 (결합) | `d2-se-fft` | d2-se + rFFT 분기 | 0.2960 |
 
 - 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/<run>/`
+- **채택 모델은 `task8/d2-fft`다** (`reports/task8.md`) — 제출 재현에는 이 run의
+  model.pt가 필요하다.
 - `resnet-d4`는 에폭 6에서 중단·범위 제외 — 부분 산출물은 git에서 제거했고 미러의
   잔여 상태(resume.pt)도 삭제 대상이다 (남으면 d4 config 포함 세션에서 조용히 재개된다).
-
-## task8 — 라운드 4 (모듈 결합), 1 run
-
-노트북(`round4_se-fft.ipynb`)의 Drive 무결성 검증 통과 (재추론 = 기록 val 재현, 출력 보존).
-
-| run | 변인 (d2-se 대비) | val MAE [nm] |
-|---|---|---|
-| `d2-se-fft` | + rFFT 입력 분기 (+8.6k) | 0.2960 |
-
-- 미러 경로: `MyDrive/FringeNet/runs_mirror/task8/d2-se-fft/`
-- 로컬 회수 + 전체 holdout CNN MAE 재현(0.2960) 확인 (2026-08-20, `task8_judge.md`).
-- **채택 모델은 `task8/d2-fft`다** (`reports/task8.md`) — 제출 재현에는 이 run의
-  model.pt가 필요하다 (라운드 3 절 참조).
